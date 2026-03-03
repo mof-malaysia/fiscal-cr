@@ -1,23 +1,50 @@
-# Kimi Code Reviewer
+<p align="center">
+  <h1 align="center">Kimi Code Reviewer</h1>
+  <p align="center">
+    AI-powered code review for GitHub using <strong>Moonshot Kimi</strong> with <strong>256K context window</strong>
+    <br />
+    基於 Kimi 大模型的 GitHub 智能代碼審查工具，支援 256K 超長上下文
+  </p>
+</p>
 
-AI-powered code review for GitHub using **Moonshot Kimi** with **256K context window**.
+<p align="center">
+  <a href="#quick-start--github-action">GitHub Action</a> ·
+  <a href="#self-hosted-github-app">GitHub App</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#中文說明">中文說明</a>
+</p>
 
-> Fill the gap in Kimi's developer ecosystem — native GitHub integration for intelligent code review.
+---
 
 ## Features
 
-- **256K Context Window** — Review entire PRs with full file context, not just diffs
-- **GitHub App + Action** — Use as a GitHub App (@kimi mentions) or GitHub Action (CI/CD)
-- **Cache-Optimized** — Prefix caching at $0.10/M tokens (75% cheaper than standard)
-- **Inline Annotations** — Issues appear directly in PR diff via GitHub Checks API
-- **Configurable** — Per-repo `.kimi-review.yml` for custom rules, severity thresholds, file filters
-- **Multi-language** — Review comments in English, 繁體中文, 简体中文, 日本語, 한국어
+- **256K Context Window** — Reviews entire PRs with full file context, not just diffs
+- **GitHub Action + App** — Use as a CI/CD Action or a self-hosted GitHub App (`@kimi` mentions)
+- **Prefix Cache** — Server-side caching at $0.10/M tokens (75% cheaper than standard $0.39/M)
+- **Inline Annotations** — Issues appear directly in the PR diff via GitHub Checks API
+- **Per-Repo Config** — `.kimi-review.yml` for custom rules, severity thresholds, file filters
+- **Multilingual** — Review comments in English, 繁體中文, 简体中文, 日本語, 한국어
 
 ## Quick Start — GitHub Action
+
+### 1. Get a Moonshot API Key
+
+Sign up at [platform.moonshot.ai](https://platform.moonshot.ai) and create an API key.
+
+### 2. Add the Secret
+
+Go to your repo **Settings → Secrets and variables → Actions** and add:
+
+| Secret | Value |
+|--------|-------|
+| `MOONSHOT_API_KEY` | Your `sk-...` API key |
+
+### 3. Create the Workflow
 
 ```yaml
 # .github/workflows/kimi-review.yml
 name: Kimi Code Review
+
 on:
   pull_request:
     types: [opened, synchronize]
@@ -32,132 +59,387 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: kimi-code-reviewer/kimi-code-reviewer@v1
+      - uses: howardpen9/kimi-code-reviewer@main
         with:
-          kimi_api_key: ${{ secrets.KIMI_API_KEY }}
-          language: en
-          fail_on: critical
+          kimi_api_key: ${{ secrets.MOONSHOT_API_KEY }}
 ```
+
+That's it. Every PR will now get an AI code review.
 
 ### Action Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `kimi_api_key` | Yes | — | Moonshot AI API key |
-| `github_token` | No | `github.token` | GitHub token |
-| `model` | No | `kimi-k2-0905` | Kimi model (256K context) |
-| `language` | No | `en` | Review language |
-| `fail_on` | No | `critical` | Fail check on: critical, warning, never |
+| `github_token` | No | `${{ github.token }}` | GitHub token for API access |
+| `model` | No | `kimi-k2.5` | Kimi model (262K context) |
+| `language` | No | `en` | Review language: `en`, `zh-TW`, `zh-CN`, `ja`, `ko` |
+| `fail_on` | No | `critical` | Fail the check on: `critical`, `warning`, `never` |
+| `config_path` | No | `.kimi-review.yml` | Path to config file |
 
 ### Action Outputs
 
 | Output | Description |
 |--------|-------------|
 | `review_summary` | Review summary text |
-| `annotations_count` | Number of annotations |
-| `critical_count` | Critical issues found |
+| `annotations_count` | Number of inline annotations created |
+| `critical_count` | Number of critical issues found |
 | `tokens_used` | Total tokens consumed |
-| `cost_estimate` | Estimated cost in USD |
+| `cost_estimate` | Estimated API cost (USD) |
 
-## Quick Start — GitHub App
+### Example: Fail on Warnings + Chinese Reviews
 
-### @kimi Commands
+```yaml
+- uses: howardpen9/kimi-code-reviewer@main
+  with:
+    kimi_api_key: ${{ secrets.MOONSHOT_API_KEY }}
+    language: zh-TW
+    fail_on: warning
+```
 
-| Command | Description |
-|---------|-------------|
-| `@kimi review` | Full code review |
-| `@kimi help` | Show commands |
+## Self-Hosted GitHub App
 
-### Self-Hosting
+For teams that want `@kimi review` commands in PR comments.
+
+### Setup
 
 ```bash
-git clone https://github.com/kimi-code-reviewer/kimi-code-reviewer.git
+git clone https://github.com/howardpen9/kimi-code-reviewer.git
 cd kimi-code-reviewer
 npm install
-cp .env.example .env  # Fill in your credentials
+cp .env.example .env  # Fill in credentials
 npm run dev
 ```
 
-Required environment variables:
-- `KIMI_API_KEY` — Get from [platform.moonshot.ai](https://platform.moonshot.ai)
-- `GITHUB_APP_ID` — Your GitHub App ID
-- `GITHUB_PRIVATE_KEY` — GitHub App private key
-- `GITHUB_WEBHOOK_SECRET` — Webhook secret
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `KIMI_API_KEY` | Yes | Moonshot AI API key |
+| `GITHUB_APP_ID` | Yes | Your GitHub App ID |
+| `GITHUB_PRIVATE_KEY` | Yes | GitHub App private key (PEM) |
+| `GITHUB_WEBHOOK_SECRET` | Yes | Webhook verification secret |
+| `PORT` | No | Server port (default: `3000`) |
+| `LOG_LEVEL` | No | Log level (default: `info`) |
+
+### @kimi Commands
+
+Comment on any PR to trigger:
+
+| Command | Description |
+|---------|-------------|
+| `@kimi review` | Run a full code review |
+| `@kimi help` | Show available commands |
+
+### Webhook Events
+
+| Event | Trigger |
+|-------|---------|
+| `pull_request.opened` | PR created |
+| `pull_request.synchronize` | New commits pushed |
+| `pull_request.review_requested` | Review requested |
+| `issue_comment.created` | `@kimi` mentioned in comment |
 
 ## Configuration
 
-Create `.kimi-review.yml` in your repo root:
+Create `.kimi-review.yml` in your repo root to customize behavior:
 
 ```yaml
-language: en
-model: kimi-k2-0905
+# Review language (en, zh-TW, zh-CN, ja, ko)
+language: zh-TW
+
+# Kimi model
+model: kimi-k2.5
 
 review:
+  # Auto-trigger settings
   auto:
     enabled: true
-    drafts: false
+    onOpen: true        # Review when PR is opened
+    onPush: true        # Review on new commits
+    onReviewRequest: true
+    drafts: false       # Skip draft PRs
+
+  # What to check
   aspects:
     bugs: true
     security: true
     performance: true
+    style: true
+    bestPractices: true
+    documentation: false
+    testing: false
+
+  # Severity filter: critical | warning | suggestion | nitpick
   minSeverity: suggestion
+
+  # Max annotations per review (1-100)
+  maxAnnotations: 30
+
+  # When to fail the check: critical | warning | never
   failOn: critical
 
+# File filters (minimatch glob patterns)
 files:
+  include:
+    - "**/*"
   exclude:
-    - "**/generated/**"
-    - "**/*.test.ts"
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/*.lock"
+    - "**/*.min.*"
+  maxFileSize: 100000  # bytes
 
+# Custom review rules
 rules:
   - name: no-console-log
     description: "No console.log in production code"
     severity: warning
+    filePattern: "src/**/*.ts"
 
+  - name: input-validation
+    description: "All API endpoints must validate input"
+    severity: critical
+    filePattern: "src/routes/**"
+
+# Custom prompt additions
 prompt:
-  reviewFocus: "Focus on API input validation and SQL injection prevention"
+  systemAppend: "Pay special attention to SQL injection risks"
+  reviewFocus: "Focus on API input validation and error handling"
+
+# Prefix cache settings
+cache:
+  enabled: true
+  ttl: 3600
 ```
+
+If no config file is found, sensible defaults are used.
 
 ## How It Works
 
 ```
-PR Event → Extract Diff → Pack Context (256K) → Kimi API → Parse Response → GitHub Annotations
+PR Event → Extract Context → Pack (256K) → Kimi API → Parse → Annotations
 ```
 
-### Context Packing Strategy
+### Review Pipeline (12 Steps)
 
-| PR Size | Strategy | Description |
-|---------|----------|-------------|
-| Small (<50K tokens) | **Full** | All file contents + diff + dependencies |
-| Medium (50-150K) | **Mixed** | Key files full, rest diff-only |
-| Large (>150K) | **Chunked** | Split by module, merge results |
+1. Create GitHub Check Run (in-progress)
+2. Extract PR metadata, diff, and changed files
+3. Filter files by include/exclude patterns
+4. Pack context with 256K optimization
+5. Build cache-optimized message order
+6. Call Kimi API with structured JSON output
+7. Parse response (supports multiple output formats)
+8. Filter annotations by minimum severity
+9. Limit to max annotation count
+10. Determine pass/fail conclusion
+11. Update Check Run with inline annotations
+12. Post PR review comment with summary
 
-### Cost Optimization
+### Context Packing Strategies
 
-Kimi's prefix caching reduces costs by 75%:
-- First review of a PR: ~$0.05-0.10
-- Subsequent pushes to same PR: ~$0.02-0.04 (prefix cache hit)
-- Cache rate: $0.10/M tokens vs $0.39/M standard
+Automatically selects the best strategy based on PR size:
+
+| PR Size | Strategy | What Gets Sent |
+|---------|----------|----------------|
+| Small (<50K tokens) | **Full** | All file contents + full diff |
+| Medium (50–150K) | **Mixed** | Most-changed files in full, rest as diff only |
+| Large (>150K) | **Chunked** | Diff only, no file contents |
+
+### Cost
+
+Kimi's server-side prefix caching reduces repeat costs by ~75%:
+
+| Scenario | Estimated Cost |
+|----------|---------------|
+| First review of a PR | ~$0.01–0.02 |
+| Subsequent pushes (cache hit) | ~$0.003–0.01 |
+
+| Token Type | Rate |
+|-----------|------|
+| Input | $0.39 / 1M tokens |
+| Output | $1.90 / 1M tokens |
+| Cached input | $0.10 / 1M tokens |
 
 ## Architecture
 
 ```
-src/
-├── kimi/           # Kimi API client, prompt engineering, context packing
-├── github/         # Webhooks, PR extraction, Checks API, comments
-├── review/         # Orchestrator, diff analysis, file filtering
-├── config/         # .kimi-review.yml schema and loader
-└── utils/          # Logger, token estimation, errors
+kimi-code-reviewer/
+├── action/              # GitHub Action entry point
+│   ├── action.yml       # Action metadata (inputs/outputs)
+│   ├── index.ts         # Action runner
+│   └── dist/            # Bundled Action (ncc)
+├── src/
+│   ├── index.ts         # Hono server entry point
+│   ├── app.ts           # GitHub App initialization
+│   ├── kimi/
+│   │   ├── client.ts          # Moonshot API client
+│   │   ├── context-packer.ts  # 256K context optimization
+│   │   ├── cache-strategy.ts  # Prefix cache message ordering
+│   │   ├── prompt-builder.ts  # System/user prompt construction
+│   │   └── response-parser.ts # Robust JSON extraction
+│   ├── github/
+│   │   ├── webhooks.ts   # Event handlers
+│   │   ├── pulls.ts      # PR data extraction
+│   │   ├── checks.ts     # Check Run API (annotations)
+│   │   └── comments.ts   # PR review comments
+│   ├── review/
+│   │   ├── orchestrator.ts    # 12-step review pipeline
+│   │   ├── file-filter.ts     # Glob-based file filtering
+│   │   ├── diff-analyzer.ts   # Unified diff parsing
+│   │   └── summary-builder.ts # Markdown summary generation
+│   ├── config/
+│   │   ├── schema.ts     # Zod config validation
+│   │   ├── defaults.ts   # Default config values
+│   │   └── loader.ts     # YAML config loader from repo
+│   └── utils/
+│       ├── tokens.ts     # Token estimation + cost calculation
+│       ├── logger.ts     # Pino structured logging
+│       └── errors.ts     # Custom error classes
+├── test/
+│   └── unit/             # Vitest unit tests
+├── .kimi-review.yml      # Self-review config
+└── .github/workflows/
+    ├── ci.yml            # CI: lint + test + build
+    └── kimi-review.yml   # Self-review on PRs
 ```
 
 ## Development
 
 ```bash
-npm run dev          # Start dev server with hot reload
+npm run dev          # Start dev server (hot reload)
 npm test             # Run tests
-npm run build        # Build TypeScript
-npm run build:action # Bundle GitHub Action
+npm run build        # Compile TypeScript
+npm run build:action # Bundle GitHub Action with ncc
+npm run lint         # Type check only
 ```
+
+## Severity Levels
+
+| Level | Meaning | Example |
+|-------|---------|---------|
+| `critical` | Must fix before merge | Bugs, security vulnerabilities, data loss |
+| `warning` | Should fix | Performance issues, bad practices |
+| `suggestion` | Nice to have | Readability, maintainability improvements |
+| `nitpick` | Optional | Style preferences, minor formatting |
+
+## Score
+
+Each review includes a quality score (0–100):
+
+| Range | Rating |
+|-------|--------|
+| 90–100 | Excellent |
+| 70–89 | Good |
+| 50–69 | Needs improvement |
+| < 50 | Significant issues |
+
+---
+
+## 中文說明
+
+### 簡介
+
+Kimi Code Reviewer 是基於 [Moonshot Kimi](https://platform.moonshot.ai) 大模型的 GitHub 代碼審查工具。與其他 AI code review 工具不同，Kimi 擁有 **256K token 的超長上下文窗口**，可以讀取 PR 中所有檔案的完整內容（不僅僅是 diff），提供更準確、更有上下文的審查建議。
+
+### 特色
+
+- **超長上下文**：256K token 窗口，可以同時理解多個檔案之間的關聯
+- **多語言支援**：審查意見支援繁體中文、簡體中文、英文、日文、韓文
+- **行內標註**：問題直接標註在 PR diff 的對應行上
+- **智能快取**：Prefix caching 讓重複審查節省 75% 費用
+- **靈活配置**：每個 repo 可以用 `.kimi-review.yml` 自訂審查規則
+
+### 快速開始
+
+#### 1. 取得 API Key
+
+前往 [platform.moonshot.ai](https://platform.moonshot.ai) 註冊並建立 API key。
+
+#### 2. 設定 GitHub Secret
+
+在你的 repo 中前往 **Settings → Secrets and variables → Actions**，新增：
+
+- `MOONSHOT_API_KEY`：你的 Moonshot API key（`sk-...` 開頭）
+
+#### 3. 建立 Workflow
+
+在你的 repo 中建立 `.github/workflows/kimi-review.yml`：
+
+```yaml
+name: Kimi Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: howardpen9/kimi-code-reviewer@main
+        with:
+          kimi_api_key: ${{ secrets.MOONSHOT_API_KEY }}
+          language: zh-TW    # 使用繁體中文
+          fail_on: never     # 不讓 check 失敗
+```
+
+#### 4. 自訂配置（選填）
+
+在你的 repo 根目錄建立 `.kimi-review.yml`：
+
+```yaml
+language: zh-TW
+model: kimi-k2.5
+
+review:
+  aspects:
+    bugs: true           # 檢查 bug
+    security: true       # 檢查安全漏洞
+    performance: true    # 檢查效能問題
+    style: true          # 檢查程式風格
+    bestPractices: true  # 檢查最佳實踐
+  minSeverity: suggestion  # 最低回報等級
+  maxAnnotations: 30       # 最多標註數量
+  failOn: critical         # 只有 critical 時才 fail
+
+files:
+  exclude:
+    - "**/dist/**"
+    - "**/*.lock"
+
+# 自訂規則
+rules:
+  - name: 禁止 console.log
+    description: "正式程式碼不應包含 console.log"
+    severity: warning
+    filePattern: "src/**/*.ts"
+```
+
+### 費用估算
+
+| 場景 | 預估費用 |
+|------|---------|
+| 首次 PR 審查 | ~$0.01–0.02 |
+| 同一 PR 後續 push（快取命中） | ~$0.003–0.01 |
+
+### 嚴重程度說明
+
+| 等級 | 說明 | 範例 |
+|------|------|------|
+| `critical` | 必須在合併前修復 | Bug、安全漏洞、資料遺失風險 |
+| `warning` | 應該修復 | 效能問題、不良實踐 |
+| `suggestion` | 建議改善 | 可讀性、可維護性提升 |
+| `nitpick` | 可選 | 風格偏好、格式微調 |
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE)
