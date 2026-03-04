@@ -1,24 +1,28 @@
-import * as core from '@actions/core';
-import * as github from '@actions/github';
-import { ReviewOrchestrator } from '../src/review/orchestrator.js';
-import { KimiClient } from '../src/kimi/client.js';
-import { loadConfig } from '../src/config/loader.js';
-import { calculateCost } from '../src/utils/tokens.js';
+import * as core from "@actions/core";
+import * as github from "@actions/github";
+import { ReviewOrchestrator } from "../src/review/orchestrator.js";
+import { KimiClient } from "../src/kimi/client.js";
+import { loadConfig } from "../src/config/loader.js";
+import { calculateCost } from "../src/utils/tokens.js";
 
 async function run(): Promise<void> {
   try {
     // Get inputs
-    const kimiApiKey = core.getInput('kimi_api_key', { required: true });
-    const githubToken = core.getInput('github_token');
-    const model = core.getInput('model') || 'kimi-k2.5';
-    const failOn = (core.getInput('fail_on') || 'critical') as 'critical' | 'warning' | 'never';
+    const kimiApiKey = core.getInput("kimi_api_key", { required: true });
+    const githubToken = core.getInput("github_token");
+    const model = core.getInput("model") || "kimi-k2.5";
+    const baseUrl = core.getInput("kimi_base_url") || undefined;
+    const failOn = (core.getInput("fail_on") || "critical") as
+      | "critical"
+      | "warning"
+      | "never";
 
     const octokit = github.getOctokit(githubToken);
     const context = github.context;
 
     // Only run on pull requests
     if (!context.payload.pull_request) {
-      core.info('Not a pull request event, skipping.');
+      core.info("Not a pull request event, skipping.");
       return;
     }
 
@@ -39,10 +43,18 @@ async function run(): Promise<void> {
     config.review.failOn = failOn;
 
     // Create Kimi client
-    const kimi = new KimiClient({ apiKey: kimiApiKey, model });
+    const kimi = new KimiClient({
+      apiKey: kimiApiKey,
+      model,
+      baseUrl,
+    });
 
     // Run review
-    const orchestrator = new ReviewOrchestrator(restOctokit as any, kimi, config);
+    const orchestrator = new ReviewOrchestrator(
+      restOctokit as any,
+      kimi,
+      config,
+    );
     const result = await orchestrator.reviewPullRequest({
       owner,
       repo,
@@ -51,36 +63,39 @@ async function run(): Promise<void> {
     });
 
     // Set outputs
-    core.setOutput('review_summary', result.summary);
-    core.setOutput('annotations_count', result.annotations.length.toString());
-    core.setOutput('critical_count', result.stats.critical.toString());
+    core.setOutput("review_summary", result.summary);
+    core.setOutput("annotations_count", result.annotations.length.toString());
+    core.setOutput("critical_count", result.stats.critical.toString());
     core.setOutput(
-      'tokens_used',
+      "tokens_used",
       (result.tokensUsed.input + result.tokensUsed.output).toString(),
     );
-    core.setOutput('cost_estimate', calculateCost(result.tokensUsed).toString());
+    core.setOutput(
+      "cost_estimate",
+      calculateCost(result.tokensUsed).toString(),
+    );
 
     // Summary in job output
     core.summary
-      .addHeading('Kimi Code Review', 2)
+      .addHeading("Kimi Code Review", 2)
       .addRaw(`**Score:** ${result.score}/100\n\n`)
       .addRaw(result.summary)
       .addTable([
         [
-          { data: 'Severity', header: true },
-          { data: 'Count', header: true },
+          { data: "Severity", header: true },
+          { data: "Count", header: true },
         ],
-        ['Critical', result.stats.critical.toString()],
-        ['Warning', result.stats.warning.toString()],
-        ['Suggestion', result.stats.suggestion.toString()],
+        ["Critical", result.stats.critical.toString()],
+        ["Warning", result.stats.warning.toString()],
+        ["Suggestion", result.stats.suggestion.toString()],
       ]);
     await core.summary.write();
 
     // Fail the action if needed
-    if (failOn === 'critical' && result.stats.critical > 0) {
+    if (failOn === "critical" && result.stats.critical > 0) {
       core.setFailed(`Found ${result.stats.critical} critical issue(s)`);
     } else if (
-      failOn === 'warning' &&
+      failOn === "warning" &&
       (result.stats.critical > 0 || result.stats.warning > 0)
     ) {
       core.setFailed(
@@ -91,7 +106,7 @@ async function run(): Promise<void> {
     if (error instanceof Error) {
       core.setFailed(`Kimi review failed: ${error.message}`);
     } else {
-      core.setFailed('Kimi review failed with unknown error');
+      core.setFailed("Kimi review failed with unknown error");
     }
   }
 }

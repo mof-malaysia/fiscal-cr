@@ -1,6 +1,6 @@
-import type { ChatMessage } from '../types/review.js';
-import { KimiApiError } from '../utils/errors.js';
-import { logger } from '../utils/logger.js';
+import type { ChatMessage } from "../types/review.js";
+import { KimiApiError } from "../utils/errors.js";
+import { logger } from "../utils/logger.js";
 
 export interface KimiClientConfig {
   apiKey: string;
@@ -36,8 +36,8 @@ export class KimiClient {
 
   constructor(config: KimiClientConfig) {
     this.apiKey = config.apiKey;
-    this.model = config.model ?? 'kimi-k2.5';
-    this.baseUrl = config.baseUrl ?? 'https://api.moonshot.cn/v1';
+    this.model = config.model ?? "kimi-k2.5";
+    this.baseUrl = config.baseUrl ?? "https://api.moonshot.ai";
     this.maxTokens = config.maxTokens ?? 16384;
     this.temperature = config.temperature ?? 1;
     this.timeout = config.timeout ?? 300_000;
@@ -45,7 +45,7 @@ export class KimiClient {
 
   async chatCompletion(params: {
     messages: ChatMessage[];
-    responseFormat?: { type: 'json_object' | 'text' };
+    responseFormat?: { type: "json_object" | "text" };
   }): Promise<ChatCompletionResponse> {
     const body = {
       model: this.model,
@@ -60,9 +60,9 @@ export class KimiClient {
 
     try {
       const res = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
@@ -70,7 +70,7 @@ export class KimiClient {
       });
 
       if (!res.ok) {
-        const errorBody = await res.text().catch(() => '');
+        const errorBody = await res.text().catch(() => "");
         throw new KimiApiError(
           `Kimi API error: ${res.status} ${res.statusText}`,
           res.status,
@@ -87,7 +87,7 @@ export class KimiClient {
           completionTokens: data.usage.completion_tokens,
           cachedTokens: data.usage.cached_tokens ?? 0,
         },
-        'Kimi API call completed',
+        "Kimi API call completed",
       );
 
       return data;

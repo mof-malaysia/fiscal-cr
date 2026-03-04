@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 interface AppContext {
   kimiApiKey: string;
   kimiModel?: string;
+  kimiBaseUrl?: string;
   getInstallationOctokit: (installationId: number) => Promise<Octokit>;
 }
 
@@ -42,6 +43,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       const kimi = new KimiClient({
         apiKey: appCtx.kimiApiKey,
         model: appCtx.kimiModel ?? config.model,
+        baseUrl: appCtx.kimiBaseUrl ?? config.baseUrl,
       });
 
       const orchestrator = new ReviewOrchestrator(octokit, kimi, config);
@@ -72,6 +74,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       const kimi = new KimiClient({
         apiKey: appCtx.kimiApiKey,
         model: appCtx.kimiModel ?? config.model,
+        baseUrl: appCtx.kimiBaseUrl ?? config.baseUrl,
       });
 
       const { data: pr } = await octokit.pulls.get({
@@ -123,6 +126,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     const kimi = new KimiClient({
       apiKey: appCtx.kimiApiKey,
       model: appCtx.kimiModel ?? config.model,
+      baseUrl: appCtx.kimiBaseUrl ?? config.baseUrl,
     });
 
     const orchestrator = new ReviewOrchestrator(octokit, kimi, config);

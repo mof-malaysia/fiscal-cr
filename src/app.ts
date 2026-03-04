@@ -9,6 +9,7 @@ export interface AppConfig {
   githubWebhookSecret: string;
   kimiApiKey: string;
   kimiModel?: string;
+  kimiBaseUrl?: string;
 }
 
 export function createApp(config: AppConfig): App {
@@ -21,6 +22,7 @@ export function createApp(config: AppConfig): App {
   registerWebhooks(app.webhooks, {
     kimiApiKey: config.kimiApiKey,
     kimiModel: config.kimiModel,
+    kimiBaseUrl: config.kimiBaseUrl,
     getInstallationOctokit: async (installationId: number) => {
       return (await app.getInstallationOctokit(installationId)) as unknown as Octokit;
     },

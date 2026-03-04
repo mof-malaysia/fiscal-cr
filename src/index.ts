@@ -20,6 +20,7 @@ server.post('/api/webhook', async (c) => {
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET!,
     kimiApiKey: process.env.KIMI_API_KEY!,
     kimiModel: process.env.KIMI_MODEL,
+    kimiBaseUrl: process.env.KIMI_BASE_URL,
   });
 
   const id = c.req.header('x-github-delivery') ?? '';
