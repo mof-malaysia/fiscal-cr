@@ -26,5 +26,6 @@ export declare class OpenAICompatibleProvider implements LLMProvider {
             type: 'json_object' | 'text';
         };
     }): Promise<LLMCompletionResponse>;
+    private performCompletionRequest;
 }
 //# sourceMappingURL=openai-compatible.d.ts.map
