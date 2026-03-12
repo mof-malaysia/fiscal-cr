@@ -25,6 +25,9 @@ inputs:
     description: 'Model to use (e.g., kimi-k2.5, gpt-4.1, llama-3.3-70b)'
     required: false
     default: 'kimi-k2.5'
+  max_output_tokens:
+    description: 'Optional max completion tokens for model output (advanced)'
+    required: false
   base_url:
     description: 'Generic base URL for provider API'
     required: false

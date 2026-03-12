@@ -53190,6 +53190,7 @@ function createLLMProvider(config) {
                 apiKey: config.apiKey,
                 model: config.model,
                 baseUrl: config.baseUrl,
+                maxTokens: config.maxTokens,
             });
     }
 }
@@ -53203,6 +53204,7 @@ const reviewConfigSchema = objectType({
     provider: enumType(['kimi', 'openai-compatible']).default('kimi'),
     model: stringType().default('kimi-k2.5'),
     baseUrl: stringType().url().optional(),
+    maxOutputTokens: numberType().int().min(64).max(32768).optional(),
     review: objectType({
         auto: objectType({
             enabled: booleanType().default(true),
@@ -53361,6 +53363,16 @@ function parseYaml(content) {
 
 
 
+function parseMaxOutputTokens(raw) {
+    const value = Number.parseInt(raw, 10);
+    if (!Number.isFinite(value) || value <= 0) {
+        throw new Error("Invalid max_output_tokens: must be a positive integer");
+    }
+    if (value < 64 || value > 32768) {
+        throw new Error("Invalid max_output_tokens: must be between 64 and 32768");
+    }
+    return value;
+}
 async function run() {
     try {
         // Get inputs
@@ -53371,6 +53383,7 @@ async function run() {
         const githubToken = core.getInput("github_token");
         const providerInput = core.getInput("provider");
         const model = core.getInput("model") || "kimi-k2.5";
+        const maxOutputTokensInput = core.getInput("max_output_tokens");
         const baseUrl = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
         const failOn = (core.getInput("fail_on") || "critical");
         const octokit = github.getOctokit(githubToken);
@@ -53395,12 +53408,16 @@ async function run() {
         // Override model/baseUrl from action input
         config.model = model;
         config.baseUrl = baseUrl;
+        if (maxOutputTokensInput) {
+            config.maxOutputTokens = parseMaxOutputTokens(maxOutputTokensInput);
+        }
         // Create model provider
         const llm = createLLMProvider({
             apiKey,
             provider: providerInput || config.provider,
             model: config.model,
             baseUrl: config.baseUrl,
+            maxTokens: config.maxOutputTokens,
         });
         // Run review
         const orchestrator = new ReviewOrchestrator(restOctokit, llm, config);
