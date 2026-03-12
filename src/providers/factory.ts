@@ -19,6 +19,7 @@ export function createLLMProvider(config: {
   apiKey: string;
   model: string;
   baseUrl?: string;
+  maxTokens?: number;
   provider: string;
 }): LLMProvider {
   const provider = parseProvider(config.provider);
@@ -33,6 +34,7 @@ export function createLLMProvider(config: {
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl,
+        maxTokens: config.maxTokens,
       });
   }
 }

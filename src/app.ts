@@ -10,6 +10,7 @@ export interface AppConfig {
   apiKey: string;
   provider?: string;
   model?: string;
+  maxOutputTokens?: number;
   baseUrl?: string;
 }
 
@@ -24,6 +25,7 @@ export function createApp(config: AppConfig): App {
     apiKey: config.apiKey,
     provider: config.provider,
     model: config.model,
+    maxOutputTokens: config.maxOutputTokens,
     baseUrl: config.baseUrl,
     getInstallationOctokit: async (installationId: number) => {
       return (await app.getInstallationOctokit(installationId)) as unknown as Octokit;

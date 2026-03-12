@@ -14,6 +14,14 @@ server.get('/health', (c) => {
 
 // GitHub webhook endpoint
 server.post('/api/webhook', async (c) => {
+  const parsedMaxOutputTokens = process.env.MODEL_MAX_OUTPUT_TOKENS
+    ? Number.parseInt(process.env.MODEL_MAX_OUTPUT_TOKENS, 10)
+    : undefined;
+  const maxOutputTokens = Number.isFinite(parsedMaxOutputTokens ?? NaN) &&
+    (parsedMaxOutputTokens ?? 0) > 0
+      ? parsedMaxOutputTokens
+      : undefined;
+
   const app = createApp({
     githubAppId: process.env.GITHUB_APP_ID!,
     githubPrivateKey: process.env.GITHUB_PRIVATE_KEY!,
@@ -21,6 +29,7 @@ server.post('/api/webhook', async (c) => {
     apiKey: process.env.API_KEY ?? process.env.KIMI_API_KEY!,
     provider: process.env.MODEL_PROVIDER,
     model: process.env.MODEL ?? process.env.KIMI_MODEL,
+    maxOutputTokens,
     baseUrl: process.env.BASE_URL ?? process.env.KIMI_BASE_URL,
   });
 

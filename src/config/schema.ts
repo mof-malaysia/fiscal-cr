@@ -5,6 +5,7 @@ export const reviewConfigSchema = z.object({
   provider: z.enum(['kimi', 'openai-compatible']).default('kimi'),
   model: z.string().default('kimi-k2.5'),
   baseUrl: z.string().url().optional(),
+  maxOutputTokens: z.number().int().min(64).max(32768).optional(),
 
   review: z
     .object({
