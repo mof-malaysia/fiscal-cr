@@ -7,17 +7,30 @@ branding:
   color: 'blue'
 
 inputs:
+  api_key:
+    description: 'LLM API key (recommended generic input)'
+    required: false
   kimi_api_key:
-    description: 'Moonshot AI API key (from platform.moonshot.ai)'
-    required: true
+    description: 'Legacy: Moonshot AI API key (from platform.moonshot.ai)'
+    required: false
   github_token:
     description: 'GitHub token for API access'
     required: false
     default: ${{ github.token }}
+  provider:
+    description: 'Model provider: kimi or openai-compatible'
+    required: false
+    default: 'openai-compatible'
   model:
-    description: 'Kimi model to use (kimi-k2.5 for 256K context)'
+    description: 'Model to use (e.g., kimi-k2.5, gpt-4.1, llama-3.3-70b)'
     required: false
     default: 'kimi-k2.5'
+  base_url:
+    description: 'Generic base URL for provider API'
+    required: false
+  kimi_base_url:
+    description: 'Legacy: base URL for Kimi API'
+    required: false
   language:
     description: 'Review comment language (en, zh-TW, zh-CN, ja, ko)'
     required: false
