@@ -1,17 +1,22 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { ReviewOrchestrator } from "../src/review/orchestrator.js";
-import { KimiClient } from "../src/kimi/client.js";
+import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
 import { calculateCost } from "../src/utils/tokens.js";
 
 async function run(): Promise<void> {
   try {
     // Get inputs
-    const kimiApiKey = core.getInput("kimi_api_key", { required: true });
+    const apiKey = core.getInput("api_key") || core.getInput("kimi_api_key");
+    if (!apiKey) {
+      throw new Error("Missing required input: api_key (or legacy kimi_api_key)");
+    }
+
     const githubToken = core.getInput("github_token");
+    const providerInput = core.getInput("provider");
     const model = core.getInput("model") || "kimi-k2.5";
-    const baseUrl = core.getInput("kimi_base_url") || undefined;
+    const baseUrl = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
     const failOn = (core.getInput("fail_on") || "critical") as
       | "critical"
       | "warning"
@@ -41,18 +46,22 @@ async function run(): Promise<void> {
     const config = await loadConfig(restOctokit as any, owner, repo);
     // Override failOn from action input
     config.review.failOn = failOn;
+    // Override model/baseUrl from action input
+    config.model = model;
+    config.baseUrl = baseUrl;
 
-    // Create Kimi client
-    const kimi = new KimiClient({
-      apiKey: kimiApiKey,
-      model,
-      baseUrl,
+    // Create model provider
+    const llm = createLLMProvider({
+      apiKey,
+      provider: providerInput || config.provider,
+      model: config.model,
+      baseUrl: config.baseUrl,
     });
 
     // Run review
     const orchestrator = new ReviewOrchestrator(
       restOctokit as any,
-      kimi,
+      llm,
       config,
     );
     const result = await orchestrator.reviewPullRequest({
