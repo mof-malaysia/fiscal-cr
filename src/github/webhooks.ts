@@ -2,13 +2,14 @@ import type { Octokit } from '@octokit/rest';
 import type { Webhooks } from '@octokit/webhooks';
 import { ReviewOrchestrator } from '../review/orchestrator.js';
 import { loadConfig } from '../config/loader.js';
-import { KimiClient } from '../kimi/client.js';
+import { createLLMProvider } from '../providers/factory.js';
 import { logger } from '../utils/logger.js';
 
 interface AppContext {
-  kimiApiKey: string;
-  kimiModel?: string;
-  kimiBaseUrl?: string;
+  apiKey: string;
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
   getInstallationOctokit: (installationId: number) => Promise<Octokit>;
 }
 
@@ -40,13 +41,14 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       if (payload.action === 'opened' && !config.review.auto.onOpen) return;
       if (payload.action === 'synchronize' && !config.review.auto.onPush) return;
 
-      const kimi = new KimiClient({
-        apiKey: appCtx.kimiApiKey,
-        model: appCtx.kimiModel ?? config.model,
-        baseUrl: appCtx.kimiBaseUrl ?? config.baseUrl,
+      const llm = createLLMProvider({
+        apiKey: appCtx.apiKey,
+        provider: appCtx.provider ?? config.provider,
+        model: appCtx.model ?? config.model,
+        baseUrl: appCtx.baseUrl ?? config.baseUrl,
       });
 
-      const orchestrator = new ReviewOrchestrator(octokit, kimi, config);
+      const orchestrator = new ReviewOrchestrator(octokit, llm, config);
       await orchestrator.reviewPullRequest({ owner, repo, pullNumber, headSha });
     },
   );
@@ -71,10 +73,11 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
 
     if (command === 'review') {
       const config = await loadConfig(octokit, owner, repo);
-      const kimi = new KimiClient({
-        apiKey: appCtx.kimiApiKey,
-        model: appCtx.kimiModel ?? config.model,
-        baseUrl: appCtx.kimiBaseUrl ?? config.baseUrl,
+      const llm = createLLMProvider({
+        apiKey: appCtx.apiKey,
+        provider: appCtx.provider ?? config.provider,
+        model: appCtx.model ?? config.model,
+        baseUrl: appCtx.baseUrl ?? config.baseUrl,
       });
 
       const { data: pr } = await octokit.pulls.get({
@@ -83,7 +86,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         pull_number: pullNumber,
       });
 
-      const orchestrator = new ReviewOrchestrator(octokit, kimi, config);
+      const orchestrator = new ReviewOrchestrator(octokit, llm, config);
       await orchestrator.reviewPullRequest({
         owner,
         repo,
@@ -123,13 +126,14 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
 
     logger.info({ owner, repo, pullNumber }, 'Review requested');
 
-    const kimi = new KimiClient({
-      apiKey: appCtx.kimiApiKey,
-      model: appCtx.kimiModel ?? config.model,
-      baseUrl: appCtx.kimiBaseUrl ?? config.baseUrl,
+    const llm = createLLMProvider({
+      apiKey: appCtx.apiKey,
+      provider: appCtx.provider ?? config.provider,
+      model: appCtx.model ?? config.model,
+      baseUrl: appCtx.baseUrl ?? config.baseUrl,
     });
 
-    const orchestrator = new ReviewOrchestrator(octokit, kimi, config);
+    const orchestrator = new ReviewOrchestrator(octokit, llm, config);
     await orchestrator.reviewPullRequest({ owner, repo, pullNumber, headSha });
   });
 }

@@ -1,7 +1,7 @@
 import type { Octokit } from '@octokit/rest';
 import type { ReviewConfig } from '../config/schema.js';
 import type { ReviewResult } from '../types/review.js';
-import { KimiClient } from '../kimi/client.js';
+import type { LLMProvider } from '../providers/interface.js';
 import { packContext } from '../kimi/context-packer.js';
 import { buildReviewMessages } from '../kimi/prompt-builder.js';
 import { buildCacheOptimizedMessages } from '../kimi/cache-strategy.js';
@@ -24,7 +24,7 @@ interface ReviewParams {
 export class ReviewOrchestrator {
   constructor(
     private octokit: Octokit,
-    private kimi: KimiClient,
+    private llm: LLMProvider,
     private config: ReviewConfig,
   ) {}
 
@@ -90,19 +90,15 @@ export class ReviewOrchestrator {
         prContext.fileContents,
       );
 
-      // Step 6: Call Kimi API
-      logger.info({ messageCount: messages.length }, 'Calling Kimi API');
-      const response = await this.kimi.chatCompletion({
+      // Step 6: Call LLM API
+      logger.info({ messageCount: messages.length }, 'Calling LLM API');
+      const response = await this.llm.chatCompletion({
         messages,
         responseFormat: { type: 'json_object' },
       });
 
       // Step 7: Parse response
-      const result = parseKimiResponse(response.choices[0].message.content, {
-        input: response.usage.prompt_tokens,
-        output: response.usage.completion_tokens,
-        cached: response.usage.cached_tokens ?? 0,
-      });
+      const result = parseKimiResponse(response.content, response.usage);
 
       // Step 8: Filter by severity
       const minSeverityOrder = ['critical', 'warning', 'suggestion', 'nitpick'];

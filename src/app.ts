@@ -7,9 +7,10 @@ export interface AppConfig {
   githubAppId: string;
   githubPrivateKey: string;
   githubWebhookSecret: string;
-  kimiApiKey: string;
-  kimiModel?: string;
-  kimiBaseUrl?: string;
+  apiKey: string;
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
 }
 
 export function createApp(config: AppConfig): App {
@@ -20,9 +21,10 @@ export function createApp(config: AppConfig): App {
   });
 
   registerWebhooks(app.webhooks, {
-    kimiApiKey: config.kimiApiKey,
-    kimiModel: config.kimiModel,
-    kimiBaseUrl: config.kimiBaseUrl,
+    apiKey: config.apiKey,
+    provider: config.provider,
+    model: config.model,
+    baseUrl: config.baseUrl,
     getInstallationOctokit: async (installationId: number) => {
       return (await app.getInstallationOctokit(installationId)) as unknown as Octokit;
     },
