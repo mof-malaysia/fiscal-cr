@@ -53280,12 +53280,12 @@ const DEFAULT_CONFIG = {
 
 
 const CONFIG_FILENAME = '.fiscalcr-review.yml';
-async function loadConfig(octokit, owner, repo) {
+async function loadConfig(octokit, owner, repo, configPath = CONFIG_FILENAME) {
     try {
         const { data } = await octokit.repos.getContent({
             owner,
             repo,
-            path: CONFIG_FILENAME,
+            path: configPath,
         });
         if (!('content' in data) || data.encoding !== 'base64') {
             logger.info('Config file found but not a regular file, using defaults');
@@ -53305,7 +53305,7 @@ async function loadConfig(octokit, owner, repo) {
         if (err instanceof ConfigError)
             throw err;
         // 404 — no config file, use defaults
-        logger.info('No .fiscalcr-review.yml found, using defaults');
+        logger.info({ configPath }, `No ${configPath} found, using defaults`);
         return DEFAULT_CONFIG;
     }
 }
@@ -53334,6 +53334,7 @@ async function run() {
         const providerInput = core.getInput("provider");
         const model = core.getInput("model") || "kimi-k2.5";
         const baseUrl = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+        const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
         const failOn = (core.getInput("fail_on") || "critical");
         const octokit = github.getOctokit(githubToken);
         const context = github.context;
@@ -53351,7 +53352,7 @@ async function run() {
         // but our code expects @octokit/rest shape (octokit.checks, octokit.pulls, etc.)
         const restOctokit = octokit.rest;
         // Load config from repo
-        const config = await loadConfig(restOctokit, owner, repo);
+        const config = await loadConfig(restOctokit, owner, repo, configPath);
         // Override failOn from action input
         config.review.failOn = failOn;
         // Override model/baseUrl from action input

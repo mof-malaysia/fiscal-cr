@@ -11,12 +11,13 @@ export async function loadConfig(
   octokit: Octokit,
   owner: string,
   repo: string,
+  configPath: string = CONFIG_FILENAME,
 ): Promise<ReviewConfig> {
   try {
     const { data } = await octokit.repos.getContent({
       owner,
       repo,
-      path: CONFIG_FILENAME,
+      path: configPath,
     });
 
     if (!('content' in data) || data.encoding !== 'base64') {
@@ -38,7 +39,7 @@ export async function loadConfig(
   } catch (err) {
     if (err instanceof ConfigError) throw err;
     // 404 — no config file, use defaults
-    logger.info('No .fiscalcr-review.yml found, using defaults');
+    logger.info({ configPath }, `No ${configPath} found, using defaults`);
     return DEFAULT_CONFIG;
   }
 }

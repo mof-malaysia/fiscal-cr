@@ -17,6 +17,7 @@ async function run(): Promise<void> {
     const providerInput = core.getInput("provider");
     const model = core.getInput("model") || "kimi-k2.5";
     const baseUrl = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+    const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
     const failOn = (core.getInput("fail_on") || "critical") as
       | "critical"
       | "warning"
@@ -43,7 +44,7 @@ async function run(): Promise<void> {
     const restOctokit = octokit.rest;
 
     // Load config from repo
-    const config = await loadConfig(restOctokit as any, owner, repo);
+    const config = await loadConfig(restOctokit as any, owner, repo, configPath);
     // Override failOn from action input
     config.review.failOn = failOn;
     // Override model/baseUrl from action input
