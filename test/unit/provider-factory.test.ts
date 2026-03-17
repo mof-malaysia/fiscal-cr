@@ -3,10 +3,10 @@ import { ConfigError } from '../../src/utils/errors.js';
 import { createLLMProvider } from '../../src/providers/factory.js';
 
 describe('provider factory', () => {
-  it('creates provider for openai-compatible', () => {
+  it('creates provider for legacy kimi without explicit baseUrl', () => {
     const provider = createLLMProvider({
       apiKey: 'test-key',
-      provider: 'openai-compatible',
+      provider: 'kimi',
       model: 'kimi-k2.5',
     });
 
@@ -24,6 +24,24 @@ describe('provider factory', () => {
 
     expect(provider).toBeTruthy();
     expect(typeof provider.chatCompletion).toBe('function');
+  });
+
+  it('throws ConfigError when openai-compatible has no baseUrl', () => {
+    expect(() =>
+      createLLMProvider({
+        apiKey: 'test-key',
+        provider: 'openai-compatible',
+        model: 'gpt-4.1-mini',
+      }),
+    ).toThrowError(ConfigError);
+
+    expect(() =>
+      createLLMProvider({
+        apiKey: 'test-key',
+        provider: 'openai-compatible',
+        model: 'gpt-4.1-mini',
+      }),
+    ).toThrow(/Missing baseUrl/);
   });
 
   it('throws ConfigError for invalid provider', () => {

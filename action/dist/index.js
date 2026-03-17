@@ -53064,7 +53064,10 @@ class OpenAICompatibleProvider {
     constructor(config) {
         this.apiKey = config.apiKey;
         this.model = config.model;
-        this.baseUrl = config.baseUrl ?? 'https://api.kimi.com/coding/v1';
+        if (!config.baseUrl) {
+            throw new ConfigError('OpenAI-compatible provider requires an explicit baseUrl');
+        }
+        this.baseUrl = config.baseUrl;
         this.temperature = config.temperature ?? 1;
         this.timeout = config.timeout ?? 300_000;
     }
@@ -53122,6 +53125,7 @@ class OpenAICompatibleProvider {
 
 
 const SUPPORTED_PROVIDERS = ['openai-compatible', 'kimi'];
+const KIMI_API_BASE_URL = 'https://api.kimi.com/coding/v1';
 function parseProvider(provider) {
     if (provider === 'openai-compatible' || provider === 'kimi') {
         return provider;
@@ -53134,12 +53138,20 @@ function createLLMProvider(config) {
     // Adding non-compatible providers (e.g., Anthropic) is straightforward.
     switch (provider) {
         case 'openai-compatible':
+            if (!config.baseUrl) {
+                throw new ConfigError('Missing baseUrl for provider "openai-compatible". Configure an operator-controlled BASE_URL.');
+            }
+            return new OpenAICompatibleProvider({
+                apiKey: config.apiKey,
+                model: config.model,
+                baseUrl: config.baseUrl,
+            });
         case 'kimi':
         default:
             return new OpenAICompatibleProvider({
                 apiKey: config.apiKey,
                 model: config.model,
-                baseUrl: config.baseUrl,
+                baseUrl: config.baseUrl ?? KIMI_API_BASE_URL,
             });
     }
 }

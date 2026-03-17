@@ -13,6 +13,8 @@ interface AppContext {
   getInstallationOctokit: (installationId: number) => Promise<Octokit>;
 }
 
+type FiscalCRCommand = 'review' | 'help' | 'unknown';
+
 export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
   // Auto-review on PR opened or new commits pushed
   webhooks.on(
@@ -45,7 +47,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         apiKey: appCtx.apiKey,
         provider: appCtx.provider ?? config.provider,
         model: appCtx.model ?? config.model,
-        baseUrl: appCtx.baseUrl ?? config.baseUrl,
+        baseUrl: appCtx.baseUrl,
       });
 
       const orchestrator = new ReviewOrchestrator(octokit, llm, config);
@@ -56,7 +58,8 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
   // @fiscalcr mention in PR/issue comments
   webhooks.on(['issue_comment.created'], async ({ payload }) => {
     const body = payload.comment.body;
-    if (!body.includes('@fiscalcr')) return;
+    const command = parseFiscalCRCommand(body);
+    if (command === 'unknown') return;
     if (!payload.issue.pull_request) return;
 
     const installationId = payload.installation?.id;
@@ -67,9 +70,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     const repo = payload.repository.name;
     const pullNumber = payload.issue.number;
 
-    logger.info({ owner, repo, pullNumber }, '@fiscalcr mention detected');
-
-    const command = parseFiscalCRCommand(body);
+    logger.info({ owner, repo, pullNumber, command }, '@fiscalcr mention detected');
 
     if (command === 'review') {
       const config = await loadConfig(octokit, owner, repo);
@@ -77,7 +78,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         apiKey: appCtx.apiKey,
         provider: appCtx.provider ?? config.provider,
         model: appCtx.model ?? config.model,
-        baseUrl: appCtx.baseUrl ?? config.baseUrl,
+        baseUrl: appCtx.baseUrl,
       });
 
       const { data: pr } = await octokit.pulls.get({
@@ -130,7 +131,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       apiKey: appCtx.apiKey,
       provider: appCtx.provider ?? config.provider,
       model: appCtx.model ?? config.model,
-      baseUrl: appCtx.baseUrl ?? config.baseUrl,
+      baseUrl: appCtx.baseUrl,
     });
 
     const orchestrator = new ReviewOrchestrator(octokit, llm, config);
@@ -138,10 +139,12 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
   });
 }
 
-function parseFiscalCRCommand(body: string): 'review' | 'help' | 'unknown' {
-  const match = body.match(/@fiscalcr\s+(\w+)/i);
-  if (!match) return 'review';
-  const cmd = match[1].toLowerCase();
+function parseFiscalCRCommand(body: string): FiscalCRCommand {
+  const match = body.match(/(?:^|\s)@fiscalcr(?:\s+(\w+))?(?=$|\s|[.,!?:;])/i);
+  if (!match) return 'unknown';
+
+  const cmd = match[1]?.toLowerCase();
+  if (!cmd) return 'review';
   if (cmd === 'review') return 'review';
   if (cmd === 'help') return 'help';
   return 'unknown';

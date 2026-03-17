@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../types/review.js';
-import { LLMApiError } from '../utils/errors.js';
+import { ConfigError, LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { estimateTokens } from '../utils/tokens.js';
 import type { LLMCompletionResponse, LLMProvider } from './interface.js';
@@ -37,7 +37,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
   constructor(config: OpenAICompatibleProviderConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model;
-    this.baseUrl = config.baseUrl ?? 'https://api.kimi.com/coding/v1';
+    if (!config.baseUrl) {
+      throw new ConfigError('OpenAI-compatible provider requires an explicit baseUrl');
+    }
+    this.baseUrl = config.baseUrl;
     this.temperature = config.temperature ?? 1;
     this.timeout = config.timeout ?? 300_000;
   }

@@ -21,7 +21,6 @@ inputs:
   provider:
     description: 'Model provider: openai-compatible or kimi (legacy)'
     required: false
-    default: 'openai-compatible'
   model:
     description: 'Model to use (e.g., gpt-4.1, kimi-k2.5, llama-3.3-70b)'
     required: false
