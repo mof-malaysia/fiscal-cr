@@ -1,54 +1,40 @@
-<p align="center">
-  <h1 align="center">FiscalCR</h1>
-  <p align="center">
-    AI-powered, model-agnostic code review for GitHub
-  </p>
-</p>
+# FiscalCR
 
-<p align="center">
-  <a href="#quick-start--github-action">GitHub Action</a> ·
-  <a href="#self-hosted-github-app">GitHub App</a> ·
-  <a href="#configuration">Configuration</a>
-</p>
+AI-powered, model-agnostic code review for GitHub pull requests.
 
----
+[GitHub Action](#quick-start--github-action) · [Self-Hosted GitHub App](#self-hosted-github-app) · [Configuration](#configuration) · [中文說明](#中文說明)
 
-> **Forked from [howardpen9/kimi-code-reviewer](https://github.com/howardpen9/kimi-code-reviewer).** FiscalCR extends the original with model-agnostic provider support.
+> Fork lineage: [irfancoder/kimi-code-reviewer](https://github.com/irfancoder/kimi-code-reviewer), originally based on [howardpen9/kimi-code-reviewer](https://github.com/howardpen9/kimi-code-reviewer).
 
 ## Features
 
-- **256K Context Window** — Reviews entire PRs with full file context, not just diffs
-- **GitHub Action + App** — Use as a CI/CD Action or a self-hosted GitHub App (`@kimi` mentions)
-- **Prefix Cache** — Server-side caching at $0.10/M tokens (75% cheaper than standard $0.39/M)
-- **Inline Annotations** — Issues appear directly in the PR diff via GitHub Checks API
-- **Per-Repo Config** — `.kimi-review.yml` for custom rules, severity thresholds, file filters
-- **Multilingual** — Review comments in English, 繁體中文, 简体中文, 日本語, 한국어
+- Model-agnostic provider support with OpenAI-compatible APIs
+- Legacy Kimi compatibility for existing workflows and deployments
+- Full-PR review with inline GitHub annotations and summary comments
+- Repo-level configuration via `.fiscalcr-review.yml`
+- GitHub Action and self-hosted GitHub App modes
+- Multilingual reviews in `en`, `zh-TW`, `zh-CN`, `ja`, and `ko`
 
 ## Quick Start — GitHub Action
 
-### 1. Get an API Key
+### 1. Add secrets
 
-Get your API key from **[Kimi Code Console](https://www.kimi.com/code/console)** (recommended for code review use cases).
+In your repository, add the secret that matches your chosen provider setup:
 
-> **Kimi Code API vs Moonshot API**: The Kimi Code API (`api.kimi.com/coding/v1`) is optimized for coding tasks and is separate from the general Moonshot API (`api.moonshot.cn/v1`). Both work with this action, but the Kimi Code API provides better code-specific performance.
+| Secret | Use for |
+| ------ | ------- |
+| `LLM_API_KEY` | Recommended generic provider setup |
+| `MOONSHOT_API_KEY` | Legacy Kimi setup |
 
-### 2. Add the Secret
-
-Go to your repo **Settings → Secrets and variables → Actions** and add:
-
-| Secret | Value |
-|--------|-------|
-| `MOONSHOT_API_KEY` | Your `sk-...` API key |
-
-### 3. Create the Workflow
+### 2. Create the workflow
 
 ```yaml
-# .github/workflows/kimi-review.yml
-name: Kimi Code Review
+# .github/workflows/fiscalcr-review.yml
+name: FiscalCR Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, review_requested]
 
 permissions:
   contents: read
@@ -60,108 +46,116 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: howardpen9/kimi-code-reviewer@main
+      - uses: mof-malaysia/fiscal-cr@main
         with:
-          kimi_api_key: ${{ secrets.MOONSHOT_API_KEY }}
+          api_key: ${{ secrets.LLM_API_KEY }}
+          provider: openai-compatible
+          model: gpt-4.1-mini
+          base_url: https://your-llm-provider.com/v1
 ```
 
-That's it. Every PR will now get an AI code review.
+For legacy Kimi usage:
 
-### Action Inputs
+```yaml
+- uses: mof-malaysia/fiscal-cr@main
+  with:
+    kimi_api_key: ${{ secrets.MOONSHOT_API_KEY }}
+```
 
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `kimi_api_key` | Yes | — | Moonshot AI API key |
+### Action inputs
+
+| Input | Required | Default behavior | Description |
+| ----- | -------- | ---------------- | ----------- |
+| `api_key` | No | — | Recommended generic LLM API key |
+| `kimi_api_key` | No | — | Legacy Moonshot/Kimi API key |
 | `github_token` | No | `${{ github.token }}` | GitHub token for API access |
-| `model` | No | `kimi-k2.5` | Kimi model (262K context) |
-| `language` | No | `en` | Review language: `en`, `zh-TW`, `zh-CN`, `ja`, `ko` |
-| `fail_on` | No | `critical` | Fail the check on: `critical`, `warning`, `never` |
-| `config_path` | No | `.kimi-review.yml` | Path to config file |
+| `provider` | No | Repo config or built-in default | `openai-compatible` or `kimi` |
+| `model` | No | Repo config or built-in default | Model name override |
+| `base_url` | No | Repo config | Generic provider base URL override |
+| `kimi_base_url` | No | Repo config | Legacy base URL override |
+| `language` | No | Repo config or built-in default | Review language override |
+| `fail_on` | No | Repo config or built-in default | `critical`, `warning`, or `never` |
+| `config_path` | No | `.fiscalcr-review.yml` | Path to config file relative to repo root |
 
-### Action Outputs
+### Action outputs
 
 | Output | Description |
-|--------|-------------|
+| ------ | ----------- |
 | `review_summary` | Review summary text |
 | `annotations_count` | Number of inline annotations created |
 | `critical_count` | Number of critical issues found |
-| `tokens_used` | Total tokens consumed |
-| `cost_estimate` | Estimated API cost (USD) |
+| `tokens_used` | Total input + output tokens |
+| `cost_estimate` | Estimated API cost in USD |
 
-### Example: Fail on Warnings + Chinese Reviews
+### Notes on precedence
 
-```yaml
-- uses: howardpen9/kimi-code-reviewer@main
-  with:
-    kimi_api_key: ${{ secrets.MOONSHOT_API_KEY }}
-    language: zh-TW
-    fail_on: warning
-```
+- Repo config is loaded from `.fiscalcr-review.yml` by default.
+- Action inputs override repo config only when you explicitly provide them.
+- For `openai-compatible`, an explicit `base_url` is required.
+- For legacy `kimi`, the Kimi API URL is filled in automatically if you do not override it.
 
 ## Self-Hosted GitHub App
 
-For teams that want `@fiscalcr review` commands in PR comments.
+Use the app when you want comment-driven reviews such as `@fiscalcr review` on pull requests.
 
 ### Setup
 
 ```bash
-git clone https://github.com/howardpen9/kimi-code-reviewer.git
-cd kimi-code-reviewer
-npm install
-cp .env.example .env  # Fill in credentials
-npm run dev
+git clone https://github.com/mof-malaysia/fiscal-cr.git
+cd fiscal-cr
+pnpm install
+cp .env.example .env
+pnpm dev
 ```
 
-### Environment Variables
+### Environment variables
 
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `KIMI_API_KEY` | Yes | Moonshot AI API key |
-| `GITHUB_APP_ID` | Yes | Your GitHub App ID |
-| `GITHUB_PRIVATE_KEY` | Yes | GitHub App private key (PEM) |
-| `GITHUB_WEBHOOK_SECRET` | Yes | Webhook verification secret |
-| `PORT` | No | Server port (default: `3000`) |
-| `LOG_LEVEL` | No | Log level (default: `info`) |
+| -------- | -------- | ----------- |
+| `API_KEY` | Recommended | Generic provider API key |
+| `FISCALCR_API_KEY` | Optional | Alternate generic API key env name |
+| `KIMI_API_KEY` | Optional | Legacy Kimi API key |
+| `MODEL_PROVIDER` | Optional | Provider name (`openai-compatible` or `kimi`) |
+| `MODEL` | Optional | Model name |
+| `BASE_URL` | Optional | Operator-controlled base URL |
+| `GITHUB_APP_ID` | Yes | GitHub App ID |
+| `GITHUB_PRIVATE_KEY` | Yes | GitHub App private key |
+| `GITHUB_WEBHOOK_SECRET` | Yes | Webhook secret |
+| `PORT` | No | Server port, default `3000` |
+| `LOG_LEVEL` | No | Log level, default `info` |
 
-### @kimi Commands
-
-Comment on any PR to trigger:
+### Comment commands
 
 | Command | Description |
-|---------|-------------|
-| `@fiscalcr review` | Run a full code review |
-| `@kimi help` | Show available commands |
+| ------- | ----------- |
+| `@fiscalcr review` | Run a full review on the PR |
+| `@fiscalcr help` | Show available commands |
 
-### Webhook Events
+### Webhook events
 
 | Event | Trigger |
-|-------|---------|
+| ----- | ------- |
 | `pull_request.opened` | PR created |
 | `pull_request.synchronize` | New commits pushed |
 | `pull_request.review_requested` | Review requested |
-| `issue_comment.created` | `@kimi` mentioned in comment |
+| `issue_comment.created` | `@fiscalcr` command comment |
 
 ## Configuration
 
-Create `.kimi-review.yml` in your repo root to customize behavior:
+Create `.fiscalcr-review.yml` in your repository root:
 
 ```yaml
-# Review language (en, zh-TW, zh-CN, ja, ko)
 language: zh-TW
-
-# Kimi model
+provider: kimi
 model: kimi-k2.5
 
 review:
-  # Auto-trigger settings
   auto:
     enabled: true
-    onOpen: true        # Review when PR is opened
-    onPush: true        # Review on new commits
+    onOpen: true
+    onPush: true
     onReviewRequest: true
-    drafts: false       # Skip draft PRs
-
-  # What to check
+    drafts: false
   aspects:
     bugs: true
     security: true
@@ -170,276 +164,138 @@ review:
     bestPractices: true
     documentation: false
     testing: false
-
-  # Severity filter: critical | warning | suggestion | nitpick
   minSeverity: suggestion
-
-  # Max annotations per review (1-100)
   maxAnnotations: 30
-
-  # When to fail the check: critical | warning | never
   failOn: critical
 
-# File filters (minimatch glob patterns)
 files:
   include:
     - "**/*"
   exclude:
     - "**/node_modules/**"
     - "**/dist/**"
+    - "**/build/**"
     - "**/*.lock"
     - "**/*.min.*"
-  maxFileSize: 100000  # bytes
+    - "**/package-lock.json"
+    - "**/yarn.lock"
+    - "**/pnpm-lock.yaml"
+  maxFileSize: 100000
 
-# Custom review rules
 rules:
   - name: no-console-log
     description: "No console.log in production code"
     severity: warning
     filePattern: "src/**/*.ts"
 
-  - name: input-validation
-    description: "All API endpoints must validate input"
-    severity: critical
-    filePattern: "src/routes/**"
-
-# Custom prompt additions
 prompt:
   systemAppend: "Pay special attention to SQL injection risks"
   reviewFocus: "Focus on API input validation and error handling"
 
-# Prefix cache settings
 cache:
   enabled: true
   ttl: 3600
 ```
 
-If no config file is found, sensible defaults are used.
+If the configured file is not found, FiscalCR falls back to built-in defaults. Invalid configs fail fast instead of being silently ignored.
 
-## How It Works
+## How it works
 
+```text
+PR Event -> Extract Context -> Pack Context -> Call LLM -> Parse JSON -> Publish Annotations
 ```
-PR Event → Extract Context → Pack (256K) → Kimi API → Parse → Annotations
-```
 
-### Review Pipeline (12 Steps)
+### Review pipeline
 
-1. Create GitHub Check Run (in-progress)
+1. Create a GitHub Check Run
 2. Extract PR metadata, diff, and changed files
-3. Filter files by include/exclude patterns
-4. Pack context with 256K optimization
-5. Build cache-optimized message order
-6. Call Kimi API with structured JSON output
-7. Parse response (supports multiple output formats)
+3. Filter files by include/exclude rules
+4. Pack context to fit the available model budget
+5. Build cache-friendly prompt ordering
+6. Call the selected LLM provider
+7. Parse structured review output
 8. Filter annotations by minimum severity
-9. Limit to max annotation count
-10. Determine pass/fail conclusion
-11. Update Check Run with inline annotations
-12. Post PR review comment with summary
+9. Limit annotation count
+10. Update the Check Run and PR review summary
 
-### Context Packing Strategies
+### Context packing strategies
 
-Automatically selects the best strategy based on PR size:
+| PR size | Strategy | What gets sent |
+| ------- | -------- | -------------- |
+| Small (<50K tokens) | Full | Full file contents + diff |
+| Medium (50K–150K) | Mixed | Most-changed files in full, others as diff |
+| Large (>150K) | Chunked | Diff-heavy review with selective file context |
 
-| PR Size | Strategy | What Gets Sent |
-|---------|----------|----------------|
-| Small (<50K tokens) | **Full** | All file contents + full diff |
-| Medium (50–150K) | **Mixed** | Most-changed files in full, rest as diff only |
-| Large (>150K) | **Chunked** | Diff only, no file contents |
+## Cost model
 
-### Cost
+The current cost estimate logic uses the existing Kimi-oriented token pricing constants for rough estimation.
 
-Kimi's server-side prefix caching reduces repeat costs by ~75%:
-
-| Scenario | Estimated Cost |
-|----------|---------------|
-| First review of a PR | ~$0.01–0.02 |
-| Subsequent pushes (cache hit) | ~$0.003–0.01 |
-
-| Token Type | Rate |
-|-----------|------|
+| Token type | Rate |
+| ---------- | ---- |
 | Input | $0.39 / 1M tokens |
 | Output | $1.90 / 1M tokens |
 | Cached input | $0.10 / 1M tokens |
 
+Provider-specific pricing tables are a reasonable follow-up, but they are not part of this PR.
+
 ## Architecture
 
-```
-kimi-code-reviewer/
-├── action/              # GitHub Action entry point
-│   ├── action.yml       # Action metadata (inputs/outputs)
-│   ├── index.ts         # Action runner
-│   └── dist/            # Bundled Action (ncc)
+```text
+fiscal-cr/
+├── action/
+│   ├── action.yml
+│   ├── index.ts
+│   └── dist/
 ├── src/
-│   ├── index.ts         # Hono server entry point
-│   ├── app.ts           # GitHub App initialization
-│   ├── kimi/
-│   │   ├── client.ts          # Moonshot API client
-│   │   ├── context-packer.ts  # 256K context optimization
-│   │   ├── cache-strategy.ts  # Prefix cache message ordering
-│   │   ├── prompt-builder.ts  # System/user prompt construction
-│   │   └── response-parser.ts # Robust JSON extraction
-│   ├── github/
-│   │   ├── webhooks.ts   # Event handlers
-│   │   ├── pulls.ts      # PR data extraction
-│   │   ├── checks.ts     # Check Run API (annotations)
-│   │   └── comments.ts   # PR review comments
-│   ├── review/
-│   │   ├── orchestrator.ts    # 12-step review pipeline
-│   │   ├── file-filter.ts     # Glob-based file filtering
-│   │   ├── diff-analyzer.ts   # Unified diff parsing
-│   │   └── summary-builder.ts # Markdown summary generation
+│   ├── index.ts
+│   ├── app.ts
 │   ├── config/
-│   │   ├── schema.ts     # Zod config validation
-│   │   ├── defaults.ts   # Default config values
-│   │   └── loader.ts     # YAML config loader from repo
+│   ├── github/
+│   ├── kimi/
+│   ├── providers/
+│   ├── review/
+│   ├── types/
 │   └── utils/
-│       ├── tokens.ts     # Token estimation + cost calculation
-│       ├── logger.ts     # Pino structured logging
-│       └── errors.ts     # Custom error classes
 ├── test/
-│   └── unit/             # Vitest unit tests
-├── .kimi-review.yml      # Self-review config
-└── .github/workflows/
-    ├── ci.yml            # CI: lint + test + build
-    └── kimi-review.yml   # Self-review on PRs
+│   └── unit/
+└── .fiscalcr-review.yml
 ```
 
 ## Development
 
 ```bash
-npm run dev          # Start dev server (hot reload)
-npm test             # Run tests
-npm run build        # Compile TypeScript
-npm run build:action # Bundle GitHub Action with ncc
-npm run lint         # Type check only
+pnpm install
+pnpm test
+pnpm lint
+pnpm build:action
 ```
 
-## Severity Levels
+## Severity levels
 
 | Level | Meaning | Example |
-|-------|---------|---------|
-| `critical` | Must fix before merge | Bugs, security vulnerabilities, data loss |
-| `warning` | Should fix | Performance issues, bad practices |
-| `suggestion` | Nice to have | Readability, maintainability improvements |
-| `nitpick` | Optional | Style preferences, minor formatting |
-
-## Score
-
-Each review includes a quality score (0–100):
-
-| Range | Rating |
-|-------|--------|
-| 90–100 | Excellent |
-| 70–89 | Good |
-| 50–69 | Needs improvement |
-| < 50 | Significant issues |
-
----
+| ----- | ------- | ------- |
+| `critical` | Must fix before merge | Bugs, security issues, data loss risk |
+| `warning` | Should fix | Performance issues, risky practices |
+| `suggestion` | Nice to have | Readability and maintainability improvements |
+| `nitpick` | Optional | Minor style preferences |
 
 ## 中文說明
 
-### 簡介
-
-Kimi Code Reviewer 是基於 [Moonshot Kimi](https://platform.moonshot.ai) 大模型的 GitHub 代碼審查工具。與其他 AI code review 工具不同，Kimi 擁有 **256K token 的超長上下文窗口**，可以讀取 PR 中所有檔案的完整內容（不僅僅是 diff），提供更準確、更有上下文的審查建議。
-
-### 特色
-
-- **超長上下文**：256K token 窗口，可以同時理解多個檔案之間的關聯
-- **多語言支援**：審查意見支援繁體中文、簡體中文、英文、日文、韓文
-- **行內標註**：問題直接標註在 PR diff 的對應行上
-- **智能快取**：Prefix caching 讓重複審查節省 75% 費用
-- **靈活配置**：每個 repo 可以用 `.kimi-review.yml` 自訂審查規則
+FiscalCR 是一個支援多模型供應商的 GitHub PR 自動審查工具，保留了既有 Kimi 相容性，同時新增 OpenAI-compatible 供應商支援。
 
 ### 快速開始
 
-#### 1. 取得 API Key
+1. 在 GitHub Secrets 中新增 `LLM_API_KEY`（通用供應商）或 `MOONSHOT_API_KEY`（舊版 Kimi 流程）。
+2. 建立 workflow 並使用 `mof-malaysia/fiscal-cr@main`。
+3. 如需自訂規則，在 repo 根目錄新增 `.fiscalcr-review.yml`。
 
-前往 **[Kimi Code Console](https://www.kimi.com/code/console)** 取得 API key（推薦，專為程式碼任務優化）。也可使用 [platform.moonshot.ai](https://platform.moonshot.ai) 的通用 API key。
+### 重要行為
 
-#### 2. 設定 GitHub Secret
-
-在你的 repo 中前往 **Settings → Secrets and variables → Actions**，新增：
-
-- `MOONSHOT_API_KEY`：你的 Moonshot API key（`sk-...` 開頭）
-
-#### 3. 建立 Workflow
-
-在你的 repo 中建立 `.github/workflows/kimi-review.yml`：
-
-```yaml
-name: Kimi Code Review
-
-on:
-  pull_request:
-    types: [opened, synchronize]
-
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: howardpen9/kimi-code-reviewer@main
-        with:
-          kimi_api_key: ${{ secrets.MOONSHOT_API_KEY }}
-          language: zh-TW    # 使用繁體中文
-          fail_on: never     # 不讓 check 失敗
-```
-
-#### 4. 自訂配置（選填）
-
-在你的 repo 根目錄建立 `.kimi-review.yml`：
-
-```yaml
-language: zh-TW
-model: kimi-k2.5
-
-review:
-  aspects:
-    bugs: true           # 檢查 bug
-    security: true       # 檢查安全漏洞
-    performance: true    # 檢查效能問題
-    style: true          # 檢查程式風格
-    bestPractices: true  # 檢查最佳實踐
-  minSeverity: suggestion  # 最低回報等級
-  maxAnnotations: 30       # 最多標註數量
-  failOn: critical         # 只有 critical 時才 fail
-
-files:
-  exclude:
-    - "**/dist/**"
-    - "**/*.lock"
-
-# 自訂規則
-rules:
-  - name: 禁止 console.log
-    description: "正式程式碼不應包含 console.log"
-    severity: warning
-    filePattern: "src/**/*.ts"
-```
-
-### 費用估算
-
-| 場景 | 預估費用 |
-|------|---------|
-| 首次 PR 審查 | ~$0.01–0.02 |
-| 同一 PR 後續 push（快取命中） | ~$0.003–0.01 |
-
-### 嚴重程度說明
-
-| 等級 | 說明 | 範例 |
-|------|------|------|
-| `critical` | 必須在合併前修復 | Bug、安全漏洞、資料遺失風險 |
-| `warning` | 應該修復 | 效能問題、不良實踐 |
-| `suggestion` | 建議改善 | 可讀性、可維護性提升 |
-| `nitpick` | 可選 | 風格偏好、格式微調 |
-
----
+- 預設會搜尋 `.fiscalcr-review.yml`。
+- 也可以透過 `config_path` 指定其他檔名，例如 `fiscalcr.yaml`。
+- Action input 只有在你明確提供時才會覆蓋 repo config。
+- 若使用 `openai-compatible`，必須提供明確的 `base_url`。
+- PR 留言指令為 `@fiscalcr review` 與 `@fiscalcr help`。
 
 ## License
 
