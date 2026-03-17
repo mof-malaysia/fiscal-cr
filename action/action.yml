@@ -22,9 +22,8 @@ inputs:
     description: 'Model provider: openai-compatible or kimi (legacy)'
     required: false
   model:
-    description: 'Model to use (e.g., gpt-4.1, kimi-k2.5, llama-3.3-70b)'
+    description: 'Model to use (overrides repo config when provided)'
     required: false
-    default: 'kimi-k2.5'
   base_url:
     description: 'Generic base URL for provider API'
     required: false
@@ -32,13 +31,11 @@ inputs:
     description: 'Legacy: base URL for LLM API'
     required: false
   language:
-    description: 'Review comment language (en, zh-TW, zh-CN, ja, ko)'
+    description: 'Review comment language (overrides repo config when provided)'
     required: false
-    default: 'en'
   fail_on:
-    description: 'Fail the check on: critical, warning, never'
+    description: 'Fail the check on: critical, warning, never (overrides repo config when provided)'
     required: false
-    default: 'critical'
   config_path:
     description: 'Path to config file (relative to repo root)'
     required: false

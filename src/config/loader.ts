@@ -7,6 +7,16 @@ import { logger } from '../utils/logger.js';
 
 const CONFIG_FILENAME = '.fiscalcr-review.yml';
 
+function isNotFoundError(err: unknown): err is { status: number } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'status' in err &&
+    typeof (err as { status?: unknown }).status === 'number' &&
+    (err as { status: number }).status === 404
+  );
+}
+
 export async function loadConfig(
   octokit: Octokit,
   owner: string,
@@ -38,9 +48,12 @@ export async function loadConfig(
     return result.data;
   } catch (err) {
     if (err instanceof ConfigError) throw err;
-    // 404 — no config file, use defaults
-    logger.info({ configPath }, `No ${configPath} found, using defaults`);
-    return DEFAULT_CONFIG;
+    if (isNotFoundError(err)) {
+      logger.info({ configPath }, `No ${configPath} found, using defaults`);
+      return DEFAULT_CONFIG;
+    }
+
+    throw err;
   }
 }
 

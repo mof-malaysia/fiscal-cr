@@ -53280,6 +53280,13 @@ const DEFAULT_CONFIG = {
 
 
 const CONFIG_FILENAME = '.fiscalcr-review.yml';
+function isNotFoundError(err) {
+    return (typeof err === 'object' &&
+        err !== null &&
+        'status' in err &&
+        typeof err.status === 'number' &&
+        err.status === 404);
+}
 async function loadConfig(octokit, owner, repo, configPath = CONFIG_FILENAME) {
     try {
         const { data } = await octokit.repos.getContent({
@@ -53304,9 +53311,11 @@ async function loadConfig(octokit, owner, repo, configPath = CONFIG_FILENAME) {
     catch (err) {
         if (err instanceof ConfigError)
             throw err;
-        // 404 — no config file, use defaults
-        logger.info({ configPath }, `No ${configPath} found, using defaults`);
-        return DEFAULT_CONFIG;
+        if (isNotFoundError(err)) {
+            logger.info({ configPath }, `No ${configPath} found, using defaults`);
+            return DEFAULT_CONFIG;
+        }
+        throw err;
     }
 }
 function parseYaml(content) {
@@ -53331,11 +53340,12 @@ async function run() {
             throw new Error("Missing required input: api_key (or legacy kimi_api_key)");
         }
         const githubToken = core.getInput("github_token");
-        const providerInput = core.getInput("provider");
-        const model = core.getInput("model") || "kimi-k2.5";
-        const baseUrl = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+        const providerInput = core.getInput("provider") || undefined;
+        const modelInput = core.getInput("model") || undefined;
+        const baseUrlInput = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+        const languageInput = core.getInput("language") || undefined;
         const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
-        const failOn = (core.getInput("fail_on") || "critical");
+        const failOnInput = (core.getInput("fail_on") || undefined);
         const octokit = github.getOctokit(githubToken);
         const context = github.context;
         // Only run on pull requests
@@ -53353,11 +53363,18 @@ async function run() {
         const restOctokit = octokit.rest;
         // Load config from repo
         const config = await loadConfig(restOctokit, owner, repo, configPath);
-        // Override failOn from action input
-        config.review.failOn = failOn;
-        // Override model/baseUrl from action input
-        config.model = model;
-        config.baseUrl = baseUrl;
+        if (languageInput) {
+            config.language = languageInput;
+        }
+        if (failOnInput) {
+            config.review.failOn = failOnInput;
+        }
+        if (modelInput) {
+            config.model = modelInput;
+        }
+        if (baseUrlInput) {
+            config.baseUrl = baseUrlInput;
+        }
         // Create model provider
         const llm = createLLMProvider({
             apiKey,
@@ -53395,10 +53412,10 @@ async function run() {
         ]);
         await core.summary.write();
         // Fail the action if needed
-        if (failOn === "critical" && result.stats.critical > 0) {
+        if (config.review.failOn === "critical" && result.stats.critical > 0) {
             core.setFailed(`Found ${result.stats.critical} critical issue(s)`);
         }
-        else if (failOn === "warning" &&
+        else if (config.review.failOn === "warning" &&
             (result.stats.critical > 0 || result.stats.warning > 0)) {
             core.setFailed(`Found ${result.stats.critical} critical and ${result.stats.warning} warning issue(s)`);
         }

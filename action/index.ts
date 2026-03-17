@@ -14,11 +14,12 @@ async function run(): Promise<void> {
     }
 
     const githubToken = core.getInput("github_token");
-    const providerInput = core.getInput("provider");
-    const model = core.getInput("model") || "kimi-k2.5";
-    const baseUrl = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+    const providerInput = core.getInput("provider") || undefined;
+    const modelInput = core.getInput("model") || undefined;
+    const baseUrlInput = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+    const languageInput = core.getInput("language") || undefined;
     const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
-    const failOn = (core.getInput("fail_on") || "critical") as
+    const failOnInput = (core.getInput("fail_on") || undefined) as
       | "critical"
       | "warning"
       | "never";
@@ -45,11 +46,18 @@ async function run(): Promise<void> {
 
     // Load config from repo
     const config = await loadConfig(restOctokit as any, owner, repo, configPath);
-    // Override failOn from action input
-    config.review.failOn = failOn;
-    // Override model/baseUrl from action input
-    config.model = model;
-    config.baseUrl = baseUrl;
+    if (languageInput) {
+      config.language = languageInput as typeof config.language;
+    }
+    if (failOnInput) {
+      config.review.failOn = failOnInput;
+    }
+    if (modelInput) {
+      config.model = modelInput;
+    }
+    if (baseUrlInput) {
+      config.baseUrl = baseUrlInput;
+    }
 
     // Create model provider
     const llm = createLLMProvider({
@@ -102,10 +110,10 @@ async function run(): Promise<void> {
     await core.summary.write();
 
     // Fail the action if needed
-    if (failOn === "critical" && result.stats.critical > 0) {
+    if (config.review.failOn === "critical" && result.stats.critical > 0) {
       core.setFailed(`Found ${result.stats.critical} critical issue(s)`);
     } else if (
-      failOn === "warning" &&
+      config.review.failOn === "warning" &&
       (result.stats.critical > 0 || result.stats.warning > 0)
     ) {
       core.setFailed(
