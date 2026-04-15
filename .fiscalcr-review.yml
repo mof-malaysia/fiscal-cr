@@ -1,0 +1,16 @@
+language: zh-TW
+provider: openrouter
+model: nvidia/nemotron-3-super-120b-a12b:free
+
+review:
+  aspects:
+    security: true
+    performance: true
+    style: true
+    bestPractices: true
+  failOn: never
+
+files:
+  exclude:
+    - "action/dist/**"
+    - "*.lock"
