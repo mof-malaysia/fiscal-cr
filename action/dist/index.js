@@ -45751,8 +45751,12 @@ Focus on: ${aspects}
 - nitpick: Style preferences, minor formatting — optional
 
 ## Output Format
-Respond with a single JSON object matching this schema:
+Return only a single valid JSON object matching this schema:
 ${REVIEW_JSON_SCHEMA}
+
+Do not wrap the JSON in markdown fences.
+Do not add explanations before or after the JSON.
+If there are no issues, still return a valid JSON object with an empty annotations array.
 
 ## Rules
 - Only annotate lines that exist in the diff (added or modified lines)
@@ -50112,22 +50116,57 @@ const reviewResponseSchema = objectType({
     score: numberType().min(0).max(100),
     annotations: arrayType(annotationSchema).default([]),
 });
+function tryParseJson(text) {
+    try {
+        return JSON.parse(text);
+    }
+    catch { /* continue */ }
+    const repaired = text
+        .trim()
+        .replace(/^\uFEFF/, '')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, value) => JSON.stringify(value))
+        .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3')
+        .replace(/,\s*([}\]])/g, '$1');
+    try {
+        return JSON.parse(repaired);
+    }
+    catch {
+        return null;
+    }
+}
+function buildFallbackSummary(raw) {
+    const cleaned = raw
+        .replace(/```(?:json)?/gi, '')
+        .replace(/```/g, '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!cleaned) {
+        return 'Review completed, but the model returned an empty response.';
+    }
+    return cleaned.length > 280 ? `${cleaned.slice(0, 277)}...` : cleaned;
+}
 /**
  * Try multiple strategies to extract a JSON object from the AI response.
  */
 function extractJson(raw) {
     // Strategy 1: Direct JSON parse
-    try {
-        return JSON.parse(raw);
+    const direct = tryParseJson(raw);
+    if (direct !== null) {
+        return direct;
     }
-    catch { /* continue */ }
     // Strategy 2: Extract from markdown code block
     const codeBlockMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
     if (codeBlockMatch) {
-        try {
-            return JSON.parse(codeBlockMatch[1]);
+        const fromCodeBlock = tryParseJson(codeBlockMatch[1]);
+        if (fromCodeBlock !== null) {
+            return fromCodeBlock;
         }
-        catch { /* continue */ }
     }
     // Strategy 3: Find the outermost JSON object { ... } in the text
     const firstBrace = raw.indexOf('{');
@@ -50157,10 +50196,10 @@ function extractJson(raw) {
             else if (ch === '}') {
                 depth--;
                 if (depth === 0) {
-                    try {
-                        return JSON.parse(raw.slice(firstBrace, i + 1));
+                    const extracted = tryParseJson(raw.slice(firstBrace, i + 1));
+                    if (extracted !== null) {
+                        return extracted;
                     }
-                    catch { /* continue */ }
                     break;
                 }
             }
@@ -50174,14 +50213,17 @@ function parseAIResponse(raw, tokenUsage) {
     if (!parsed || typeof parsed !== 'object') {
         logger.error({ rawPreview: raw.slice(0, 500) }, 'Could not extract JSON from AI response');
         return {
-            summary: 'Failed to parse AI response as JSON.',
+            summary: buildFallbackSummary(raw),
             score: 50,
             annotations: [],
             stats: { critical: 0, warning: 0, suggestion: 0, nitpick: 0 },
             tokensUsed: tokenUsage,
         };
     }
-    const result = reviewResponseSchema.safeParse(parsed);
+    const normalizedParsed = Array.isArray(parsed)
+        ? { summary: 'Review completed', score: 50, annotations: parsed }
+        : parsed;
+    const result = reviewResponseSchema.safeParse(normalizedParsed);
     if (result.success) {
         const data = result.data;
         const stats = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
@@ -50198,7 +50240,7 @@ function parseAIResponse(raw, tokenUsage) {
     }
     // Schema validation failed — salvage what we can
     logger.warn({ errors: result.error.issues }, 'AI response schema validation failed, salvaging');
-    const partial = parsed;
+    const partial = normalizedParsed;
     const summary = typeof partial.summary === 'string' ? partial.summary : 'Review completed (partial parse)';
     const score = typeof partial.score === 'number' ? Math.min(100, Math.max(0, partial.score)) : 50;
     // Try to salvage annotations even if some are invalid
@@ -53144,7 +53186,7 @@ class OpenAICompatibleProvider {
             throw new ConfigError('OpenAI-compatible provider requires an explicit baseUrl');
         }
         this.baseUrl = config.baseUrl;
-        this.temperature = config.temperature ?? 1;
+        this.temperature = config.temperature ?? 0.2;
         this.timeout = config.timeout ?? 300_000;
     }
     async chatCompletion(params) {
