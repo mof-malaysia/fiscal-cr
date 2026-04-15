@@ -98,9 +98,15 @@ async function run(): Promise<void> {
     );
 
     // Summary in job output
+    const displayProvider = config.baseUrl?.toLowerCase().includes("openrouter.ai")
+      ? "openrouter"
+      : providerInput || config.provider;
+
     core.summary
       .addHeading("FiscalCR Code Review", 2)
       .addRaw(`**Score:** ${result.score}/100\n\n`)
+      .addRaw(`**Provider:** ${displayProvider}\n\n`)
+      .addRaw(`**Model:** ${config.model}\n\n`)
       .addRaw(result.summary)
       .addTable([
         [

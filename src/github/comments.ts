@@ -10,6 +10,21 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
   nitpick: '⚪',
 };
 
+function getProviderLabel(pricingContext?: {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+}): string {
+  const provider = pricingContext?.provider ?? 'kimi';
+  const baseUrl = pricingContext?.baseUrl;
+
+  if (baseUrl?.toLowerCase().includes('openrouter.ai')) {
+    return 'openrouter';
+  }
+
+  return provider;
+}
+
 export async function createPRReview(
   octokit: Octokit,
   params: {
@@ -81,12 +96,16 @@ function buildReviewBody(
   pricingContext?: { provider?: string; model?: string; baseUrl?: string },
 ): string {
   const cost = calculateCost(result.tokensUsed, pricingContext);
+  const providerLabel = getProviderLabel(pricingContext);
+  const modelLabel = pricingContext?.model ?? 'default';
   const lines: string[] = [];
 
   lines.push('## 🤖 FiscalCR Code Review\n');
   lines.push(result.summary);
   lines.push('');
   lines.push(`**Score:** ${result.score}/100`);
+  lines.push(`**Provider:** ${providerLabel}`);
+  lines.push(`**Model:** ${modelLabel}`);
   lines.push('');
   lines.push('| Severity | Count |');
   lines.push('|----------|-------|');
