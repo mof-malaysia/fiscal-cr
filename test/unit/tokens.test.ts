@@ -119,6 +119,23 @@ describe('calculateCost', () => {
     expect(cost).toBeCloseTo(18, 2);
   });
 
+  it('should resolve OpenRouter models with variant suffixes', () => {
+    const cost = calculateCost(
+      {
+        input: 1_000_000,
+        output: 1_000_000,
+        cached: 0,
+      },
+      {
+        provider: 'openrouter',
+        model: 'openai/gpt-4o-mini:free',
+        baseUrl: 'https://openrouter.ai/api/v1',
+      },
+    );
+
+    expect(cost).toBeCloseTo(0.75, 2);
+  });
+
   it('should account for cached tokens', () => {
     const costWithCache = calculateCost(
       {

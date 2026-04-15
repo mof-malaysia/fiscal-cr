@@ -26,6 +26,17 @@ describe('provider factory', () => {
     expect(typeof provider.chatCompletion).toBe('function');
   });
 
+  it('creates provider for openrouter without requiring an explicit baseUrl', () => {
+    const provider = createLLMProvider({
+      apiKey: 'test-key',
+      provider: 'openrouter',
+      model: 'nvidia/nemotron-3-super-120b-a12b:free',
+    });
+
+    expect(provider).toBeTruthy();
+    expect(typeof provider.chatCompletion).toBe('function');
+  });
+
   it('throws ConfigError when openai-compatible has no baseUrl', () => {
     expect(() =>
       createLLMProvider({

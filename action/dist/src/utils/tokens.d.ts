@@ -10,5 +10,9 @@ export declare function calculateCost(usage: {
     input: number;
     output: number;
     cached: number;
+}, options?: {
+    provider?: string;
+    model?: string;
+    baseUrl?: string;
 }): number;
 //# sourceMappingURL=tokens.d.ts.map

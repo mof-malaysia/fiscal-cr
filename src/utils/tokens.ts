@@ -27,10 +27,16 @@ export function estimateTokens(text: string): number {
 function getModelCandidates(model?: string): string[] {
   if (!model) return [];
 
-  const trimmed = model.trim();
+  const trimmed = model.trim().toLowerCase();
+  const withoutVariant = trimmed.includes(':') ? trimmed.split(':')[0] : trimmed;
   const withoutVendor = trimmed.includes('/') ? trimmed.split('/').slice(1).join('/') : trimmed;
+  const withoutVendorOrVariant = withoutVariant.includes('/')
+    ? withoutVariant.split('/').slice(1).join('/')
+    : withoutVariant;
 
-  return Array.from(new Set([trimmed, withoutVendor]));
+  return Array.from(
+    new Set([trimmed, withoutVariant, withoutVendor, withoutVendorOrVariant].filter(Boolean)),
+  );
 }
 
 function findEntryInProvider(provider: string, model?: string): PricingEntry | undefined {
