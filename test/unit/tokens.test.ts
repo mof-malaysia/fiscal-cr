@@ -27,27 +27,123 @@ describe('estimateTokens', () => {
 });
 
 describe('calculateCost', () => {
-  it('should calculate cost based on token usage', () => {
+  it('should calculate cost from the pricing catalog for the default Kimi model', () => {
     const cost = calculateCost({
       input: 1_000_000,
       output: 1_000_000,
       cached: 0,
     });
-    // input: $0.39 + output: $1.90 = $2.29
-    expect(cost).toBeCloseTo(2.29, 2);
+
+    expect(cost).toBeCloseTo(3.6, 2);
+  });
+
+  it('should resolve popular OpenAI models from the pricing catalog', () => {
+    const cost = calculateCost(
+      {
+        input: 1_000_000,
+        output: 1_000_000,
+        cached: 0,
+      },
+      {
+        provider: 'openai-compatible',
+        model: 'gpt-4o-mini',
+      },
+    );
+
+    expect(cost).toBeCloseTo(0.75, 2);
+  });
+
+  it('should resolve OpenRouter models from the pricing catalog', () => {
+    const cost = calculateCost(
+      {
+        input: 1_000_000,
+        output: 1_000_000,
+        cached: 0,
+      },
+      {
+        provider: 'openai-compatible',
+        model: 'openai/gpt-4o-mini',
+        baseUrl: 'https://openrouter.ai/api/v1',
+      },
+    );
+
+    expect(cost).toBeCloseTo(0.75, 2);
+  });
+
+  it('should resolve newly added GPT-5.4 mini pricing', () => {
+    const cost = calculateCost(
+      {
+        input: 1_000_000,
+        output: 1_000_000,
+        cached: 0,
+      },
+      {
+        provider: 'openai-compatible',
+        model: 'gpt-5.4-mini',
+      },
+    );
+
+    expect(cost).toBeCloseTo(5.25, 2);
+  });
+
+  it('should resolve Claude Sonnet 4.6 pricing by model name', () => {
+    const cost = calculateCost(
+      {
+        input: 1_000_000,
+        output: 1_000_000,
+        cached: 0,
+      },
+      {
+        provider: 'openai-compatible',
+        model: 'claude-sonnet-4.6',
+      },
+    );
+
+    expect(cost).toBeCloseTo(18, 2);
+  });
+
+  it('should resolve OpenRouter Claude Sonnet 4.6 pricing', () => {
+    const cost = calculateCost(
+      {
+        input: 1_000_000,
+        output: 1_000_000,
+        cached: 0,
+      },
+      {
+        provider: 'openai-compatible',
+        model: 'anthropic/claude-sonnet-4.6',
+        baseUrl: 'https://openrouter.ai/api/v1',
+      },
+    );
+
+    expect(cost).toBeCloseTo(18, 2);
   });
 
   it('should account for cached tokens', () => {
-    const costWithCache = calculateCost({
-      input: 500_000,
-      output: 100_000,
-      cached: 500_000,
-    });
-    const costWithoutCache = calculateCost({
-      input: 1_000_000,
-      output: 100_000,
-      cached: 0,
-    });
+    const costWithCache = calculateCost(
+      {
+        input: 500_000,
+        output: 100_000,
+        cached: 500_000,
+      },
+      {
+        provider: 'openai-compatible',
+        model: 'gpt-4o-mini',
+      },
+    );
+
+    const costWithoutCache = calculateCost(
+      {
+        input: 1_000_000,
+        output: 100_000,
+        cached: 0,
+      },
+      {
+        provider: 'openai-compatible',
+        model: 'gpt-4o-mini',
+      },
+    );
+
     expect(costWithCache).toBeLessThan(costWithoutCache);
   });
 });
