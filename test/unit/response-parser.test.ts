@@ -140,9 +140,25 @@ That concludes my review.`;
     expect(result.summary).toBe('Mixed results');
   });
 
-  it('returns fallback for completely unparseable text', () => {
-    const raw = 'I cannot provide a review for this PR.';
+  it('parses common JSON-like output with unquoted keys and trailing commas', () => {
+    const raw = `Here is the review:
+    {
+      summary: 'Mostly good overall',
+      score: 84,
+      annotations: [],
+    }`;
+
     const result = parseAIResponse(raw, usage);
+    expect(result.summary).toBe('Mostly good overall');
+    expect(result.score).toBe(84);
+    expect(result.annotations).toHaveLength(0);
+  });
+
+  it('uses the model text as a summary when no JSON can be extracted', () => {
+    const raw = 'The PR looks mostly fine. I would suggest adding more validation around user input and improving error handling.';
+    const result = parseAIResponse(raw, usage);
+    expect(result.summary).toContain('The PR looks mostly fine');
+    expect(result.summary).not.toContain('Failed to parse AI response as JSON');
     expect(result.score).toBe(50);
     expect(result.annotations).toHaveLength(0);
     expect(result.tokensUsed).toEqual(usage);

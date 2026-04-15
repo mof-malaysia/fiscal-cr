@@ -36,8 +36,12 @@ Focus on: ${aspects}
 - nitpick: Style preferences, minor formatting — optional
 
 ## Output Format
-Respond with a single JSON object matching this schema:
+Return only a single valid JSON object matching this schema:
 ${REVIEW_JSON_SCHEMA}
+
+Do not wrap the JSON in markdown fences.
+Do not add explanations before or after the JSON.
+If there are no issues, still return a valid JSON object with an empty annotations array.
 
 ## Rules
 - Only annotate lines that exist in the diff (added or modified lines)

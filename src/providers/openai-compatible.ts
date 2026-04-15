@@ -41,7 +41,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       throw new ConfigError('OpenAI-compatible provider requires an explicit baseUrl');
     }
     this.baseUrl = config.baseUrl;
-    this.temperature = config.temperature ?? 1;
+    this.temperature = config.temperature ?? 0.2;
     this.timeout = config.timeout ?? 300_000;
   }
 
