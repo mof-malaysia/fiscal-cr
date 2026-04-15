@@ -48,21 +48,62 @@ const reviewResponseSchema = z.object({
   annotations: z.array(annotationSchema).default([]),
 });
 
+function tryParseJson(text: string): unknown | null {
+  try {
+    return JSON.parse(text);
+  } catch { /* continue */ }
+
+  const repaired = text
+    .trim()
+    .replace(/^\uFEFF/, '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, value: string) => JSON.stringify(value))
+    .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3')
+    .replace(/,\s*([}\]])/g, '$1');
+
+  try {
+    return JSON.parse(repaired);
+  } catch {
+    return null;
+  }
+}
+
+function buildFallbackSummary(raw: string): string {
+  const cleaned = raw
+    .replace(/```(?:json)?/gi, '')
+    .replace(/```/g, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) {
+    return 'Review completed, but the model returned an empty response.';
+  }
+
+  return cleaned.length > 280 ? `${cleaned.slice(0, 277)}...` : cleaned;
+}
+
 /**
  * Try multiple strategies to extract a JSON object from the AI response.
  */
 function extractJson(raw: string): unknown | null {
   // Strategy 1: Direct JSON parse
-  try {
-    return JSON.parse(raw);
-  } catch { /* continue */ }
+  const direct = tryParseJson(raw);
+  if (direct !== null) {
+    return direct;
+  }
 
   // Strategy 2: Extract from markdown code block
   const codeBlockMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
   if (codeBlockMatch) {
-    try {
-      return JSON.parse(codeBlockMatch[1]);
-    } catch { /* continue */ }
+    const fromCodeBlock = tryParseJson(codeBlockMatch[1]);
+    if (fromCodeBlock !== null) {
+      return fromCodeBlock;
+    }
   }
 
   // Strategy 3: Find the outermost JSON object { ... } in the text
@@ -91,9 +132,10 @@ function extractJson(raw: string): unknown | null {
       else if (ch === '}') {
         depth--;
         if (depth === 0) {
-          try {
-            return JSON.parse(raw.slice(firstBrace, i + 1));
-          } catch { /* continue */ }
+          const extracted = tryParseJson(raw.slice(firstBrace, i + 1));
+          if (extracted !== null) {
+            return extracted;
+          }
           break;
         }
       }
@@ -114,7 +156,7 @@ export function parseAIResponse(
   if (!parsed || typeof parsed !== 'object') {
     logger.error({ rawPreview: raw.slice(0, 500) }, 'Could not extract JSON from AI response');
     return {
-      summary: 'Failed to parse AI response as JSON.',
+      summary: buildFallbackSummary(raw),
       score: 50,
       annotations: [],
       stats: { critical: 0, warning: 0, suggestion: 0, nitpick: 0 },
@@ -122,7 +164,11 @@ export function parseAIResponse(
     };
   }
 
-  const result = reviewResponseSchema.safeParse(parsed);
+  const normalizedParsed = Array.isArray(parsed)
+    ? { summary: 'Review completed', score: 50, annotations: parsed }
+    : parsed;
+
+  const result = reviewResponseSchema.safeParse(normalizedParsed);
   if (result.success) {
     const data = result.data;
     const stats: Record<Severity, number> = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
@@ -140,7 +186,7 @@ export function parseAIResponse(
 
   // Schema validation failed — salvage what we can
   logger.warn({ errors: result.error.issues }, 'AI response schema validation failed, salvaging');
-  const partial = parsed as Record<string, unknown>;
+  const partial = normalizedParsed as Record<string, unknown>;
   const summary = typeof partial.summary === 'string' ? partial.summary : 'Review completed (partial parse)';
   const score = typeof partial.score === 'number' ? Math.min(100, Math.max(0, partial.score)) : 50;
 

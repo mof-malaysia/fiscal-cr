@@ -1,5 +1,5 @@
 import type { LLMProvider } from './interface.js';
-export declare const SUPPORTED_PROVIDERS: readonly ["openai-compatible", "kimi"];
+export declare const SUPPORTED_PROVIDERS: readonly ["openai-compatible", "openrouter", "kimi"];
 export declare function createLLMProvider(config: {
     apiKey: string;
     model: string;

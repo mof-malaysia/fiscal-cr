@@ -45504,7 +45504,13 @@ var __webpack_exports__ = {};
 var core = __nccwpck_require__(6966);
 // EXTERNAL MODULE: ./node_modules/.pnpm/@actions+github@6.0.1/node_modules/@actions/github/lib/github.js
 var github = __nccwpck_require__(4903);
+;// CONCATENATED MODULE: ./src/config/llm_pricing_code_review.json
+const llm_pricing_code_review_namespaceObject = /*#__PURE__*/JSON.parse('{"_meta":{"currency":"USD","unit":"per_1m_tokens","use_case":"code_review_pricing","last_updated":"2026-04-15","note":"cached_input = prompt caching for system instructions/repeated context"},"openai":{"gpt-5.4":{"input":2.5,"cached_input":0.25,"output":15},"gpt-5.4-mini":{"input":0.75,"cached_input":0.075,"output":4.5},"gpt-5.4-nano":{"input":0.2,"cached_input":0.02,"output":1.25},"gpt-4.1":{"input":3,"cached_input":0.75,"output":12,"batch_discount":0.5},"gpt-4.1-mini":{"input":0.8,"cached_input":0.2,"output":3.2,"batch_discount":0.5},"gpt-4o":{"input":2.5,"cached_input":1.25,"output":10,"batch_discount":0.5},"gpt-4o-mini":{"input":0.15,"cached_input":0.075,"output":0.6,"batch_discount":0.5},"o3":{"input":0.4,"cached_input":0.2,"output":1.6},"o4-mini":{"input":0.6,"cached_input":0.3,"output":2.4}},"anthropic":{"claude-opus-4.6":{"input":5,"cached_input":0.5,"output":25},"claude-opus-4.5":{"input":5,"cached_input":0.5,"output":25},"claude-opus-4.1":{"input":15,"cached_input":1.5,"output":75},"claude-opus-4":{"input":15,"cached_input":1.5,"output":75},"claude-sonnet-4.6":{"input":3,"cached_input":0.3,"output":15},"claude-sonnet-4.5":{"input":3,"cached_input":0.3,"output":15},"claude-sonnet-4":{"input":3,"cached_input":0.3,"output":15},"claude-sonnet-3.7":{"input":3,"cached_input":0.3,"output":15},"claude-haiku-4.5":{"input":1,"cached_input":0.1,"output":5},"claude-haiku-3.5":{"input":0.8,"cached_input":0.08,"output":4},"claude-opus-3":{"input":15,"cached_input":1.5,"output":75},"claude-haiku-3":{"input":0.25,"cached_input":0.03,"output":1.25}},"google":{"gemini-2.5-pro":{"input":1.25,"cached_input":0.1,"output":10},"gemini-2.5-flash":{"input":0.3,"cached_input":0.025,"output":2.5},"gemini-2.0-flash":{"input":0.1,"cached_input":0.025,"output":0.4}},"kimi":{"kimi-k2.5":{"input":0.6,"cached_input":0.12,"output":3},"kimi-k2":{"input":0.6,"cached_input":0.12,"output":3},"kimi-k1.5":{"input":0.5,"cached_input":0.1,"output":2}},"deepseek":{"deepseek-v3.2":{"input":0.28,"cached_input":0.028,"output":0.42},"deepseek-r1":{"input":0.55,"cached_input":0.14,"output":2.19},"deepseek-chat":{"input":0.28,"cached_input":0.028,"output":0.42}},"xai":{"grok-4.1":{"input":0.2,"output":0.5},"grok-4":{"input":3,"output":15}},"openrouter":{"openai/gpt-5.4":{"input":2.5,"cached_input":0.25,"output":15},"openai/gpt-5.4-mini":{"input":0.75,"cached_input":0.075,"output":4.5},"openai/gpt-5.4-nano":{"input":0.2,"cached_input":0.02,"output":1.25},"openai/gpt-4.1":{"input":3,"cached_input":0.75,"output":12},"openai/gpt-4.1-mini":{"input":0.8,"cached_input":0.2,"output":3.2},"openai/gpt-4o":{"input":2.5,"cached_input":1.25,"output":10},"openai/gpt-4o-mini":{"input":0.15,"cached_input":0.075,"output":0.6},"openai/o3":{"input":0.4,"cached_input":0.2,"output":1.6},"openai/o4-mini":{"input":0.6,"cached_input":0.3,"output":2.4},"anthropic/claude-opus-4.6":{"input":5,"cached_input":0.5,"output":25},"anthropic/claude-sonnet-4.6":{"input":3,"cached_input":0.3,"output":15},"anthropic/claude-sonnet-4.5":{"input":3,"cached_input":0.3,"output":15},"anthropic/claude-haiku-4.5":{"input":1,"cached_input":0.1,"output":5},"google/gemini-2.5-pro":{"input":1.25,"cached_input":0.1,"output":10},"google/gemini-2.5-flash":{"input":0.3,"cached_input":0.025,"output":2.5},"deepseek/deepseek-r1":{"input":0.55,"cached_input":0.14,"output":2.19},"deepseek/deepseek-chat":{"input":0.28,"cached_input":0.028,"output":0.42},"x-ai/grok-4.1":{"input":0.2,"output":0.5},"x-ai/grok-4":{"input":3,"output":15}}}');
 ;// CONCATENATED MODULE: ./src/utils/tokens.ts
+
+const PRICING_CATALOG = llm_pricing_code_review_namespaceObject;
+const DEFAULT_PROVIDER = 'kimi';
+const DEFAULT_MODEL = 'kimi-k2.5';
 /**
  * Rough token estimation. ~4 chars per token for English,
  * ~2 chars per token for CJK. Good enough for context budget planning.
@@ -45515,13 +45521,68 @@ function estimateTokens(text) {
     const nonCjkLength = text.length - cjkCount;
     return Math.ceil(nonCjkLength / 4 + cjkCount / 2);
 }
+function getModelCandidates(model) {
+    if (!model)
+        return [];
+    const trimmed = model.trim().toLowerCase();
+    const withoutVariant = trimmed.includes(':') ? trimmed.split(':')[0] : trimmed;
+    const withoutVendor = trimmed.includes('/') ? trimmed.split('/').slice(1).join('/') : trimmed;
+    const withoutVendorOrVariant = withoutVariant.includes('/')
+        ? withoutVariant.split('/').slice(1).join('/')
+        : withoutVariant;
+    return Array.from(new Set([trimmed, withoutVariant, withoutVendor, withoutVendorOrVariant].filter(Boolean)));
+}
+function findEntryInProvider(provider, model) {
+    const entries = PRICING_CATALOG[provider];
+    if (!entries)
+        return undefined;
+    for (const candidate of getModelCandidates(model)) {
+        if (candidate in entries) {
+            return entries[candidate];
+        }
+    }
+    return undefined;
+}
+function findEntryAcrossProviders(model) {
+    if (!model)
+        return undefined;
+    for (const provider of Object.keys(PRICING_CATALOG)) {
+        if (provider === '_meta')
+            continue;
+        const entry = findEntryInProvider(provider, model);
+        if (entry)
+            return entry;
+    }
+    return undefined;
+}
+function resolvePricingEntry(options) {
+    const defaultEntry = PRICING_CATALOG[DEFAULT_PROVIDER]?.[DEFAULT_MODEL];
+    if (!defaultEntry) {
+        throw new Error(`Missing default pricing entry for ${DEFAULT_PROVIDER}/${DEFAULT_MODEL}`);
+    }
+    const provider = options?.provider?.toLowerCase();
+    const model = options?.model;
+    const baseUrl = options?.baseUrl?.toLowerCase();
+    if (baseUrl?.includes('openrouter.ai')) {
+        return (findEntryInProvider('openrouter', model) ??
+            findEntryAcrossProviders(model) ??
+            defaultEntry);
+    }
+    if (provider && provider !== 'openai-compatible') {
+        return (findEntryInProvider(provider, model) ??
+            findEntryAcrossProviders(model) ??
+            defaultEntry);
+    }
+    return findEntryAcrossProviders(model) ?? defaultEntry;
+}
 /**
  * Calculate API cost in USD based on token usage.
  */
-function calculateCost(usage) {
-    const inputCost = (usage.input / 1_000_000) * 0.39;
-    const outputCost = (usage.output / 1_000_000) * 1.9;
-    const cachedCost = (usage.cached / 1_000_000) * 0.1;
+function calculateCost(usage, options) {
+    const pricing = resolvePricingEntry(options);
+    const inputCost = (usage.input / 1_000_000) * pricing.input;
+    const outputCost = (usage.output / 1_000_000) * pricing.output;
+    const cachedCost = (usage.cached / 1_000_000) * (pricing.cached_input ?? pricing.input);
     return Math.round((inputCost + outputCost + cachedCost) * 10000) / 10000;
 }
 
@@ -45690,8 +45751,12 @@ Focus on: ${aspects}
 - nitpick: Style preferences, minor formatting — optional
 
 ## Output Format
-Respond with a single JSON object matching this schema:
+Return only a single valid JSON object matching this schema:
 ${REVIEW_JSON_SCHEMA}
+
+Do not wrap the JSON in markdown fences.
+Do not add explanations before or after the JSON.
+If there are no issues, still return a valid JSON object with an empty annotations array.
 
 ## Rules
 - Only annotate lines that exist in the diff (added or modified lines)
@@ -50051,22 +50116,57 @@ const reviewResponseSchema = objectType({
     score: numberType().min(0).max(100),
     annotations: arrayType(annotationSchema).default([]),
 });
+function tryParseJson(text) {
+    try {
+        return JSON.parse(text);
+    }
+    catch { /* continue */ }
+    const repaired = text
+        .trim()
+        .replace(/^\uFEFF/, '')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, value) => JSON.stringify(value))
+        .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3')
+        .replace(/,\s*([}\]])/g, '$1');
+    try {
+        return JSON.parse(repaired);
+    }
+    catch {
+        return null;
+    }
+}
+function buildFallbackSummary(raw) {
+    const cleaned = raw
+        .replace(/```(?:json)?/gi, '')
+        .replace(/```/g, '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!cleaned) {
+        return 'Review completed, but the model returned an empty response.';
+    }
+    return cleaned.length > 280 ? `${cleaned.slice(0, 277)}...` : cleaned;
+}
 /**
  * Try multiple strategies to extract a JSON object from the AI response.
  */
 function extractJson(raw) {
     // Strategy 1: Direct JSON parse
-    try {
-        return JSON.parse(raw);
+    const direct = tryParseJson(raw);
+    if (direct !== null) {
+        return direct;
     }
-    catch { /* continue */ }
     // Strategy 2: Extract from markdown code block
     const codeBlockMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
     if (codeBlockMatch) {
-        try {
-            return JSON.parse(codeBlockMatch[1]);
+        const fromCodeBlock = tryParseJson(codeBlockMatch[1]);
+        if (fromCodeBlock !== null) {
+            return fromCodeBlock;
         }
-        catch { /* continue */ }
     }
     // Strategy 3: Find the outermost JSON object { ... } in the text
     const firstBrace = raw.indexOf('{');
@@ -50096,10 +50196,10 @@ function extractJson(raw) {
             else if (ch === '}') {
                 depth--;
                 if (depth === 0) {
-                    try {
-                        return JSON.parse(raw.slice(firstBrace, i + 1));
+                    const extracted = tryParseJson(raw.slice(firstBrace, i + 1));
+                    if (extracted !== null) {
+                        return extracted;
                     }
-                    catch { /* continue */ }
                     break;
                 }
             }
@@ -50113,14 +50213,17 @@ function parseAIResponse(raw, tokenUsage) {
     if (!parsed || typeof parsed !== 'object') {
         logger.error({ rawPreview: raw.slice(0, 500) }, 'Could not extract JSON from AI response');
         return {
-            summary: 'Failed to parse AI response as JSON.',
+            summary: buildFallbackSummary(raw),
             score: 50,
             annotations: [],
             stats: { critical: 0, warning: 0, suggestion: 0, nitpick: 0 },
             tokensUsed: tokenUsage,
         };
     }
-    const result = reviewResponseSchema.safeParse(parsed);
+    const normalizedParsed = Array.isArray(parsed)
+        ? { summary: 'Review completed', score: 50, annotations: parsed }
+        : parsed;
+    const result = reviewResponseSchema.safeParse(normalizedParsed);
     if (result.success) {
         const data = result.data;
         const stats = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
@@ -50137,7 +50240,7 @@ function parseAIResponse(raw, tokenUsage) {
     }
     // Schema validation failed — salvage what we can
     logger.warn({ errors: result.error.issues }, 'AI response schema validation failed, salvaging');
-    const partial = parsed;
+    const partial = normalizedParsed;
     const summary = typeof partial.summary === 'string' ? partial.summary : 'Review completed (partial parse)';
     const score = typeof partial.score === 'number' ? Math.min(100, Math.max(0, partial.score)) : 50;
     // Try to salvage annotations even if some are invalid
@@ -50312,15 +50415,23 @@ const SEVERITY_EMOJI = {
     suggestion: '🔵',
     nitpick: '⚪',
 };
+function getProviderLabel(pricingContext) {
+    const provider = pricingContext?.provider ?? 'kimi';
+    const baseUrl = pricingContext?.baseUrl;
+    if (baseUrl?.toLowerCase().includes('openrouter.ai')) {
+        return 'openrouter';
+    }
+    return provider;
+}
 async function createPRReview(octokit, params) {
-    const { owner, repo, pullNumber, commitSha, result, failOn } = params;
+    const { owner, repo, pullNumber, commitSha, result, failOn, provider, model, baseUrl } = params;
     const shouldRequestChanges = failOn === 'critical'
         ? result.stats.critical > 0
         : failOn === 'warning'
             ? result.stats.critical > 0 || result.stats.warning > 0
             : false;
     const event = shouldRequestChanges ? 'REQUEST_CHANGES' : 'COMMENT';
-    const body = buildReviewBody(result);
+    const body = buildReviewBody(result, { provider, model, baseUrl });
     // Create the review with inline comments
     const comments = result.annotations
         .filter((a) => a.severity !== 'nitpick') // nitpicks only go to Check annotations
@@ -50355,13 +50466,17 @@ async function createPRReview(octokit, params) {
         });
     }
 }
-function buildReviewBody(result) {
-    const cost = calculateCost(result.tokensUsed);
+function buildReviewBody(result, pricingContext) {
+    const cost = calculateCost(result.tokensUsed, pricingContext);
+    const providerLabel = getProviderLabel(pricingContext);
+    const modelLabel = pricingContext?.model ?? 'default';
     const lines = [];
     lines.push('## 🤖 FiscalCR Code Review\n');
     lines.push(result.summary);
     lines.push('');
     lines.push(`**Score:** ${result.score}/100`);
+    lines.push(`**Provider:** ${providerLabel}`);
+    lines.push(`**Model:** ${modelLabel}`);
     lines.push('');
     lines.push('| Severity | Count |');
     lines.push('|----------|-------|');
@@ -53024,6 +53139,9 @@ class ReviewOrchestrator {
                 commitSha: headSha,
                 result,
                 failOn: this.config.review.failOn,
+                provider: this.config.provider,
+                model: this.config.model,
+                baseUrl: this.config.baseUrl,
             });
             logger.info({
                 pullNumber,
@@ -53068,25 +53186,48 @@ class OpenAICompatibleProvider {
             throw new ConfigError('OpenAI-compatible provider requires an explicit baseUrl');
         }
         this.baseUrl = config.baseUrl;
-        this.temperature = config.temperature ?? 1;
+        this.temperature = config.temperature ?? 0.2;
         this.timeout = config.timeout ?? 300_000;
     }
     async chatCompletion(params) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this.timeout);
         try {
-            return await this.performCompletionRequest(params.messages, params.responseFormat, controller.signal);
+            const response = await this.performCompletionRequest(params.messages, params.responseFormat, controller.signal);
+            if (this.baseUrl.toLowerCase().includes('openrouter.ai') &&
+                params.responseFormat?.type === 'json_object' &&
+                !response.content.trim()) {
+                logger.warn({ model: this.model, baseUrl: this.baseUrl }, 'OpenRouter returned empty structured output, retrying without response_format');
+                const retryResponse = await this.performCompletionRequest(params.messages, undefined, controller.signal);
+                return retryResponse.content.trim() ? retryResponse : response;
+            }
+            return response;
         }
         finally {
             clearTimeout(timer);
         }
     }
+    extractTextContent(message) {
+        const content = message?.content;
+        if (typeof content === 'string') {
+            return content;
+        }
+        if (Array.isArray(content)) {
+            return content
+                .map((part) => (typeof part === 'string' ? part : part?.text ?? ''))
+                .join('')
+                .trim();
+        }
+        return message?.reasoning ?? message?.refusal ?? '';
+    }
     async performCompletionRequest(messages, responseFormat, signal) {
+        const isOpenRouter = this.baseUrl.toLowerCase().includes('openrouter.ai');
         const body = {
             model: this.model,
             messages,
             temperature: this.temperature,
             ...(responseFormat && { response_format: responseFormat }),
+            ...(isOpenRouter && responseFormat ? { plugins: [{ id: 'response-healing' }] } : {}),
         };
         const res = await fetch(`${this.baseUrl}/chat/completions`, {
             method: 'POST',
@@ -53104,7 +53245,8 @@ class OpenAICompatibleProvider {
             throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}`, res.status, errorBody);
         }
         const data = (await res.json());
-        const content = data.choices?.[0]?.message?.content ?? '';
+        const firstChoice = data.choices?.[0];
+        const content = this.extractTextContent(firstChoice?.message);
         const usage = {
             input: data.usage?.prompt_tokens ?? 0,
             output: data.usage?.completion_tokens ?? 0,
@@ -53116,6 +53258,7 @@ class OpenAICompatibleProvider {
             promptTokens: usage.input,
             completionTokens: usage.output,
             cachedTokens: usage.cached,
+            finishReason: firstChoice?.finish_reason ?? null,
         }, 'LLM API call completed');
         return { content, usage };
     }
@@ -53124,11 +53267,13 @@ class OpenAICompatibleProvider {
 ;// CONCATENATED MODULE: ./src/providers/factory.ts
 
 
-const SUPPORTED_PROVIDERS = ['openai-compatible', 'kimi'];
+const SUPPORTED_PROVIDERS = ['openai-compatible', 'openrouter', 'kimi'];
 const KIMI_API_BASE_URL = 'https://api.kimi.com/coding/v1';
+const OPENROUTER_API_BASE_URL = 'https://openrouter.ai/api/v1';
 function parseProvider(provider) {
-    if (provider === 'openai-compatible' || provider === 'kimi') {
-        return provider;
+    const normalizedProvider = provider.trim().toLowerCase();
+    if (SUPPORTED_PROVIDERS.includes(normalizedProvider)) {
+        return normalizedProvider;
     }
     throw new ConfigError(`Invalid provider: "${provider}". Supported providers: ${SUPPORTED_PROVIDERS.join(', ')}`);
 }
@@ -53146,6 +53291,12 @@ function createLLMProvider(config) {
                 model: config.model,
                 baseUrl: config.baseUrl,
             });
+        case 'openrouter':
+            return new OpenAICompatibleProvider({
+                apiKey: config.apiKey,
+                model: config.model,
+                baseUrl: config.baseUrl ?? OPENROUTER_API_BASE_URL,
+            });
         case 'kimi':
         default:
             return new OpenAICompatibleProvider({
@@ -53162,7 +53313,7 @@ var dist = __nccwpck_require__(6159);
 
 const reviewConfigSchema = objectType({
     language: enumType(['en', 'zh-TW', 'zh-CN', 'ja', 'ko']).default('en'),
-    provider: enumType(['kimi', 'openai-compatible']).default('kimi'),
+    provider: enumType(['kimi', 'openai-compatible', 'openrouter']).default('kimi'),
     model: stringType().default('kimi-k2.5'),
     baseUrl: stringType().url().optional(),
     review: objectType({
@@ -53395,11 +53546,20 @@ async function run() {
         core.setOutput("annotations_count", result.annotations.length.toString());
         core.setOutput("critical_count", result.stats.critical.toString());
         core.setOutput("tokens_used", (result.tokensUsed.input + result.tokensUsed.output).toString());
-        core.setOutput("cost_estimate", calculateCost(result.tokensUsed).toString());
+        core.setOutput("cost_estimate", calculateCost(result.tokensUsed, {
+            provider: providerInput || config.provider,
+            model: config.model,
+            baseUrl: config.baseUrl,
+        }).toString());
         // Summary in job output
+        const displayProvider = config.baseUrl?.toLowerCase().includes("openrouter.ai")
+            ? "openrouter"
+            : providerInput || config.provider;
         core.summary
             .addHeading("FiscalCR Code Review", 2)
             .addRaw(`**Score:** ${result.score}/100\n\n`)
+            .addRaw(`**Provider:** ${displayProvider}\n\n`)
+            .addRaw(`**Model:** ${config.model}\n\n`)
             .addRaw(result.summary)
             .addTable([
             [

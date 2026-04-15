@@ -10,6 +10,21 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
   nitpick: '⚪',
 };
 
+function getProviderLabel(pricingContext?: {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+}): string {
+  const provider = pricingContext?.provider ?? 'kimi';
+  const baseUrl = pricingContext?.baseUrl;
+
+  if (baseUrl?.toLowerCase().includes('openrouter.ai')) {
+    return 'openrouter';
+  }
+
+  return provider;
+}
+
 export async function createPRReview(
   octokit: Octokit,
   params: {
@@ -19,9 +34,12 @@ export async function createPRReview(
     commitSha: string;
     result: ReviewResult;
     failOn: 'critical' | 'warning' | 'never';
+    provider?: string;
+    model?: string;
+    baseUrl?: string;
   },
 ): Promise<void> {
-  const { owner, repo, pullNumber, commitSha, result, failOn } = params;
+  const { owner, repo, pullNumber, commitSha, result, failOn, provider, model, baseUrl } = params;
 
   const shouldRequestChanges =
     failOn === 'critical'
@@ -32,7 +50,7 @@ export async function createPRReview(
 
   const event = shouldRequestChanges ? 'REQUEST_CHANGES' : 'COMMENT';
 
-  const body = buildReviewBody(result);
+  const body = buildReviewBody(result, { provider, model, baseUrl });
 
   // Create the review with inline comments
   const comments = result.annotations
@@ -73,14 +91,21 @@ export async function createPRReview(
   }
 }
 
-function buildReviewBody(result: ReviewResult): string {
-  const cost = calculateCost(result.tokensUsed);
+function buildReviewBody(
+  result: ReviewResult,
+  pricingContext?: { provider?: string; model?: string; baseUrl?: string },
+): string {
+  const cost = calculateCost(result.tokensUsed, pricingContext);
+  const providerLabel = getProviderLabel(pricingContext);
+  const modelLabel = pricingContext?.model ?? 'default';
   const lines: string[] = [];
 
   lines.push('## 🤖 FiscalCR Code Review\n');
   lines.push(result.summary);
   lines.push('');
   lines.push(`**Score:** ${result.score}/100`);
+  lines.push(`**Provider:** ${providerLabel}`);
+  lines.push(`**Model:** ${modelLabel}`);
   lines.push('');
   lines.push('| Severity | Count |');
   lines.push('|----------|-------|');

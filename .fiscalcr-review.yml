@@ -1,4 +1,5 @@
 language: zh-TW
+provider: kimi
 model: kimi-k2.5
 
 review:

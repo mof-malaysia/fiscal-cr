@@ -140,6 +140,9 @@ export class ReviewOrchestrator {
         commitSha: headSha,
         result,
         failOn: this.config.review.failOn,
+        provider: this.config.provider,
+        model: this.config.model,
+        baseUrl: this.config.baseUrl,
       });
 
       logger.info(

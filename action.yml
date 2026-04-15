@@ -1,7 +1,7 @@
 # FiscalCR — forked from howardpen9/kimi-code-reviewer
 name: 'FiscalCR'
 description: 'AI-powered, model-agnostic code review for GitHub'
-author: 'irfancoder'
+author: 'FiscalTech'
 
 branding:
   icon: 'eye'

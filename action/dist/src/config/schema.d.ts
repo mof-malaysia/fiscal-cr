@@ -1,7 +1,7 @@
 import { z } from 'zod';
 export declare const reviewConfigSchema: z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
-    provider: z.ZodDefault<z.ZodEnum<["kimi", "openai-compatible"]>>;
+    provider: z.ZodDefault<z.ZodEnum<["kimi", "openai-compatible", "openrouter"]>>;
     model: z.ZodDefault<z.ZodString>;
     baseUrl: z.ZodOptional<z.ZodString>;
     review: z.ZodDefault<z.ZodObject<{
@@ -143,7 +143,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
         ttl?: number | undefined;
     }>>;
 }, "strip", z.ZodTypeAny, {
-    provider: "kimi" | "openai-compatible";
+    provider: "kimi" | "openai-compatible" | "openrouter";
     model: string;
     language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
     review: {
@@ -188,7 +188,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
     };
     baseUrl?: string | undefined;
 }, {
-    provider?: "kimi" | "openai-compatible" | undefined;
+    provider?: "kimi" | "openai-compatible" | "openrouter" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
     baseUrl?: string | undefined;

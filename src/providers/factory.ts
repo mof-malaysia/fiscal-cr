@@ -3,12 +3,15 @@ import { OpenAICompatibleProvider } from './openai-compatible.js';
 import type { LLMProvider } from './interface.js';
 import { ConfigError } from '../utils/errors.js';
 
-export const SUPPORTED_PROVIDERS = ['openai-compatible', 'kimi'] as const;
+export const SUPPORTED_PROVIDERS = ['openai-compatible', 'openrouter', 'kimi'] as const;
 const KIMI_API_BASE_URL = 'https://api.kimi.com/coding/v1';
+const OPENROUTER_API_BASE_URL = 'https://openrouter.ai/api/v1';
 
 function parseProvider(provider: string): ReviewConfig['provider'] {
-  if (provider === 'openai-compatible' || provider === 'kimi') {
-    return provider;
+  const normalizedProvider = provider.trim().toLowerCase() as ReviewConfig['provider'];
+
+  if (SUPPORTED_PROVIDERS.includes(normalizedProvider)) {
+    return normalizedProvider;
   }
 
   throw new ConfigError(
@@ -37,6 +40,12 @@ export function createLLMProvider(config: {
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl,
+      });
+    case 'openrouter':
+      return new OpenAICompatibleProvider({
+        apiKey: config.apiKey,
+        model: config.model,
+        baseUrl: config.baseUrl ?? OPENROUTER_API_BASE_URL,
       });
     case 'kimi':
     default:

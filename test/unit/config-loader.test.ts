@@ -38,6 +38,29 @@ describe('loadConfig', () => {
     await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).resolves.toEqual(DEFAULT_CONFIG);
   });
 
+  it('accepts openrouter configs with provider-prefixed model names', async () => {
+    const getContent = vi.fn().mockResolvedValue({
+      data: {
+        content: Buffer.from(
+          'language: en\nprovider: openrouter\nmodel: nvidia/nemotron-3-super-120b-a12b:free\n',
+          'utf8',
+        ).toString('base64'),
+        encoding: 'base64',
+      },
+    });
+
+    const octokit = {
+      repos: {
+        getContent,
+      },
+    } as any;
+
+    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
+
+    expect(config.provider).toBe('openrouter');
+    expect(config.model).toBe('nvidia/nemotron-3-super-120b-a12b:free');
+  });
+
   it('rethrows non-404 errors instead of silently defaulting', async () => {
     const octokit = {
       repos: {

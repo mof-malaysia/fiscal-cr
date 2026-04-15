@@ -43,4 +43,47 @@ describe('OpenAICompatibleProvider', () => {
 
     expect(body.max_tokens).toBeUndefined();
   });
+
+  it('retries once without structured output when OpenRouter returns an empty completion', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '' } }],
+            usage: { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0 },
+          }),
+          { status: 200, statusText: 'OK' },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"summary":"retry ok","score":90,"annotations":[]}' } }],
+            usage: { prompt_tokens: 1200, completion_tokens: 180, cached_tokens: 0 },
+          }),
+          { status: 200, statusText: 'OK' },
+        ),
+      );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'test-key',
+      model: 'nvidia/nemotron-3-super-120b-a12b:free',
+      baseUrl: 'https://openrouter.ai/api/v1',
+    });
+
+    const result = await provider.chatCompletion({
+      messages: [{ role: 'user', content: 'Review this PR' }],
+      responseFormat: { type: 'json_object' },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.content).toContain('retry ok');
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+
+    expect(firstBody.plugins).toEqual([{ id: 'response-healing' }]);
+    expect(secondBody.response_format).toBeUndefined();
+  });
 });
