@@ -53812,7 +53812,24 @@ function parseFastPathResponse(raw) {
     };
 }
 
+;// CONCATENATED MODULE: ./src/pipeline/temperature.ts
+/** Models that reject any temperature other than their server-side default. */
+const FIXED_TEMPERATURE_MODELS = new Set(['kimi-for-coding']);
+/**
+ * Resolve the temperature for a review call: an explicit config value wins;
+ * models that pin their own temperature get none at all (the server default
+ * applies); everything else uses the pipeline's preferred low temperature.
+ */
+function reviewTemperature(config, preferred = 0.3) {
+    if (config.temperature !== undefined)
+        return config.temperature;
+    if (FIXED_TEMPERATURE_MODELS.has(config.model))
+        return undefined;
+    return preferred;
+}
+
 ;// CONCATENATED MODULE: ./src/pipeline/pass1-intent.ts
+
 
 
 
@@ -53829,7 +53846,7 @@ async function runIntentPass(llm, ctx, config, usage) {
             ],
             responseFormat: { type: 'json_object' },
             maxTokens: 2_048,
-            temperature: 0.3,
+            temperature: reviewTemperature(config),
             timeoutMs: 60_000,
         });
         usage.add(response.usage);
@@ -54096,6 +54113,7 @@ async function collectRelatedContext(group, fileContents, workspaceRoot, config,
 
 
 
+
 /**
  * Pass 2: review each file group in a focused, parallel LLM call.
  * A single failed group degrades the review; it does not abort it.
@@ -54125,7 +54143,7 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
                 ],
                 responseFormat: { type: 'json_object' },
                 maxTokens: config.pipeline.maxOutputTokens,
-                temperature: 0.3,
+                temperature: reviewTemperature(config),
                 timeoutMs: config.pipeline.callTimeoutMs,
             });
             usage.add(response.usage);
@@ -54145,6 +54163,7 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
 }
 
 ;// CONCATENATED MODULE: ./src/pipeline/pass3-synthesis.ts
+
 
 
 
@@ -54253,7 +54272,7 @@ async function synthesize(llm, input, config, usage) {
                 ],
                 responseFormat: { type: 'json_object' },
                 maxTokens: 4_096,
-                temperature: 0.3,
+                temperature: reviewTemperature(config),
                 timeoutMs: 90_000,
             });
             usage.add(response.usage);
@@ -54351,6 +54370,7 @@ class ReviewError extends Error {
 
 
 
+
 /**
  * Fast path: one combined call for small PRs (and the `pipeline.enabled: false`
  * kill-switch). Same output contract and code-side validation as the pipeline.
@@ -54363,7 +54383,7 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
         ],
         responseFormat: { type: 'json_object' },
         maxTokens: config.pipeline.maxOutputTokens,
-        temperature: 0.3,
+        temperature: reviewTemperature(config),
         timeoutMs: config.pipeline.callTimeoutMs,
     });
     usage.add(response.usage);
@@ -54987,6 +55007,8 @@ const reviewConfigSchema = objectType({
     baseUrl: stringType().url().optional(),
     /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
     userAgent: stringType().max(200).optional(),
+    /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
+    temperature: numberType().min(0).max(2).optional(),
     review: objectType({
         auto: objectType({
             enabled: booleanType().default(true),

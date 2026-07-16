@@ -6,6 +6,8 @@ export declare const reviewConfigSchema: z.ZodObject<{
     baseUrl: z.ZodOptional<z.ZodString>;
     /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
     userAgent: z.ZodOptional<z.ZodString>;
+    /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
+    temperature: z.ZodOptional<z.ZodNumber>;
     review: z.ZodDefault<z.ZodObject<{
         auto: z.ZodDefault<z.ZodObject<{
             enabled: z.ZodDefault<z.ZodBoolean>;
@@ -296,12 +298,14 @@ export declare const reviewConfigSchema: z.ZodObject<{
     };
     baseUrl?: string | undefined;
     userAgent?: string | undefined;
+    temperature?: number | undefined;
 }, {
     provider?: "kimi" | "openai-compatible" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
     baseUrl?: string | undefined;
     userAgent?: string | undefined;
+    temperature?: number | undefined;
     review?: {
         auto?: {
             enabled?: boolean | undefined;

@@ -6,6 +6,7 @@ import { buildGroupSystemPrompt, buildGroupUserPrompt } from './prompts.js';
 import { parseGroupResponse, type IntentResult } from './schemas.js';
 import { collectRelatedContext } from './related-context.js';
 import type { FileGroup } from './grouper.js';
+import { reviewTemperature } from './temperature.js';
 import type { UsageTracker } from './usage.js';
 import { logger } from '../utils/logger.js';
 
@@ -63,7 +64,7 @@ export async function runReviewPass(
             ],
             responseFormat: { type: 'json_object' },
             maxTokens: config.pipeline.maxOutputTokens,
-            temperature: 0.3,
+            temperature: reviewTemperature(config),
             timeoutMs: config.pipeline.callTimeoutMs,
           });
           usage.add(response.usage);

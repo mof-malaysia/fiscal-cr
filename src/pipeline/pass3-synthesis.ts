@@ -12,6 +12,7 @@ import { lineToDiffPosition } from '../review/diff-analyzer.js';
 import { buildSynthesisSystemPrompt, buildSynthesisUserPrompt } from './prompts.js';
 import { parseSynthesisResponse, DEFAULT_CONFIDENCE, type IntentResult } from './schemas.js';
 import type { GroupReviewOutcome } from './pass2-review.js';
+import { reviewTemperature } from './temperature.js';
 import type { UsageTracker } from './usage.js';
 import { logger } from '../utils/logger.js';
 
@@ -151,7 +152,7 @@ export async function synthesize(
         ],
         responseFormat: { type: 'json_object' },
         maxTokens: 4_096,
-        temperature: 0.3,
+        temperature: reviewTemperature(config),
         timeoutMs: 90_000,
       });
       usage.add(response.usage);

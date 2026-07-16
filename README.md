@@ -113,6 +113,13 @@ of a client your plan allows. When a custom User-Agent is set, the
 > that may result in suspension of membership benefits. Configure this at your
 > own risk — a standard (non-subscription) Moonshot API key does not need it.
 
+Two more `kimi-for-coding` specifics handled automatically:
+
+- The model must be requested as exactly `model: kimi-for-coding`.
+- The endpoint rejects any sampling temperature other than its default, so
+  FiscalCR omits the `temperature` parameter for this model (other models use
+  0.3; set a top-level `temperature:` in `.fiscalcr-review.yml` to override).
+
 ## Self-Hosted GitHub App
 
 Use the app when you want comment-driven reviews such as `@fiscalcr review` on pull requests.

@@ -7,6 +7,8 @@ export const reviewConfigSchema = z.object({
   baseUrl: z.string().url().optional(),
   /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
   userAgent: z.string().max(200).optional(),
+  /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
+  temperature: z.number().min(0).max(2).optional(),
 
   review: z
     .object({

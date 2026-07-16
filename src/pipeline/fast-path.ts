@@ -8,6 +8,7 @@ import {
   deterministicScore,
   validateAndRankFindings,
 } from './pass3-synthesis.js';
+import { reviewTemperature } from './temperature.js';
 import type { UsageTracker } from './usage.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -30,7 +31,7 @@ export async function runFastPath(
     ],
     responseFormat: { type: 'json_object' },
     maxTokens: config.pipeline.maxOutputTokens,
-    temperature: 0.3,
+    temperature: reviewTemperature(config),
     timeoutMs: config.pipeline.callTimeoutMs,
   });
   usage.add(response.usage);

@@ -3,6 +3,7 @@ import type { ReviewConfig } from '../config/schema.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { buildIntentSystemPrompt, buildIntentUserPrompt } from './prompts.js';
 import { parseIntentResponse, type IntentResult } from './schemas.js';
+import { reviewTemperature } from './temperature.js';
 import type { UsageTracker } from './usage.js';
 import { logger } from '../utils/logger.js';
 
@@ -24,7 +25,7 @@ export async function runIntentPass(
       ],
       responseFormat: { type: 'json_object' },
       maxTokens: 2_048,
-      temperature: 0.3,
+      temperature: reviewTemperature(config),
       timeoutMs: 60_000,
     });
     usage.add(response.usage);
