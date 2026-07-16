@@ -22,6 +22,8 @@ export function createLLMProvider(config: {
   model: string;
   baseUrl?: string;
   provider: string;
+  /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+  userAgent?: string;
   retry?: ResilientProviderOptions;
 }): LLMProvider {
   const provider = parseProvider(config.provider);
@@ -40,6 +42,7 @@ export function createLLMProvider(config: {
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl,
+        userAgent: config.userAgent,
       });
       break;
     case 'kimi':
@@ -48,6 +51,7 @@ export function createLLMProvider(config: {
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl ?? KIMI_API_BASE_URL,
+        userAgent: config.userAgent,
       });
       break;
   }

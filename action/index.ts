@@ -17,6 +17,7 @@ async function run(): Promise<void> {
     const providerInput = core.getInput("provider") || undefined;
     const modelInput = core.getInput("model") || undefined;
     const baseUrlInput = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+    const userAgentInput = core.getInput("user_agent") || undefined;
     const languageInput = core.getInput("language") || undefined;
     const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
     const failOnInput = (core.getInput("fail_on") || undefined) as
@@ -60,6 +61,9 @@ async function run(): Promise<void> {
     if (baseUrlInput) {
       config.baseUrl = baseUrlInput;
     }
+    if (userAgentInput) {
+      config.userAgent = userAgentInput;
+    }
 
     // Honor auto-review settings (previously App-mode only)
     if (isDraft && !config.review.auto.drafts) {
@@ -84,6 +88,7 @@ async function run(): Promise<void> {
       provider: providerInput || config.provider,
       model: config.model,
       baseUrl: config.baseUrl,
+      userAgent: config.userAgent,
     });
 
     // Run review

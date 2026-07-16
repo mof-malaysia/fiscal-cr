@@ -78,6 +78,7 @@ For legacy Kimi usage:
 | `model` | No | Repo config or built-in default | Model name override |
 | `base_url` | No | Repo config | Generic provider base URL override |
 | `kimi_base_url` | No | Repo config | Legacy base URL override |
+| `user_agent` | No | `fiscalcr/1.0` | Custom User-Agent for endpoints that whitelist clients (see Kimi for Coding note) |
 | `language` | No | Repo config or built-in default | Review language override |
 | `fail_on` | No | Repo config or built-in default | `critical`, `warning`, or `never` |
 | `config_path` | No | `.fiscalcr-review.yml` | Path to config file relative to repo root |
@@ -98,6 +99,19 @@ For legacy Kimi usage:
 - Action inputs override repo config only when you explicitly provide them.
 - For `openai-compatible`, an explicit `base_url` is required.
 - For legacy `kimi`, the Kimi API URL is filled in automatically if you do not override it.
+
+### Kimi for Coding keys
+
+The Kimi for Coding endpoint (`https://api.kimi.com/coding/v1`) whitelists
+clients by their `User-Agent` header and rejects unknown ones — including
+FiscalCR's default `fiscalcr/1.0`. Set the `user_agent` input (or `userAgent`
+in `.fiscalcr-review.yml`, or `LLM_USER_AGENT` in App mode) to the identifier
+of a client your plan allows. When a custom User-Agent is set, the
+`X-Client-Name: fiscalcr` header is omitted so the request carries one identity.
+
+> ⚠️ Kimi's terms treat tampering with the client identifier as a violation
+> that may result in suspension of membership benefits. Configure this at your
+> own risk — a standard (non-subscription) Moonshot API key does not need it.
 
 ## Self-Hosted GitHub App
 
@@ -123,6 +137,7 @@ pnpm dev
 | `MODEL_PROVIDER` | Optional | Provider name (`openai-compatible` or `kimi`) |
 | `MODEL` | Optional | Model name |
 | `BASE_URL` | Optional | Operator-controlled base URL |
+| `LLM_USER_AGENT` | Optional | Custom User-Agent for whitelisted endpoints (Kimi for Coding) |
 | `GITHUB_APP_ID` | Yes | GitHub App ID |
 | `GITHUB_PRIVATE_KEY` | Yes | GitHub App private key |
 | `GITHUB_WEBHOOK_SECRET` | Yes | Webhook secret |
@@ -153,6 +168,7 @@ Create `.fiscalcr-review.yml` in your repository root:
 language: zh-TW
 provider: kimi
 model: kimi-k2.5
+# userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
 
 review:
   auto:

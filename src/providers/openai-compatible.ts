@@ -12,6 +12,12 @@ export interface OpenAICompatibleProviderConfig {
   baseUrl?: string;
   temperature?: number;
   timeout?: number;
+  /**
+   * Override the User-Agent header. Some endpoints (e.g. Kimi for Coding)
+   * whitelist clients by User-Agent and reject unknown ones. When set, the
+   * X-Client-Name header is omitted so the request carries one identity.
+   */
+  userAgent?: string;
 }
 
 interface OpenAICompatibleResponse {
@@ -44,6 +50,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly baseUrl: string;
   private readonly temperature?: number;
   private readonly timeout: number;
+  private readonly userAgent?: string;
 
   constructor(config: OpenAICompatibleProviderConfig) {
     this.apiKey = config.apiKey;
@@ -54,6 +61,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.baseUrl = config.baseUrl;
     this.temperature = config.temperature;
     this.timeout = config.timeout ?? 300_000;
+    this.userAgent = config.userAgent;
   }
 
   async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
@@ -85,8 +93,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
-        'User-Agent': 'fiscalcr/1.0',
-        'X-Client-Name': 'fiscalcr',
+        'User-Agent': this.userAgent ?? 'fiscalcr/1.0',
+        ...(this.userAgent ? {} : { 'X-Client-Name': 'fiscalcr' }),
       },
       body: JSON.stringify(body),
       signal,

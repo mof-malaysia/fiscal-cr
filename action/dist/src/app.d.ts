@@ -7,6 +7,7 @@ export interface AppConfig {
     provider?: string;
     model?: string;
     baseUrl?: string;
+    userAgent?: string;
 }
 export declare function createApp(config: AppConfig): App;
 //# sourceMappingURL=app.d.ts.map

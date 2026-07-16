@@ -5,6 +5,8 @@ export const reviewConfigSchema = z.object({
   provider: z.enum(['kimi', 'openai-compatible']).default('kimi'),
   model: z.string().default('kimi-k2.5'),
   baseUrl: z.string().url().optional(),
+  /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+  userAgent: z.string().max(200).optional(),
 
   review: z
     .object({

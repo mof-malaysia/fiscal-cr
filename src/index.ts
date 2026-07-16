@@ -28,6 +28,7 @@ server.post('/api/webhook', async (c) => {
     provider: process.env.MODEL_PROVIDER,
     model: process.env.MODEL ?? process.env.FISCALCR_MODEL ?? process.env.KIMI_MODEL,
     baseUrl: process.env.BASE_URL ?? process.env.FISCALCR_BASE_URL ?? process.env.KIMI_BASE_URL,
+    userAgent: process.env.LLM_USER_AGENT,
   });
 
   const id = c.req.header('x-github-delivery') ?? '';

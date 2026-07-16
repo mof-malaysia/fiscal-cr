@@ -10,6 +10,7 @@ interface AppContext {
   provider?: string;
   model?: string;
   baseUrl?: string;
+  userAgent?: string;
   getInstallationOctokit: (installationId: number) => Promise<Octokit>;
 }
 
@@ -54,6 +55,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         provider: appCtx.provider ?? config.provider,
         model: appCtx.model ?? config.model,
         baseUrl: appCtx.baseUrl,
+        userAgent: appCtx.userAgent ?? config.userAgent,
       });
 
       const orchestrator = new ReviewOrchestrator(octokit, llm, config);
@@ -85,6 +87,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         provider: appCtx.provider ?? config.provider,
         model: appCtx.model ?? config.model,
         baseUrl: appCtx.baseUrl,
+        userAgent: appCtx.userAgent ?? config.userAgent,
       });
 
       const { data: pr } = await octokit.pulls.get({
@@ -140,6 +143,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       provider: appCtx.provider ?? config.provider,
       model: appCtx.model ?? config.model,
       baseUrl: appCtx.baseUrl,
+      userAgent: appCtx.userAgent ?? config.userAgent,
     });
 
     const orchestrator = new ReviewOrchestrator(octokit, llm, config);

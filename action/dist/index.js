@@ -54805,6 +54805,7 @@ class OpenAICompatibleProvider {
     baseUrl;
     temperature;
     timeout;
+    userAgent;
     constructor(config) {
         this.apiKey = config.apiKey;
         this.model = config.model;
@@ -54814,6 +54815,7 @@ class OpenAICompatibleProvider {
         this.baseUrl = config.baseUrl;
         this.temperature = config.temperature;
         this.timeout = config.timeout ?? 300_000;
+        this.userAgent = config.userAgent;
     }
     async chatCompletion(params) {
         const controller = new AbortController();
@@ -54839,8 +54841,8 @@ class OpenAICompatibleProvider {
             headers: {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${this.apiKey}`,
-                'User-Agent': 'fiscalcr/1.0',
-                'X-Client-Name': 'fiscalcr',
+                'User-Agent': this.userAgent ?? 'fiscalcr/1.0',
+                ...(this.userAgent ? {} : { 'X-Client-Name': 'fiscalcr' }),
             },
             body: JSON.stringify(body),
             signal,
@@ -54955,6 +54957,7 @@ function createLLMProvider(config) {
                 apiKey: config.apiKey,
                 model: config.model,
                 baseUrl: config.baseUrl,
+                userAgent: config.userAgent,
             });
             break;
         case 'kimi':
@@ -54963,6 +54966,7 @@ function createLLMProvider(config) {
                 apiKey: config.apiKey,
                 model: config.model,
                 baseUrl: config.baseUrl ?? KIMI_API_BASE_URL,
+                userAgent: config.userAgent,
             });
             break;
     }
@@ -54978,6 +54982,8 @@ const reviewConfigSchema = objectType({
     provider: enumType(['kimi', 'openai-compatible']).default('kimi'),
     model: stringType().default('kimi-k2.5'),
     baseUrl: stringType().url().optional(),
+    /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+    userAgent: stringType().max(200).optional(),
     review: objectType({
         auto: objectType({
             enabled: booleanType().default(true),
@@ -55207,6 +55213,7 @@ async function run() {
         const providerInput = core.getInput("provider") || undefined;
         const modelInput = core.getInput("model") || undefined;
         const baseUrlInput = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+        const userAgentInput = core.getInput("user_agent") || undefined;
         const languageInput = core.getInput("language") || undefined;
         const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
         const failOnInput = (core.getInput("fail_on") || undefined);
@@ -55241,6 +55248,9 @@ async function run() {
         if (baseUrlInput) {
             config.baseUrl = baseUrlInput;
         }
+        if (userAgentInput) {
+            config.userAgent = userAgentInput;
+        }
         // Honor auto-review settings (previously App-mode only)
         if (isDraft && !config.review.auto.drafts) {
             core.info("Skipping draft PR (review.auto.drafts is false).");
@@ -55261,6 +55271,7 @@ async function run() {
             provider: providerInput || config.provider,
             model: config.model,
             baseUrl: config.baseUrl,
+            userAgent: config.userAgent,
         });
         // Run review
         const orchestrator = new ReviewOrchestrator(restOctokit, llm, config, { workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd() });

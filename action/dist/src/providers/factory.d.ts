@@ -6,6 +6,8 @@ export declare function createLLMProvider(config: {
     model: string;
     baseUrl?: string;
     provider: string;
+    /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+    userAgent?: string;
     retry?: ResilientProviderOptions;
 }): LLMProvider;
 //# sourceMappingURL=factory.d.ts.map

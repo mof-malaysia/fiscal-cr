@@ -30,6 +30,9 @@ inputs:
   kimi_base_url:
     description: 'Legacy: base URL for LLM API'
     required: false
+  user_agent:
+    description: 'Custom User-Agent header for endpoints that whitelist clients (e.g. Kimi for Coding)'
+    required: false
   language:
     description: 'Review comment language (overrides repo config when provided)'
     required: false

@@ -4,6 +4,8 @@ export declare const reviewConfigSchema: z.ZodObject<{
     provider: z.ZodDefault<z.ZodEnum<["kimi", "openai-compatible"]>>;
     model: z.ZodDefault<z.ZodString>;
     baseUrl: z.ZodOptional<z.ZodString>;
+    /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+    userAgent: z.ZodOptional<z.ZodString>;
     review: z.ZodDefault<z.ZodObject<{
         auto: z.ZodDefault<z.ZodObject<{
             enabled: z.ZodDefault<z.ZodBoolean>;
@@ -293,11 +295,13 @@ export declare const reviewConfigSchema: z.ZodObject<{
         maxOutputTokens: number;
     };
     baseUrl?: string | undefined;
+    userAgent?: string | undefined;
 }, {
     provider?: "kimi" | "openai-compatible" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
     baseUrl?: string | undefined;
+    userAgent?: string | undefined;
     review?: {
         auto?: {
             enabled?: boolean | undefined;
