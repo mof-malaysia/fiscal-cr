@@ -72,6 +72,7 @@ async function run(): Promise<void> {
       restOctokit as any,
       llm,
       config,
+      { workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd() },
     );
     const result = await orchestrator.reviewPullRequest({
       owner,

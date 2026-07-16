@@ -7,6 +7,7 @@ import { buildReviewMessages } from '../kimi/prompt-builder.js';
 import { buildCacheOptimizedMessages } from '../kimi/cache-strategy.js';
 import { parseAIResponse } from '../kimi/response-parser.js';
 import { extractPullRequestContext } from '../github/pulls.js';
+import { ApiFileSource, LocalFileSource } from './file-source.js';
 import { createCheckRun, completeCheckRun } from '../github/checks.js';
 import { createPRReview } from '../github/comments.js';
 import { filterFiles } from './file-filter.js';
@@ -21,11 +22,17 @@ interface ReviewParams {
   headSha: string;
 }
 
+export interface OrchestratorOptions {
+  /** Local checkout root (Action mode). Enables disk reads instead of API fetches. */
+  workspaceRoot?: string;
+}
+
 export class ReviewOrchestrator {
   constructor(
     private octokit: Octokit,
     private llm: LLMProvider,
     private config: ReviewConfig,
+    private options: OrchestratorOptions = {},
   ) {}
 
   async reviewPullRequest(params: ReviewParams): Promise<ReviewResult> {
@@ -41,12 +48,17 @@ export class ReviewOrchestrator {
     try {
       // Step 2: Extract PR context
       logger.info({ pullNumber }, 'Extracting PR context');
+      const apiSource = new ApiFileSource(this.octokit, owner, repo, headSha);
+      const fileSource = this.options.workspaceRoot
+        ? new LocalFileSource(this.options.workspaceRoot, apiSource)
+        : apiSource;
       const prContext = await extractPullRequestContext(
         this.octokit,
         owner,
         repo,
         pullNumber,
         this.config,
+        { fileSource },
       );
 
       // Step 3: Filter files

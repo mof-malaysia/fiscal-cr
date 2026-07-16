@@ -1,5 +1,4 @@
-import type { ChatMessage } from '../types/review.js';
-import type { LLMCompletionResponse, LLMProvider } from './interface.js';
+import type { ChatCompletionParams, LLMCompletionResponse, LLMProvider } from './interface.js';
 export interface OpenAICompatibleProviderConfig {
     apiKey: string;
     model: string;
@@ -15,15 +14,10 @@ export declare class OpenAICompatibleProvider implements LLMProvider {
     private readonly apiKey;
     private readonly model;
     private readonly baseUrl;
-    private readonly temperature;
+    private readonly temperature?;
     private readonly timeout;
     constructor(config: OpenAICompatibleProviderConfig);
-    chatCompletion(params: {
-        messages: ChatMessage[];
-        responseFormat?: {
-            type: 'json_object' | 'text';
-        };
-    }): Promise<LLMCompletionResponse>;
+    chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse>;
     private performCompletionRequest;
 }
 //# sourceMappingURL=openai-compatible.d.ts.map

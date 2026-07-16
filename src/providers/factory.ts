@@ -1,5 +1,6 @@
 import type { ReviewConfig } from '../config/schema.js';
 import { OpenAICompatibleProvider } from './openai-compatible.js';
+import { ResilientProvider, type ResilientProviderOptions } from './resilient.js';
 import type { LLMProvider } from './interface.js';
 import { ConfigError } from '../utils/errors.js';
 
@@ -21,11 +22,13 @@ export function createLLMProvider(config: {
   model: string;
   baseUrl?: string;
   provider: string;
+  retry?: ResilientProviderOptions;
 }): LLMProvider {
   const provider = parseProvider(config.provider);
 
   // All providers share the OpenAI-compatible adapter.
   // Adding non-compatible providers (e.g., Anthropic) is straightforward.
+  let inner: LLMProvider;
   switch (provider) {
     case 'openai-compatible':
       if (!config.baseUrl) {
@@ -33,17 +36,21 @@ export function createLLMProvider(config: {
           'Missing baseUrl for provider "openai-compatible". Configure an operator-controlled BASE_URL.',
         );
       }
-      return new OpenAICompatibleProvider({
+      inner = new OpenAICompatibleProvider({
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl,
       });
+      break;
     case 'kimi':
     default:
-      return new OpenAICompatibleProvider({
+      inner = new OpenAICompatibleProvider({
         apiKey: config.apiKey,
         model: config.model,
         baseUrl: config.baseUrl ?? KIMI_API_BASE_URL,
       });
+      break;
   }
+
+  return new ResilientProvider(inner, config.retry);
 }

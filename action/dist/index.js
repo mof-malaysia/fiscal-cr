@@ -50157,13 +50157,135 @@ function parseAIResponse(raw, tokenUsage) {
     return { summary, score, annotations, stats, tokensUsed: tokenUsage };
 }
 
+;// CONCATENATED MODULE: external "node:fs/promises"
+const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs/promises");
+// EXTERNAL MODULE: external "node:path"
+var external_node_path_ = __nccwpck_require__(6760);
+;// CONCATENATED MODULE: ./src/utils/concurrency.ts
+function pLimit(concurrency) {
+    if (concurrency < 1 || !Number.isFinite(concurrency)) {
+        throw new RangeError(`concurrency must be a positive number, got ${concurrency}`);
+    }
+    let active = 0;
+    const queue = [];
+    const next = () => {
+        active--;
+        queue.shift()?.();
+    };
+    return (task) => new Promise((resolve, reject) => {
+        const run = () => {
+            active++;
+            task().then(resolve, reject).finally(next);
+        };
+        if (active < concurrency) {
+            run();
+        }
+        else {
+            queue.push(run);
+        }
+    });
+}
+
+;// CONCATENATED MODULE: ./src/review/file-source.ts
+
+
+
+
+const API_FETCH_CONCURRENCY = 8;
+class ApiFileSource {
+    octokit;
+    owner;
+    repo;
+    ref;
+    isLocal = false;
+    constructor(octokit, owner, repo, ref) {
+        this.octokit = octokit;
+        this.owner = owner;
+        this.repo = repo;
+        this.ref = ref;
+    }
+    async getContents(paths, maxFileSize) {
+        const contents = new Map();
+        const limit = pLimit(API_FETCH_CONCURRENCY);
+        await Promise.all(paths.map((path) => limit(async () => {
+            try {
+                const { data } = await this.octokit.repos.getContent({
+                    owner: this.owner,
+                    repo: this.repo,
+                    path,
+                    ref: this.ref,
+                });
+                if ('content' in data && data.encoding === 'base64') {
+                    const content = Buffer.from(data.content, 'base64').toString('utf-8');
+                    if (content.length <= maxFileSize && !content.includes('\u0000')) {
+                        contents.set(path, content);
+                    }
+                }
+            }
+            catch (err) {
+                logger.debug({ file: path, err }, 'Could not fetch file content');
+            }
+        })));
+        return contents;
+    }
+}
+/**
+ * Reads from the local checkout. Note: actions/checkout checks out the PR
+ * *merge* commit by default, not the head SHA — close enough for review
+ * context. Paths that fail to read locally fall back to the API source.
+ */
+class LocalFileSource {
+    workspaceRoot;
+    fallback;
+    isLocal = true;
+    constructor(workspaceRoot, fallback) {
+        this.workspaceRoot = workspaceRoot;
+        this.fallback = fallback;
+    }
+    async getContents(paths, maxFileSize) {
+        const contents = new Map();
+        const missing = [];
+        await Promise.all(paths.map(async (path) => {
+            const resolved = this.resolveSafe(path);
+            if (!resolved)
+                return;
+            try {
+                const content = await (0,promises_namespaceObject.readFile)(resolved, 'utf-8');
+                if (content.length <= maxFileSize && !content.includes('\u0000')) {
+                    contents.set(path, content);
+                }
+            }
+            catch {
+                missing.push(path);
+            }
+        }));
+        if (missing.length > 0 && this.fallback) {
+            logger.debug({ count: missing.length }, 'Falling back to API for unreadable files');
+            const fromApi = await this.fallback.getContents(missing, maxFileSize);
+            for (const [path, content] of fromApi)
+                contents.set(path, content);
+        }
+        return contents;
+    }
+    /** Reject absolute paths and traversal outside the workspace. */
+    resolveSafe(path) {
+        if ((0,external_node_path_.isAbsolute)(path))
+            return null;
+        const resolved = (0,external_node_path_.normalize)((0,external_node_path_.join)(this.workspaceRoot, path));
+        if (!resolved.startsWith((0,external_node_path_.normalize)(this.workspaceRoot) + external_node_path_.sep))
+            return null;
+        return resolved;
+    }
+}
+
 ;// CONCATENATED MODULE: ./src/github/pulls.ts
 
-async function extractPullRequestContext(octokit, owner, repo, pullNumber, config) {
+
+async function extractPullRequestContext(octokit, owner, repo, pullNumber, config, options = {}) {
     // Fetch PR metadata
     const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
     // Fetch changed files list
-    const files = [];
+    let files = [];
     let page = 1;
     while (true) {
         const { data } = await octokit.pulls.listFiles({
@@ -50188,6 +50310,10 @@ async function extractPullRequestContext(octokit, owner, repo, pullNumber, confi
             break;
         page++;
     }
+    if (options.pathFilter) {
+        const allowed = new Set(options.pathFilter);
+        files = files.filter((f) => allowed.has(f.filename));
+    }
     // Fetch the unified diff
     const { data: diff } = await octokit.pulls.get({
         owner,
@@ -50195,31 +50321,19 @@ async function extractPullRequestContext(octokit, owner, repo, pullNumber, confi
         pull_number: pullNumber,
         mediaType: { format: 'diff' },
     });
-    // Fetch full file contents for context (head version)
-    const fileContents = new Map();
-    const maxFileSize = config.files.maxFileSize;
-    for (const file of files) {
-        if (file.status === 'removed')
-            continue;
-        try {
-            const { data } = await octokit.repos.getContent({
-                owner,
-                repo,
-                path: file.filename,
-                ref: pr.head.sha,
-            });
-            if ('content' in data && data.encoding === 'base64') {
-                const content = Buffer.from(data.content, 'base64').toString('utf-8');
-                if (content.length <= maxFileSize) {
-                    fileContents.set(file.filename, content);
-                }
-            }
-        }
-        catch (err) {
-            logger.debug({ file: file.filename, err }, 'Could not fetch file content');
-        }
-    }
-    logger.info({ filesCount: files.length, fileContentsCount: fileContents.size, diffLength: diff.length }, 'PR context extracted');
+    // Fetch full file contents (head version) via the configured source —
+    // local checkout in Action mode, parallel API calls otherwise.
+    const source = options.fileSource ?? new ApiFileSource(octokit, owner, repo, pr.head.sha);
+    const contentPaths = files
+        .filter((f) => f.status !== 'removed')
+        .map((f) => f.filename);
+    const fileContents = await source.getContents(contentPaths, config.files.maxFileSize);
+    logger.info({
+        filesCount: files.length,
+        fileContentsCount: fileContents.size,
+        diffLength: diff.length,
+        localSource: source.isLocal,
+    }, 'PR context extracted');
     return {
         owner,
         repo,
@@ -52901,10 +53015,14 @@ function buildSummary(result) {
 class LLMApiError extends Error {
     statusCode;
     responseBody;
-    constructor(message, statusCode, responseBody) {
+    retryAfterMs;
+    constructor(message, statusCode, responseBody, 
+    /** Parsed Retry-After header in milliseconds, when the API provided one. */
+    retryAfterMs) {
         super(message);
         this.statusCode = statusCode;
         this.responseBody = responseBody;
+        this.retryAfterMs = retryAfterMs;
         this.name = 'LLMApiError';
     }
 }
@@ -52935,14 +53053,17 @@ class ReviewError extends Error {
 
 
 
+
 class ReviewOrchestrator {
     octokit;
     llm;
     config;
-    constructor(octokit, llm, config) {
+    options;
+    constructor(octokit, llm, config, options = {}) {
         this.octokit = octokit;
         this.llm = llm;
         this.config = config;
+        this.options = options;
     }
     async reviewPullRequest(params) {
         const { owner, repo, pullNumber, headSha } = params;
@@ -52955,7 +53076,11 @@ class ReviewOrchestrator {
         try {
             // Step 2: Extract PR context
             logger.info({ pullNumber }, 'Extracting PR context');
-            const prContext = await extractPullRequestContext(this.octokit, owner, repo, pullNumber, this.config);
+            const apiSource = new ApiFileSource(this.octokit, owner, repo, headSha);
+            const fileSource = this.options.workspaceRoot
+                ? new LocalFileSource(this.options.workspaceRoot, apiSource)
+                : apiSource;
+            const prContext = await extractPullRequestContext(this.octokit, owner, repo, pullNumber, this.config, { fileSource });
             // Step 3: Filter files
             const filteredFiles = filterFiles(prContext.changedFiles, this.config);
             prContext.changedFiles = filteredFiles;
@@ -53051,6 +53176,17 @@ class ReviewOrchestrator {
 ;// CONCATENATED MODULE: ./src/providers/openai-compatible.ts
 
 
+function parseRetryAfter(header) {
+    if (!header)
+        return undefined;
+    const seconds = Number(header);
+    if (Number.isFinite(seconds))
+        return Math.max(0, seconds * 1000);
+    const date = Date.parse(header);
+    if (!Number.isNaN(date))
+        return Math.max(0, date - Date.now());
+    return undefined;
+}
 /**
  * Generic provider for OpenAI-compatible chat completion APIs.
  * Works with any OpenAI-compatible endpoint (FiscalCR, OpenAI, Groq, self-hosted, etc.).
@@ -53068,25 +53204,27 @@ class OpenAICompatibleProvider {
             throw new ConfigError('OpenAI-compatible provider requires an explicit baseUrl');
         }
         this.baseUrl = config.baseUrl;
-        this.temperature = config.temperature ?? 1;
+        this.temperature = config.temperature;
         this.timeout = config.timeout ?? 300_000;
     }
     async chatCompletion(params) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.timeout);
+        const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? this.timeout);
         try {
-            return await this.performCompletionRequest(params.messages, params.responseFormat, controller.signal);
+            return await this.performCompletionRequest(params, controller.signal);
         }
         finally {
             clearTimeout(timer);
         }
     }
-    async performCompletionRequest(messages, responseFormat, signal) {
+    async performCompletionRequest(params, signal) {
+        const temperature = params.temperature ?? this.temperature;
         const body = {
             model: this.model,
-            messages,
-            temperature: this.temperature,
-            ...(responseFormat && { response_format: responseFormat }),
+            messages: params.messages,
+            ...(temperature !== undefined && { temperature }),
+            ...(params.maxTokens !== undefined && { max_tokens: params.maxTokens }),
+            ...(params.responseFormat && { response_format: params.responseFormat }),
         };
         const res = await fetch(`${this.baseUrl}/chat/completions`, {
             method: 'POST',
@@ -53101,7 +53239,7 @@ class OpenAICompatibleProvider {
         });
         if (!res.ok) {
             const errorBody = await res.text().catch(() => '');
-            throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}`, res.status, errorBody);
+            throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}`, res.status, errorBody, parseRetryAfter(res.headers.get('retry-after')));
         }
         const data = (await res.json());
         const content = data.choices?.[0]?.message?.content ?? '';
@@ -53121,7 +53259,70 @@ class OpenAICompatibleProvider {
     }
 }
 
+;// CONCATENATED MODULE: ./src/providers/resilient.ts
+
+
+const BASE_BACKOFF_MS = 1_000;
+function isRetryable(err) {
+    if (err instanceof LLMApiError) {
+        return err.statusCode === 429 || err.statusCode >= 500;
+    }
+    if (err instanceof Error) {
+        // AbortError = our own timeout fired; TypeError = fetch network failure.
+        return err.name === 'AbortError' || err.name === 'TimeoutError' || err instanceof TypeError;
+    }
+    return false;
+}
+/**
+ * Decorator that adds retry-with-backoff to any LLMProvider.
+ * Retries 429/5xx/timeout/network errors with exponential backoff and full
+ * jitter, honoring Retry-After when the API supplies it. Other 4xx errors
+ * (auth, bad request) are never retried.
+ */
+class ResilientProvider {
+    inner;
+    maxRetries;
+    maxBackoffMs;
+    constructor(inner, options = {}) {
+        this.inner = inner;
+        this.maxRetries = options.maxRetries ?? 3;
+        this.maxBackoffMs = options.maxBackoffMs ?? 30_000;
+    }
+    async chatCompletion(params) {
+        for (let attempt = 0;; attempt++) {
+            try {
+                return await this.inner.chatCompletion(params);
+            }
+            catch (err) {
+                if (attempt >= this.maxRetries || !isRetryable(err)) {
+                    throw err;
+                }
+                const delay = this.backoffDelay(attempt, err);
+                logger.warn({
+                    attempt: attempt + 1,
+                    maxRetries: this.maxRetries,
+                    delayMs: Math.round(delay),
+                    error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+                }, 'LLM call failed, retrying');
+                await sleep(delay);
+            }
+        }
+    }
+    backoffDelay(attempt, err) {
+        if (err instanceof LLMApiError && err.retryAfterMs !== undefined) {
+            return Math.min(err.retryAfterMs, this.maxBackoffMs);
+        }
+        const exponential = Math.min(this.maxBackoffMs, BASE_BACKOFF_MS * 2 ** attempt);
+        // Full jitter: 50–100% of the exponential window.
+        return exponential * (0.5 + Math.random() * 0.5);
+    }
+}
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 ;// CONCATENATED MODULE: ./src/providers/factory.ts
+
 
 
 const SUPPORTED_PROVIDERS = ['openai-compatible', 'kimi'];
@@ -53136,24 +53337,28 @@ function createLLMProvider(config) {
     const provider = parseProvider(config.provider);
     // All providers share the OpenAI-compatible adapter.
     // Adding non-compatible providers (e.g., Anthropic) is straightforward.
+    let inner;
     switch (provider) {
         case 'openai-compatible':
             if (!config.baseUrl) {
                 throw new ConfigError('Missing baseUrl for provider "openai-compatible". Configure an operator-controlled BASE_URL.');
             }
-            return new OpenAICompatibleProvider({
+            inner = new OpenAICompatibleProvider({
                 apiKey: config.apiKey,
                 model: config.model,
                 baseUrl: config.baseUrl,
             });
+            break;
         case 'kimi':
         default:
-            return new OpenAICompatibleProvider({
+            inner = new OpenAICompatibleProvider({
                 apiKey: config.apiKey,
                 model: config.model,
                 baseUrl: config.baseUrl ?? KIMI_API_BASE_URL,
             });
+            break;
     }
+    return new ResilientProvider(inner, config.retry);
 }
 
 // EXTERNAL MODULE: ./node_modules/.pnpm/yaml@2.8.2/node_modules/yaml/dist/index.js
@@ -53383,7 +53588,7 @@ async function run() {
             baseUrl: config.baseUrl,
         });
         // Run review
-        const orchestrator = new ReviewOrchestrator(restOctokit, llm, config);
+        const orchestrator = new ReviewOrchestrator(restOctokit, llm, config, { workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd() });
         const result = await orchestrator.reviewPullRequest({
             owner,
             repo,

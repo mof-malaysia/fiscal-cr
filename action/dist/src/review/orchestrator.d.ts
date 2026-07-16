@@ -8,11 +8,16 @@ interface ReviewParams {
     pullNumber: number;
     headSha: string;
 }
+export interface OrchestratorOptions {
+    /** Local checkout root (Action mode). Enables disk reads instead of API fetches. */
+    workspaceRoot?: string;
+}
 export declare class ReviewOrchestrator {
     private octokit;
     private llm;
     private config;
-    constructor(octokit: Octokit, llm: LLMProvider, config: ReviewConfig);
+    private options;
+    constructor(octokit: Octokit, llm: LLMProvider, config: ReviewConfig, options?: OrchestratorOptions);
     reviewPullRequest(params: ReviewParams): Promise<ReviewResult>;
 }
 export {};

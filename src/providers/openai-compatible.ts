@@ -1,8 +1,10 @@
-import type { ChatMessage } from '../types/review.js';
 import { ConfigError, LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import { estimateTokens } from '../utils/tokens.js';
-import type { LLMCompletionResponse, LLMProvider } from './interface.js';
+import type {
+  ChatCompletionParams,
+  LLMCompletionResponse,
+  LLMProvider,
+} from './interface.js';
 
 export interface OpenAICompatibleProviderConfig {
   apiKey: string;
@@ -23,6 +25,15 @@ interface OpenAICompatibleResponse {
   };
 }
 
+function parseRetryAfter(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return undefined;
+}
+
 /**
  * Generic provider for OpenAI-compatible chat completion APIs.
  * Works with any OpenAI-compatible endpoint (FiscalCR, OpenAI, Groq, self-hosted, etc.).
@@ -31,7 +42,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly baseUrl: string;
-  private readonly temperature: number;
+  private readonly temperature?: number;
   private readonly timeout: number;
 
   constructor(config: OpenAICompatibleProviderConfig) {
@@ -41,38 +52,32 @@ export class OpenAICompatibleProvider implements LLMProvider {
       throw new ConfigError('OpenAI-compatible provider requires an explicit baseUrl');
     }
     this.baseUrl = config.baseUrl;
-    this.temperature = config.temperature ?? 1;
+    this.temperature = config.temperature;
     this.timeout = config.timeout ?? 300_000;
   }
 
-  async chatCompletion(params: {
-    messages: ChatMessage[];
-    responseFormat?: { type: 'json_object' | 'text' };
-  }): Promise<LLMCompletionResponse> {
+  async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeout);
+    const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? this.timeout);
 
     try {
-      return await this.performCompletionRequest(
-        params.messages,
-        params.responseFormat,
-        controller.signal,
-      );
+      return await this.performCompletionRequest(params, controller.signal);
     } finally {
       clearTimeout(timer);
     }
   }
 
   private async performCompletionRequest(
-    messages: ChatMessage[],
-    responseFormat: { type: 'json_object' | 'text' } | undefined,
+    params: ChatCompletionParams,
     signal: AbortSignal,
   ): Promise<LLMCompletionResponse> {
+    const temperature = params.temperature ?? this.temperature;
     const body = {
       model: this.model,
-      messages,
-      temperature: this.temperature,
-      ...(responseFormat && { response_format: responseFormat }),
+      messages: params.messages,
+      ...(temperature !== undefined && { temperature }),
+      ...(params.maxTokens !== undefined && { max_tokens: params.maxTokens }),
+      ...(params.responseFormat && { response_format: params.responseFormat }),
     };
 
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -93,6 +98,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         `LLM API error: ${res.status} ${res.statusText}`,
         res.status,
         errorBody,
+        parseRetryAfter(res.headers.get('retry-after')),
       );
     }
 

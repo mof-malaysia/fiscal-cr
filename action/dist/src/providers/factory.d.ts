@@ -1,3 +1,4 @@
+import { type ResilientProviderOptions } from './resilient.js';
 import type { LLMProvider } from './interface.js';
 export declare const SUPPORTED_PROVIDERS: readonly ["openai-compatible", "kimi"];
 export declare function createLLMProvider(config: {
@@ -5,5 +6,6 @@ export declare function createLLMProvider(config: {
     model: string;
     baseUrl?: string;
     provider: string;
+    retry?: ResilientProviderOptions;
 }): LLMProvider;
 //# sourceMappingURL=factory.d.ts.map
