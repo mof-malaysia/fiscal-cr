@@ -3,17 +3,6 @@ import { ConfigError } from '../../src/utils/errors.js';
 import { createLLMProvider } from '../../src/providers/factory.js';
 
 describe('provider factory', () => {
-  it('creates provider for legacy kimi without explicit baseUrl', () => {
-    const provider = createLLMProvider({
-      apiKey: 'test-key',
-      provider: 'kimi',
-      model: 'kimi-k2.5',
-    });
-
-    expect(provider).toBeTruthy();
-    expect(typeof provider.chatCompletion).toBe('function');
-  });
-
   it('creates provider for openai-compatible', () => {
     const provider = createLLMProvider({
       apiKey: 'test-key',

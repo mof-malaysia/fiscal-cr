@@ -8,15 +8,15 @@ import { calculateCost } from "../src/utils/tokens.js";
 async function run(): Promise<void> {
   try {
     // Get inputs
-    const apiKey = core.getInput("api_key") || core.getInput("kimi_api_key");
+    const apiKey = core.getInput("api_key");
     if (!apiKey) {
-      throw new Error("Missing required input: api_key (or legacy kimi_api_key)");
+      throw new Error("Missing required input: api_key");
     }
 
     const githubToken = core.getInput("github_token");
     const providerInput = core.getInput("provider") || undefined;
     const modelInput = core.getInput("model") || undefined;
-    const baseUrlInput = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+    const baseUrlInput = core.getInput("base_url") || undefined;
     const userAgentInput = core.getInput("user_agent") || undefined;
     const languageInput = core.getInput("language") || undefined;
     const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";

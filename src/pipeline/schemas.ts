@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { AnnotationCategory, ReviewAnnotation, WalkthroughEntry } from '../types/review.js';
-import { extractJson } from '../kimi/response-parser.js';
+import { extractJson } from '../utils/json.js';
 import { logger } from '../utils/logger.js';
 
 /** Confidence assumed when a model omits the field entirely. */

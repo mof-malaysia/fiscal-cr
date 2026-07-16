@@ -1,4 +1,3 @@
-# FiscalCR — forked from howardpen9/kimi-code-reviewer
 name: 'FiscalCR'
 description: 'AI-powered, model-agnostic code review for GitHub'
 author: 'irfancoder'
@@ -9,29 +8,23 @@ branding:
 
 inputs:
   api_key:
-    description: 'LLM API key (recommended generic input)'
-    required: false
-  kimi_api_key:
-    description: 'Legacy: Moonshot AI API key (from platform.moonshot.ai)'
-    required: false
+    description: 'LLM API key'
+    required: true
   github_token:
     description: 'GitHub token for API access'
     required: false
     default: ${{ github.token }}
   provider:
-    description: 'Model provider: openai-compatible or kimi (legacy)'
+    description: 'Model provider: openai-compatible'
     required: false
   model:
     description: 'Model to use (overrides repo config when provided)'
     required: false
   base_url:
-    description: 'Generic base URL for provider API'
-    required: false
-  kimi_base_url:
-    description: 'Legacy: base URL for LLM API'
+    description: 'Base URL for the OpenAI-compatible provider API'
     required: false
   user_agent:
-    description: 'Custom User-Agent header for endpoints that whitelist clients (e.g. Kimi for Coding)'
+    description: 'Custom User-Agent header for endpoints that whitelist clients'
     required: false
   language:
     description: 'Review comment language (overrides repo config when provided)'

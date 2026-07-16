@@ -1,11 +1,11 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const reviewConfigSchema = z.object({
-  language: z.enum(['en', 'zh-TW', 'zh-CN', 'ja', 'ko']).default('en'),
-  provider: z.enum(['kimi', 'openai-compatible']).default('kimi'),
-  model: z.string().default('kimi-k2.5'),
+  language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
+  provider: z.enum(["openai-compatible", "kimi"]).default("kimi"),
+  model: z.string().default("kimi-for-coding"),
   baseUrl: z.string().url().optional(),
-  /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+  /** Custom User-Agent for endpoints that whitelist clients. */
   userAgent: z.string().max(200).optional(),
   /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
   temperature: z.number().min(0).max(2).optional(),
@@ -35,12 +35,12 @@ export const reviewConfigSchema = z.object({
         .default({}),
 
       minSeverity: z
-        .enum(['critical', 'warning', 'suggestion', 'nitpick'])
-        .default('suggestion'),
+        .enum(["critical", "warning", "suggestion", "nitpick"])
+        .default("suggestion"),
 
       maxAnnotations: z.number().min(1).max(100).default(30),
 
-      failOn: z.enum(['critical', 'warning', 'never']).default('critical'),
+      failOn: z.enum(["critical", "warning", "never"]).default("critical"),
 
       incremental: z
         .object({
@@ -53,7 +53,7 @@ export const reviewConfigSchema = z.object({
       comments: z
         .object({
           /** 'sticky': one updated summary + incremental reviews. 'legacy': stack a full review per run. */
-          mode: z.enum(['sticky', 'legacy']).default('sticky'),
+          mode: z.enum(["sticky", "legacy"]).default("sticky"),
           dedupe: z.boolean().default(true),
           resolveOutdated: z.boolean().default(true),
           /** Cumulative inline-comment cap; overflow demotes to check-run annotations. */
@@ -65,18 +65,18 @@ export const reviewConfigSchema = z.object({
 
   files: z
     .object({
-      include: z.array(z.string()).default(['**/*']),
+      include: z.array(z.string()).default(["**/*"]),
       exclude: z
         .array(z.string())
         .default([
-          '**/node_modules/**',
-          '**/dist/**',
-          '**/build/**',
-          '**/*.lock',
-          '**/*.min.*',
-          '**/package-lock.json',
-          '**/yarn.lock',
-          '**/pnpm-lock.yaml',
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/*.lock",
+          "**/*.min.*",
+          "**/package-lock.json",
+          "**/yarn.lock",
+          "**/pnpm-lock.yaml",
         ]),
       maxFileSize: z.number().default(100_000),
     })
@@ -88,7 +88,9 @@ export const reviewConfigSchema = z.object({
         name: z.string(),
         description: z.string(),
         filePattern: z.string().optional(),
-        severity: z.enum(['critical', 'warning', 'suggestion']).default('warning'),
+        severity: z
+          .enum(["critical", "warning", "suggestion"])
+          .default("warning"),
       }),
     )
     .default([]),
@@ -97,13 +99,6 @@ export const reviewConfigSchema = z.object({
     .object({
       systemAppend: z.string().max(2000).optional(),
       reviewFocus: z.string().max(500).optional(),
-    })
-    .default({}),
-
-  cache: z
-    .object({
-      enabled: z.boolean().default(true),
-      ttl: z.number().default(3600),
     })
     .default({}),
 

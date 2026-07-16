@@ -72,8 +72,8 @@ describe('OpenAICompatibleProvider', () => {
 
     const provider = new OpenAICompatibleProvider({
       apiKey: 'k',
-      model: 'kimi-for-coding',
-      baseUrl: 'https://api.kimi.com/coding/v1',
+      model: 'gated-model',
+      baseUrl: 'https://api.example.com/v1',
       userAgent: 'MyCodingAgent/2.1.0',
     });
     await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
