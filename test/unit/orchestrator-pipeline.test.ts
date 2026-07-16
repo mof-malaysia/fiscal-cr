@@ -47,6 +47,11 @@ function fakeOctokit(files: Array<{ filename: string; patch?: string }>) {
         },
       })),
     },
+    issues: {
+      listComments: vi.fn(async () => ({ data: [] })),
+      createComment: vi.fn(async () => ({ data: { id: 9 } })),
+      updateComment: vi.fn(async () => ({})),
+    },
   };
 }
 

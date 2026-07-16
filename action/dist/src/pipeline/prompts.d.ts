@@ -31,5 +31,5 @@ export interface SynthesisPromptInput {
 }
 export declare function buildSynthesisUserPrompt(input: SynthesisPromptInput): string;
 export declare function buildFastPathSystemPrompt(config: ReviewConfig): string;
-export declare function buildFastPathUserPrompt(ctx: PullRequestContext, files: ChangedFile[]): string;
+export declare function buildFastPathUserPrompt(ctx: PullRequestContext, files: ChangedFile[], deltaHint?: string): string;
 //# sourceMappingURL=prompts.d.ts.map

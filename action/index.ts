@@ -37,8 +37,10 @@ async function run(): Promise<void> {
     const repo = context.repo.repo;
     const pullNumber = context.payload.pull_request.number;
     const headSha = context.payload.pull_request.head.sha;
+    const eventAction = context.payload.action ?? "";
+    const isDraft = Boolean(context.payload.pull_request.draft);
 
-    core.info(`Reviewing PR #${pullNumber} (${headSha.slice(0, 7)})`);
+    core.info(`Reviewing PR #${pullNumber} (${headSha.slice(0, 7)}, event: ${eventAction})`);
 
     // @actions/github getOctokit puts REST methods under .rest,
     // but our code expects @octokit/rest shape (octokit.checks, octokit.pulls, etc.)
@@ -57,6 +59,23 @@ async function run(): Promise<void> {
     }
     if (baseUrlInput) {
       config.baseUrl = baseUrlInput;
+    }
+
+    // Honor auto-review settings (previously App-mode only)
+    if (isDraft && !config.review.auto.drafts) {
+      core.info("Skipping draft PR (review.auto.drafts is false).");
+      return;
+    }
+    if (eventAction === "synchronize" && !config.review.auto.onPush) {
+      core.info("Skipping push event (review.auto.onPush is false).");
+      return;
+    }
+    if (
+      ["opened", "reopened", "ready_for_review"].includes(eventAction) &&
+      !config.review.auto.onOpen
+    ) {
+      core.info(`Skipping ${eventAction} event (review.auto.onOpen is false).`);
+      return;
     }
 
     // Create model provider

@@ -21,11 +21,12 @@ export async function runFastPath(
   ctx: PullRequestContext,
   config: ReviewConfig,
   usage: UsageTracker,
+  deltaHint?: string,
 ): Promise<ReviewResult> {
   const response = await llm.chatCompletion({
     messages: [
       { role: 'system', content: buildFastPathSystemPrompt(config) },
-      { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles) },
+      { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
     ],
     responseFormat: { type: 'json_object' },
     maxTokens: config.pipeline.maxOutputTokens,

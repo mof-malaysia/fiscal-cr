@@ -45743,6 +45743,7 @@ async function completeCheckRun(octokit, params) {
         status: 'completed',
         conclusion,
         completed_at: new Date().toISOString(),
+        ...(params.externalId ? { external_id: params.externalId } : {}),
         output: {
             title: conclusion === 'success' ? 'No critical issues found' : 'Issues found',
             summary,
@@ -45776,6 +45777,154 @@ function toCheckAnnotation(a) {
     };
 }
 
+;// CONCATENATED MODULE: ./src/review/diff-analyzer.ts
+/**
+ * Parses unified diff format and maps source line numbers to GitHub diff positions.
+ *
+ * GitHub's PR Review Comment API requires a "position" in the diff, not a source line number.
+ * The position is the line number in the diff (starting from 1), counting only lines
+ * that are visible in the diff view (hunk headers, context lines, additions, deletions).
+ */
+/**
+ * Parse a file's patch (unified diff) into structured hunks.
+ */
+function parsePatch(patch) {
+    const lines = patch.split('\n');
+    const hunks = [];
+    let currentHunk = null;
+    let position = 0;
+    let oldLine = 0;
+    let newLine = 0;
+    for (const line of lines) {
+        // Hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+        const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+        if (hunkMatch) {
+            position++;
+            const hunk = {
+                oldStart: parseInt(hunkMatch[1], 10),
+                oldCount: parseInt(hunkMatch[2] ?? '1', 10),
+                newStart: parseInt(hunkMatch[3], 10),
+                newCount: parseInt(hunkMatch[4] ?? '1', 10),
+                lines: [],
+            };
+            oldLine = hunk.oldStart;
+            newLine = hunk.newStart;
+            hunk.lines.push({
+                type: 'hunk-header',
+                content: line,
+                position,
+            });
+            hunks.push(hunk);
+            currentHunk = hunk;
+            continue;
+        }
+        if (!currentHunk)
+            continue;
+        position++;
+        if (line.startsWith('+')) {
+            currentHunk.lines.push({
+                type: 'addition',
+                content: line.slice(1),
+                newLine,
+                position,
+            });
+            newLine++;
+        }
+        else if (line.startsWith('-')) {
+            currentHunk.lines.push({
+                type: 'deletion',
+                content: line.slice(1),
+                oldLine,
+                position,
+            });
+            oldLine++;
+        }
+        else if (line.startsWith(' ') || line === '') {
+            currentHunk.lines.push({
+                type: 'context',
+                content: line.slice(1),
+                oldLine,
+                newLine,
+                position,
+            });
+            oldLine++;
+            newLine++;
+        }
+    }
+    return hunks;
+}
+/**
+ * Convert a source file line number (1-indexed) to a GitHub diff position.
+ * Returns the position for the RIGHT side (new file) of the diff.
+ */
+/**
+ * All NEW-side line numbers in a patch that can host a PR review comment
+ * (additions and context lines — the RIGHT side of the diff view).
+ */
+function commentableLines(patch) {
+    const lines = new Set();
+    for (const hunk of parsePatch(patch)) {
+        for (const line of hunk.lines) {
+            if ((line.type === 'addition' || line.type === 'context') && line.newLine !== undefined) {
+                lines.add(line.newLine);
+            }
+        }
+    }
+    return lines;
+}
+function lineToDiffPosition(patch, targetLine) {
+    const hunks = parsePatch(patch);
+    for (const hunk of hunks) {
+        for (const line of hunk.lines) {
+            if (line.type === 'hunk-header')
+                continue;
+            if ((line.type === 'addition' || line.type === 'context') &&
+                line.newLine === targetLine) {
+                return { position: line.position, found: true };
+            }
+        }
+    }
+    return { position: 0, found: false };
+}
+
+// EXTERNAL MODULE: external "node:crypto"
+var external_node_crypto_ = __nccwpck_require__(7598);
+;// CONCATENATED MODULE: ./src/github/fingerprint.ts
+
+const FP_MARKER_RE = /<!-- fiscalcr:fp:v1:([0-9a-f]{16}) -->/;
+/**
+ * Normalize a finding title so the fingerprint survives cosmetic drift between
+ * runs: casing, whitespace, backticks, and shifting numbers (line references,
+ * counts) must not produce a "new" finding.
+ */
+function normalizeTitle(title) {
+    return title
+        .toLowerCase()
+        .replace(/`/g, '')
+        .replace(/\d+/g, '#')
+        .replace(/[^a-z#À-￿]+/gu, ' ')
+        .trim();
+}
+/**
+ * Stable identity for a finding across review runs. Deliberately excludes
+ * line numbers and body text — both shift between pushes while the underlying
+ * issue stays the same.
+ */
+function fingerprintAnnotation(a) {
+    return (0,external_node_crypto_.createHash)('sha256')
+        .update(`${a.path}\0${a.category}\0${normalizeTitle(a.title)}`)
+        .digest('hex')
+        .slice(0, 16);
+}
+/** Hidden marker appended to every inline comment we post. */
+function fingerprintMarker(fingerprint) {
+    return `<!-- fiscalcr:fp:v1:${fingerprint} -->`;
+}
+/** Extract the fingerprint from a previously posted comment body, if any. */
+function extractFingerprint(commentBody) {
+    return commentBody.match(FP_MARKER_RE)?.[1] ?? null;
+}
+
 ;// CONCATENATED MODULE: ./src/utils/tokens.ts
 /**
  * Rough token estimation. ~4 chars per token for English,
@@ -45800,12 +45949,108 @@ function calculateCost(usage) {
 ;// CONCATENATED MODULE: ./src/github/comments.ts
 
 
+
+
 const SEVERITY_EMOJI = {
     critical: '🔴',
     warning: '🟡',
     suggestion: '🔵',
     nitpick: '⚪',
 };
+/**
+ * Split annotations into those whose end line can host an inline review
+ * comment on the PR diff, and those that must be demoted to check-run
+ * annotations + a sticky-comment section.
+ */
+function partitionPlaceable(annotations, changedFiles) {
+    const lineCache = new Map();
+    for (const f of changedFiles) {
+        if (f.patch)
+            lineCache.set(f.filename, commentableLines(f.patch));
+    }
+    const placeable = [];
+    const demoted = [];
+    for (const a of annotations) {
+        if (lineCache.get(a.path)?.has(a.endLine))
+            placeable.push(a);
+        else
+            demoted.push(a);
+    }
+    return { placeable, demoted };
+}
+/**
+ * Post one small review containing only this run's new findings. Zero
+ * placeable findings and a non-blocking event → nothing is posted at all.
+ * A 422 on the inline comments retries once body-only (last resort).
+ */
+async function createIncrementalReview(octokit, params) {
+    const { owner, repo, pullNumber, commitSha, annotations, changedFiles, event, body } = params;
+    const inlineCandidates = annotations.filter((a) => a.severity !== 'nitpick');
+    const { placeable, demoted } = partitionPlaceable(inlineCandidates, changedFiles);
+    demoted.push(...annotations.filter((a) => a.severity === 'nitpick'));
+    if (placeable.length === 0 && event === 'COMMENT') {
+        logger_logger.info({ pullNumber }, 'No new placeable findings — no review posted');
+        return { reviewId: null, posted: [], demoted };
+    }
+    const comments = placeable.map((a) => ({
+        path: a.path,
+        line: a.endLine,
+        side: 'RIGHT',
+        body: `${formatAnnotationComment(a)}\n\n${fingerprintMarker(fingerprintAnnotation(a))}`,
+    }));
+    try {
+        const { data } = await octokit.pulls.createReview({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            commit_id: commitSha,
+            event,
+            body,
+            comments,
+        });
+        logger_logger.info({ pullNumber, event, commentCount: comments.length }, 'Incremental review created');
+        return { reviewId: data.id, posted: placeable, demoted };
+    }
+    catch (err) {
+        // Pre-validation should prevent this; if GitHub still rejects the inline
+        // comments, fall back to a body-only review so the run is not lost.
+        logger_logger.warn({ err, pullNumber }, 'Inline comments rejected — posting body-only review');
+        const { data } = await octokit.pulls.createReview({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            commit_id: commitSha,
+            event,
+            body: `${body}\n\n> _Note: inline comments could not be placed on the diff — see the check-run annotations._`,
+        });
+        return { reviewId: data.id, posted: [], demoted: [...demoted, ...placeable] };
+    }
+}
+/**
+ * Dismiss the live blocking review (REQUEST_CHANGES). Failures degrade to a
+ * log line — a stale blocking review is annoying, not fatal.
+ */
+async function dismissBlockingReview(octokit, params) {
+    try {
+        await octokit.pulls.dismissReview({
+            owner: params.owner,
+            repo: params.repo,
+            pull_number: params.pullNumber,
+            review_id: params.reviewId,
+            message: params.message,
+        });
+        logger_logger.info({ reviewId: params.reviewId }, 'Blocking review dismissed');
+        return true;
+    }
+    catch (err) {
+        logger_logger.warn({ err, reviewId: params.reviewId }, 'Could not dismiss blocking review — skipping');
+        return false;
+    }
+}
+/**
+ * Legacy posting mode (`review.comments.mode: 'legacy'`): one full review per
+ * run, stacked on top of previous runs. Kept as an opt-out from sticky mode.
+ */
 async function createPRReview(octokit, params) {
     const { owner, repo, pullNumber, commitSha, result, failOn } = params;
     const shouldRequestChanges = failOn === 'critical'
@@ -45900,6 +46145,279 @@ function formatAnnotationComment(a) {
         parts.push('```');
     }
     return parts.join('\n');
+}
+
+;// CONCATENATED MODULE: ./src/github/review-state.ts
+
+const STATE_MARKER_PREFIX = '<!-- fiscalcr:state:v1 ';
+const STATE_MARKER_SUFFIX = ' -->';
+const STATE_MARKER_RE = /<!-- fiscalcr:state:v1 (\{.*?\}) -->/s;
+const MAX_FINGERPRINTS = 300;
+const MAX_RUN_HISTORY = 20;
+const EMPTY_COUNTS = {
+    critical: 0,
+    warning: 0,
+    suggestion: 0,
+    nitpick: 0,
+};
+/** Parse the hidden state marker out of a comment body. Corrupt/unknown → null. */
+function parseStateMarker(body) {
+    const match = body.match(STATE_MARKER_RE);
+    if (!match)
+        return null;
+    try {
+        const parsed = JSON.parse(match[1]);
+        if (parsed.v !== 1 ||
+            typeof parsed.lastReviewedSha !== 'string' ||
+            typeof parsed.baseSha !== 'string' ||
+            !Array.isArray(parsed.postedFingerprints) ||
+            typeof parsed.openCounts !== 'object' ||
+            parsed.openCounts === null) {
+            return null;
+        }
+        return {
+            v: 1,
+            lastReviewedSha: parsed.lastReviewedSha,
+            baseSha: parsed.baseSha,
+            blockingReviewId: typeof parsed.blockingReviewId === 'number' ? parsed.blockingReviewId : null,
+            postedFingerprints: parsed.postedFingerprints.filter((f) => typeof f === 'string'),
+            openCounts: { ...EMPTY_COUNTS, ...parsed.openCounts },
+            runs: Array.isArray(parsed.runs) ? parsed.runs : [],
+        };
+    }
+    catch {
+        return null;
+    }
+}
+function renderStateMarker(state) {
+    return `${STATE_MARKER_PREFIX}${JSON.stringify(state)}${STATE_MARKER_SUFFIX}`;
+}
+/** FIFO-append keeping the newest entries under the cap. */
+function appendFingerprints(existing, added) {
+    const merged = [...existing];
+    for (const fp of added) {
+        if (!merged.includes(fp))
+            merged.push(fp);
+    }
+    return merged.slice(-MAX_FINGERPRINTS);
+}
+function appendRun(runs, run) {
+    return [...runs, run].slice(-MAX_RUN_HISTORY);
+}
+/**
+ * Find the sticky FiscalCR comment on a PR by its hidden marker (never by
+ * author — works for both github-actions[bot] and App bot users).
+ */
+async function loadReviewState(octokit, params) {
+    const { owner, repo, pullNumber } = params;
+    let page = 1;
+    while (true) {
+        const { data } = await octokit.issues.listComments({
+            owner,
+            repo,
+            issue_number: pullNumber,
+            per_page: 100,
+            page,
+        });
+        for (const comment of data) {
+            if (comment.body?.includes(STATE_MARKER_PREFIX)) {
+                return { commentId: comment.id, state: parseStateMarker(comment.body) };
+            }
+        }
+        if (data.length < 100)
+            return null;
+        page++;
+    }
+}
+/**
+ * Create or update the sticky comment. Re-checks for a concurrently created
+ * sticky comment before creating a new one.
+ */
+async function saveStickyComment(octokit, params) {
+    const { owner, repo, pullNumber, body } = params;
+    let commentId = params.commentId;
+    if (commentId === null) {
+        // A concurrent run may have created the sticky comment since we loaded state.
+        const existing = await loadReviewState(octokit, { owner, repo, pullNumber });
+        commentId = existing?.commentId ?? null;
+    }
+    if (commentId !== null) {
+        try {
+            await octokit.issues.updateComment({ owner, repo, comment_id: commentId, body });
+            return commentId;
+        }
+        catch (err) {
+            logger_logger.warn({ err, commentId }, 'Sticky comment update failed (deleted?) — creating a new one');
+        }
+    }
+    const { data } = await octokit.issues.createComment({
+        owner,
+        repo,
+        issue_number: pullNumber,
+        body,
+    });
+    return data.id;
+}
+const review_state_SEVERITY_EMOJI = {
+    critical: '🔴',
+    warning: '🟡',
+    suggestion: '🔵',
+    nitpick: '⚪',
+};
+/** Render the full sticky comment body, hidden state marker included. */
+function renderStickyComment(input) {
+    const { result, state, demoted } = input;
+    const walkthrough = input.walkthrough ?? result.walkthrough;
+    const lines = [];
+    lines.push('## 🤖 FiscalCR Code Review\n');
+    if (result.intent)
+        lines.push(`> ${result.intent}\n`);
+    lines.push(result.summary);
+    lines.push('');
+    lines.push(`**Score:** ${result.score}/100 · last reviewed \`${state.lastReviewedSha.slice(0, 7)}\``);
+    lines.push('');
+    if (walkthrough && walkthrough.length > 0) {
+        lines.push('<details>');
+        lines.push('<summary>📝 Walkthrough</summary>\n');
+        lines.push('| File | Change Summary |');
+        lines.push('|------|----------------|');
+        for (const entry of walkthrough) {
+            lines.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
+        }
+        lines.push('</details>\n');
+    }
+    const openTotal = Object.values(state.openCounts).reduce((a, b) => a + b, 0);
+    lines.push(`### Open findings: ${openTotal}`);
+    if (openTotal > 0) {
+        lines.push('| Severity | Open |');
+        lines.push('|----------|------|');
+        for (const [severity, count] of Object.entries(state.openCounts)) {
+            if (count > 0) {
+                lines.push(`| ${review_state_SEVERITY_EMOJI[severity]} ${severity} | ${count} |`);
+            }
+        }
+    }
+    lines.push('');
+    if (demoted.length > 0) {
+        lines.push('<details>');
+        lines.push(`<summary>⚠️ ${demoted.length} finding(s) could not be placed inline</summary>\n`);
+        for (const d of demoted) {
+            lines.push(`- ${review_state_SEVERITY_EMOJI[d.severity]} \`${d.path}:${d.startLine}\` — ${d.title}`);
+        }
+        lines.push('\nSee the check-run annotations for details.');
+        lines.push('</details>\n');
+    }
+    if (state.runs.length > 0) {
+        lines.push('<details>');
+        lines.push('<summary>🕘 Run history</summary>\n');
+        lines.push('| Commit | When | Scope | New findings | Cost |');
+        lines.push('|--------|------|-------|--------------|------|');
+        for (const run of [...state.runs].reverse()) {
+            lines.push(`| \`${run.sha}\` | ${run.at} | ${run.scope} | ${run.newFindings} | $${run.cost} |`);
+        }
+        lines.push('</details>\n');
+    }
+    lines.push('---');
+    lines.push('*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
+    lines.push('');
+    lines.push(renderStateMarker(input.state));
+    return lines.join('\n');
+}
+
+;// CONCATENATED MODULE: ./src/github/threads.ts
+
+
+const THREADS_QUERY = `
+query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          isResolved
+          path
+          comments(first: 1) { nodes { body } }
+        }
+      }
+    }
+  }
+}`;
+const SEVERITY_RE = /\*\*\[(critical|warning|suggestion|nitpick)\]\*\*/;
+/**
+ * List review threads on the PR that FiscalCR created, identified by the
+ * hidden fingerprint marker in the thread's first comment.
+ */
+async function listFiscalcrThreads(octokit, params) {
+    const threads = [];
+    let cursor = null;
+    do {
+        const response = await octokit.graphql(THREADS_QUERY, {
+            owner: params.owner,
+            repo: params.repo,
+            number: params.pullNumber,
+            cursor,
+        });
+        const page = response.repository.pullRequest.reviewThreads;
+        for (const node of page.nodes) {
+            const body = node.comments.nodes[0]?.body ?? '';
+            const fingerprint = extractFingerprint(body);
+            if (!fingerprint)
+                continue;
+            threads.push({
+                id: node.id,
+                isResolved: node.isResolved,
+                path: node.path ?? '',
+                fingerprint,
+                severity: body.match(SEVERITY_RE)?.[1] ?? null,
+            });
+        }
+        cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    } while (cursor);
+    return threads;
+}
+/**
+ * Resolve unresolved FiscalCR threads whose file changed in this run but whose
+ * finding did not recur. Returns the threads actually resolved so the caller
+ * can adjust its open-finding counts. All failures (403 on default tokens,
+ * merged PRs, …) degrade to logging — never fail the review over cleanup.
+ */
+async function resolveOutdatedThreads(octokit, params) {
+    let threads;
+    try {
+        threads = await listFiscalcrThreads(octokit, params);
+    }
+    catch (err) {
+        logger_logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
+        return [];
+    }
+    const outdated = threads.filter((t) => !t.isResolved &&
+        params.changedPaths.has(t.path) &&
+        !params.currentFingerprints.has(t.fingerprint));
+    const resolved = [];
+    for (const thread of outdated) {
+        try {
+            await octokit.graphql(`mutation($threadId: ID!, $body: String!) {
+          addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+            comment { id }
+          }
+          resolveReviewThread(input: { threadId: $threadId }) {
+            thread { id }
+          }
+        }`, {
+                threadId: thread.id,
+                body: `✅ Resolved automatically — code changed in \`${params.headSha.slice(0, 7)}\`.`,
+            });
+            resolved.push(thread);
+        }
+        catch (err) {
+            logger_logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');
+        }
+    }
+    if (resolved.length > 0) {
+        logger_logger.info({ resolved: resolved.length }, 'Outdated review threads resolved');
+    }
+    return resolved;
 }
 
 ;// CONCATENATED MODULE: ./node_modules/.pnpm/balanced-match@4.0.4/node_modules/balanced-match/dist/esm/index.js
@@ -48357,6 +48875,75 @@ function filterFiles(files, config) {
     return filtered;
 }
 
+;// CONCATENATED MODULE: ./src/review/delta.ts
+
+
+/** GitHub's compare API silently caps the file list at 300. */
+const COMPARE_FILE_CAP = 300;
+/**
+ * Decide whether this run reviews the whole PR, only what changed since the
+ * last reviewed commit, or nothing at all. Every uncertain case falls back to
+ * a full review — a wasted full review is cheap, a missed finding is not.
+ */
+async function decideScope(octokit, params) {
+    const { owner, repo, headSha, baseSha, state, forceFull, config } = params;
+    if (!config.review.incremental.enabled)
+        return { mode: 'full', reason: 'incremental reviews disabled' };
+    if (forceFull)
+        return { mode: 'full', reason: 'full review forced' };
+    if (!state)
+        return { mode: 'full', reason: 'no previous review state' };
+    if (state.lastReviewedSha === headSha) {
+        return { mode: 'skip', reason: `head ${headSha.slice(0, 7)} already reviewed` };
+    }
+    if (state.baseSha !== baseSha) {
+        return { mode: 'full', reason: 'PR base changed since last review' };
+    }
+    let compare;
+    try {
+        ({ data: compare } = await octokit.repos.compareCommitsWithBasehead({
+            owner,
+            repo,
+            basehead: `${state.lastReviewedSha}...${headSha}`,
+        }));
+    }
+    catch (err) {
+        // 404/422: the previously reviewed commit no longer exists (force-push).
+        logger_logger.warn({ err, since: state.lastReviewedSha }, 'Commit compare failed — full review');
+        return { mode: 'full', reason: 'last reviewed commit unreachable (force-push?)' };
+    }
+    if (compare.status === 'diverged' || compare.status === 'behind') {
+        return { mode: 'full', reason: `history ${compare.status} since last review (force-push?)` };
+    }
+    if (compare.status === 'identical') {
+        return { mode: 'skip', reason: 'no changes since last review' };
+    }
+    const compareFiles = compare.files ?? [];
+    if (compareFiles.length >= COMPARE_FILE_CAP) {
+        return { mode: 'full', reason: 'delta hit the compare API file cap' };
+    }
+    if (compareFiles.length > config.review.incremental.maxDeltaFiles) {
+        return { mode: 'full', reason: `delta touches ${compareFiles.length} files (> maxDeltaFiles)` };
+    }
+    const changed = compareFiles.map((f) => ({
+        filename: f.filename,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+        patch: f.patch,
+    }));
+    const relevant = filterFiles(changed, config);
+    if (relevant.length === 0) {
+        return { mode: 'skip', reason: 'no reviewable files changed since last review' };
+    }
+    return {
+        mode: 'delta',
+        paths: relevant.map((f) => f.filename),
+        sinceSha: state.lastReviewedSha,
+        reason: `${relevant.length} file(s) changed since ${state.lastReviewedSha.slice(0, 7)}`,
+    };
+}
+
 ;// CONCATENATED MODULE: ./src/review/summary-builder.ts
 
 const summary_builder_SEVERITY_EMOJI = {
@@ -48685,11 +49272,13 @@ Respond with a single JSON object:
 - startLine/endLine refer to the NEW version of the file (right side of the diff).
 - suggestedFix must be a drop-in replacement for exactly the lines startLine-endLine.`;
 }
-function buildFastPathUserPrompt(ctx, files) {
+function buildFastPathUserPrompt(ctx, files, deltaHint) {
     const parts = [];
     parts.push(`## Pull Request #${ctx.pullNumber}: ${ctx.title}`);
     if (ctx.body)
         parts.push(`\n### Description\n${ctx.body}`);
+    if (deltaHint)
+        parts.push(`\n${deltaHint}`);
     const withContent = files.filter((f) => ctx.fileContents.has(f.filename));
     if (withContent.length > 0) {
         parts.push('\n### Changed Files — full contents (new version)');
@@ -53555,101 +54144,6 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
     })));
 }
 
-;// CONCATENATED MODULE: ./src/review/diff-analyzer.ts
-/**
- * Parses unified diff format and maps source line numbers to GitHub diff positions.
- *
- * GitHub's PR Review Comment API requires a "position" in the diff, not a source line number.
- * The position is the line number in the diff (starting from 1), counting only lines
- * that are visible in the diff view (hunk headers, context lines, additions, deletions).
- */
-/**
- * Parse a file's patch (unified diff) into structured hunks.
- */
-function parsePatch(patch) {
-    const lines = patch.split('\n');
-    const hunks = [];
-    let currentHunk = null;
-    let position = 0;
-    let oldLine = 0;
-    let newLine = 0;
-    for (const line of lines) {
-        // Hunk header: @@ -oldStart,oldCount +newStart,newCount @@
-        const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-        if (hunkMatch) {
-            position++;
-            const hunk = {
-                oldStart: parseInt(hunkMatch[1], 10),
-                oldCount: parseInt(hunkMatch[2] ?? '1', 10),
-                newStart: parseInt(hunkMatch[3], 10),
-                newCount: parseInt(hunkMatch[4] ?? '1', 10),
-                lines: [],
-            };
-            oldLine = hunk.oldStart;
-            newLine = hunk.newStart;
-            hunk.lines.push({
-                type: 'hunk-header',
-                content: line,
-                position,
-            });
-            hunks.push(hunk);
-            currentHunk = hunk;
-            continue;
-        }
-        if (!currentHunk)
-            continue;
-        position++;
-        if (line.startsWith('+')) {
-            currentHunk.lines.push({
-                type: 'addition',
-                content: line.slice(1),
-                newLine,
-                position,
-            });
-            newLine++;
-        }
-        else if (line.startsWith('-')) {
-            currentHunk.lines.push({
-                type: 'deletion',
-                content: line.slice(1),
-                oldLine,
-                position,
-            });
-            oldLine++;
-        }
-        else if (line.startsWith(' ') || line === '') {
-            currentHunk.lines.push({
-                type: 'context',
-                content: line.slice(1),
-                oldLine,
-                newLine,
-                position,
-            });
-            oldLine++;
-            newLine++;
-        }
-    }
-    return hunks;
-}
-/**
- * Convert a source file line number (1-indexed) to a GitHub diff position.
- * Returns the position for the RIGHT side (new file) of the diff.
- */
-function lineToDiffPosition(patch, targetLine) {
-    const hunks = parsePatch(patch);
-    for (const hunk of hunks) {
-        for (const line of hunk.lines) {
-            if (line.type === 'hunk-header')
-                continue;
-            if ((line.type === 'addition' || line.type === 'context') &&
-                line.newLine === targetLine) {
-                return { position: line.position, found: true };
-            }
-        }
-    }
-    return { position: 0, found: false };
-}
-
 ;// CONCATENATED MODULE: ./src/pipeline/pass3-synthesis.ts
 
 
@@ -53861,11 +54355,11 @@ class ReviewError extends Error {
  * Fast path: one combined call for small PRs (and the `pipeline.enabled: false`
  * kill-switch). Same output contract and code-side validation as the pipeline.
  */
-async function runFastPath(llm, ctx, config, usage) {
+async function runFastPath(llm, ctx, config, usage, deltaHint) {
     const response = await llm.chatCompletion({
         messages: [
             { role: 'system', content: buildFastPathSystemPrompt(config) },
-            { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles) },
+            { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
         ],
         responseFormat: { type: 'json_object' },
         maxTokens: config.pipeline.maxOutputTokens,
@@ -53927,6 +54421,17 @@ class UsageTracker {
 
 
 
+
+
+
+
+function conclusionFor(counts, failOn) {
+    if (failOn === 'critical')
+        return counts.critical > 0 ? 'failure' : 'success';
+    if (failOn === 'warning')
+        return counts.critical > 0 || counts.warning > 0 ? 'failure' : 'success';
+    return 'success';
+}
 class ReviewOrchestrator {
     octokit;
     llm;
@@ -53940,21 +54445,50 @@ class ReviewOrchestrator {
     }
     async reviewPullRequest(params) {
         const { owner, repo, pullNumber, headSha } = params;
+        const sticky = this.config.review.comments.mode === 'sticky';
         // Step 1: Create Check Run
-        const checkRunId = await createCheckRun(this.octokit, {
-            owner,
-            repo,
-            headSha,
-        });
+        const checkRunId = await createCheckRun(this.octokit, { owner, repo, headSha });
         try {
-            // Step 2: Extract PR context
+            // Step 2: Load state and decide review scope
+            let stickyRef = null;
+            let scope = {
+                mode: 'full',
+                reason: sticky ? 'no previous review state' : 'legacy comment mode',
+            };
+            if (sticky) {
+                stickyRef = await loadReviewState(this.octokit, { owner, repo, pullNumber });
+                if (stickyRef?.state) {
+                    const { data: pr } = await this.octokit.pulls.get({
+                        owner,
+                        repo,
+                        pull_number: pullNumber,
+                    });
+                    scope = await decideScope(this.octokit, {
+                        owner,
+                        repo,
+                        headSha,
+                        baseSha: pr.base.sha,
+                        state: stickyRef.state,
+                        forceFull: params.forceFull,
+                        config: this.config,
+                    });
+                }
+            }
+            logger_logger.info({ pullNumber, scope: scope.mode, reason: scope.reason }, 'Review scope decided');
+            if (scope.mode === 'skip' && stickyRef?.state) {
+                return await this.completeSkippedRun({ owner, repo, checkRunId }, stickyRef.state, scope.reason);
+            }
+            // Step 3: Extract PR context (path-filtered for delta reviews)
             logger_logger.info({ pullNumber }, 'Extracting PR context');
             const apiSource = new ApiFileSource(this.octokit, owner, repo, headSha);
             const fileSource = this.options.workspaceRoot
                 ? new LocalFileSource(this.options.workspaceRoot, apiSource)
                 : apiSource;
-            const prContext = await extractPullRequestContext(this.octokit, owner, repo, pullNumber, this.config, { fileSource });
-            // Step 3: Filter files
+            const prContext = await extractPullRequestContext(this.octokit, owner, repo, pullNumber, this.config, {
+                fileSource,
+                pathFilter: scope.mode === 'delta' ? scope.paths : undefined,
+            });
+            // Step 4: Filter files
             const filteredFiles = filterFiles(prContext.changedFiles, this.config);
             prContext.changedFiles = filteredFiles;
             // Keep contents only for reviewable files (never prompt with lockfiles etc.)
@@ -53964,11 +54498,14 @@ class ReviewOrchestrator {
                     prContext.fileContents.delete(path);
             }
             if (filteredFiles.length === 0) {
+                if (stickyRef?.state) {
+                    return await this.completeSkippedRun({ owner, repo, checkRunId }, stickyRef.state, 'no reviewable files in scope');
+                }
                 const result = {
                     summary: 'No reviewable files in this PR (all files matched exclude patterns).',
                     score: 100,
                     annotations: [],
-                    stats: { critical: 0, warning: 0, suggestion: 0, nitpick: 0 },
+                    stats: { ...EMPTY_COUNTS },
                     tokensUsed: { input: 0, output: 0, cached: 0 },
                 };
                 await completeCheckRun(this.octokit, {
@@ -53981,42 +54518,23 @@ class ReviewOrchestrator {
                 });
                 return result;
             }
-            // Step 4: Run the review (fast path or multi-pass pipeline)
-            const result = await this.runReview(prContext);
-            // Step 5: Determine conclusion
-            const conclusion = this.config.review.failOn === 'critical' && result.stats.critical > 0
-                ? 'failure'
-                : this.config.review.failOn === 'warning' &&
-                    (result.stats.critical > 0 || result.stats.warning > 0)
-                    ? 'failure'
-                    : 'success';
-            // Step 6: Update Check Run
-            const summaryMd = buildSummary(result);
-            await completeCheckRun(this.octokit, {
-                owner,
-                repo,
+            // Step 5: Run the review (fast path or multi-pass pipeline)
+            const deltaHint = scope.mode === 'delta' && scope.sinceSha
+                ? `### Incremental Review\nOnly files changed since commit \`${scope.sinceSha.slice(0, 7)}\` are included. Focus on lines changed since that commit; findings on other files are tracked separately.`
+                : undefined;
+            const result = await this.runReview(prContext, deltaHint);
+            // Step 6: Publish (sticky lifecycle or legacy stacked review)
+            if (!sticky) {
+                return await this.publishLegacy({ checkRunId, prContext, result });
+            }
+            return await this.publishSticky({
                 checkRunId,
-                conclusion,
-                summary: summaryMd,
-                annotations: result.annotations,
-            });
-            // Step 7: Create PR Review
-            await createPRReview(this.octokit, {
-                owner,
-                repo,
-                pullNumber,
-                commitSha: headSha,
+                prContext,
                 result,
-                failOn: this.config.review.failOn,
+                scope,
+                state: stickyRef?.state ?? null,
+                commentId: stickyRef?.commentId ?? null,
             });
-            logger_logger.info({
-                pullNumber,
-                score: result.score,
-                annotations: result.annotations.length,
-                llmCalls: result.callCount,
-                conclusion,
-            }, 'Review completed');
-            return result;
         }
         catch (err) {
             logger_logger.error({ err, pullNumber }, 'Review failed');
@@ -54031,14 +54549,221 @@ class ReviewOrchestrator {
             throw new ReviewError(err instanceof Error ? err.message : 'Unknown error', 'orchestration');
         }
     }
-    async runReview(prContext) {
+    /** Nothing to review — carry the previous conclusion so the check stays honest. */
+    async completeSkippedRun(target, state, reason) {
+        const conclusion = conclusionFor(state.openCounts, this.config.review.failOn);
+        const openTotal = Object.values(state.openCounts).reduce((a, b) => a + b, 0);
+        const summary = `Review skipped: ${reason}. ${openTotal} open finding(s) carried from the last review of \`${state.lastReviewedSha.slice(0, 7)}\`.`;
+        await completeCheckRun(this.octokit, {
+            ...target,
+            conclusion,
+            summary,
+            annotations: [],
+            externalId: JSON.stringify({ scope: 'skip' }),
+        });
+        logger_logger.info({ reason, conclusion }, 'Review skipped');
+        return {
+            summary,
+            score: deterministicScore(state.openCounts),
+            annotations: [],
+            stats: { ...state.openCounts },
+            tokensUsed: { input: 0, output: 0, cached: 0 },
+            callCount: 0,
+        };
+    }
+    /** Pre-sticky behavior: full review stacked on the PR every run. */
+    async publishLegacy(input) {
+        const { checkRunId, prContext, result } = input;
+        const { owner, repo, pullNumber, headSha } = prContext;
+        const conclusion = conclusionFor(result.stats, this.config.review.failOn);
+        await completeCheckRun(this.octokit, {
+            owner,
+            repo,
+            checkRunId,
+            conclusion,
+            summary: buildSummary(result),
+            annotations: result.annotations,
+        });
+        await createPRReview(this.octokit, {
+            owner,
+            repo,
+            pullNumber,
+            commitSha: headSha,
+            result,
+            failOn: this.config.review.failOn,
+        });
+        logger_logger.info({
+            pullNumber,
+            score: result.score,
+            annotations: result.annotations.length,
+            llmCalls: result.callCount,
+            conclusion,
+        }, 'Review completed');
+        return result;
+    }
+    /**
+     * Sticky lifecycle: dedupe vs posted fingerprints → resolve outdated threads
+     * → manage the blocking review → post incremental review → update the sticky
+     * summary comment (which persists the state — always saved last).
+     */
+    async publishSticky(input) {
+        const { checkRunId, prContext, result, scope, state } = input;
+        const { owner, repo, pullNumber, headSha } = prContext;
+        const commentsCfg = this.config.review.comments;
+        const prevCounts = state?.openCounts ?? { ...EMPTY_COUNTS };
+        // Dedupe against everything ever posted (including human-deleted comments —
+        // deleting a bot comment must not invite a re-nag).
+        const fingerprints = new Map(result.annotations.map((a) => [a, fingerprintAnnotation(a)]));
+        const currentFingerprints = new Set(fingerprints.values());
+        const alreadyPosted = new Set(state?.postedFingerprints ?? []);
+        const newAnnotations = commentsCfg.dedupe && state
+            ? result.annotations.filter((a) => !alreadyPosted.has(fingerprints.get(a)))
+            : result.annotations;
+        // Cumulative inline cap: overflow lives in check-run annotations + sticky.
+        const openTotal = Object.values(prevCounts).reduce((a, b) => a + b, 0);
+        const inlineBudget = Math.max(0, commentsCfg.maxOpenComments - openTotal);
+        const inlineNew = newAnnotations.slice(0, inlineBudget);
+        const capOverflow = newAnnotations.slice(inlineBudget);
+        if (capOverflow.length > 0) {
+            logger_logger.info({ overflow: capOverflow.length, cap: commentsCfg.maxOpenComments }, 'maxOpenComments reached — overflow findings demoted to check-run annotations');
+        }
+        // Resolve threads whose file changed but whose finding did not recur.
+        let resolvedCounts = { ...EMPTY_COUNTS };
+        if (commentsCfg.resolveOutdated && state) {
+            const resolved = await resolveOutdatedThreads(this.octokit, {
+                owner,
+                repo,
+                pullNumber,
+                changedPaths: new Set(prContext.changedFiles.map((f) => f.filename)),
+                currentFingerprints,
+                headSha,
+            });
+            for (const t of resolved) {
+                if (t.severity)
+                    resolvedCounts[t.severity]++;
+            }
+        }
+        // Cumulative open counts: a full review re-derives them; a delta adjusts.
+        let openCounts;
+        if (scope.mode === 'full') {
+            openCounts = countBySeverity(result.annotations);
+        }
+        else {
+            openCounts = { ...prevCounts };
+            const newCounts = countBySeverity(newAnnotations);
+            for (const sev of Object.keys(openCounts)) {
+                openCounts[sev] = Math.max(0, openCounts[sev] - resolvedCounts[sev] + newCounts[sev]);
+            }
+        }
+        const conclusion = conclusionFor(openCounts, this.config.review.failOn);
+        const blocking = conclusion === 'failure';
+        // Check run reflects cumulative PR health, not just this run's delta.
+        await completeCheckRun(this.octokit, {
+            owner,
+            repo,
+            checkRunId,
+            conclusion,
+            summary: buildSummary({ ...result, stats: openCounts }),
+            annotations: result.annotations,
+            externalId: JSON.stringify({
+                scope: scope.mode,
+                calls: result.callCount ?? 0,
+                newFindings: newAnnotations.length,
+            }),
+        });
+        // One live blocking review, anchored to the newest commit: always dismiss
+        // the old one; re-post below when still failing.
+        let blockingReviewId = state?.blockingReviewId ?? null;
+        if (blockingReviewId !== null) {
+            const message = blocking
+                ? `Superseded by an updated review as of ${headSha.slice(0, 7)}.`
+                : `✅ Issues addressed as of ${headSha.slice(0, 7)}.`;
+            await dismissBlockingReview(this.octokit, {
+                owner,
+                repo,
+                pullNumber,
+                reviewId: blockingReviewId,
+                message,
+            });
+            blockingReviewId = null;
+        }
+        const outcome = await createIncrementalReview(this.octokit, {
+            owner,
+            repo,
+            pullNumber,
+            commitSha: headSha,
+            annotations: inlineNew,
+            changedFiles: prContext.changedFiles,
+            event: blocking ? 'REQUEST_CHANGES' : 'COMMENT',
+            body: this.buildIncrementalBody(result, scope, newAnnotations.length, openCounts, blocking),
+        });
+        if (blocking)
+            blockingReviewId = outcome.reviewId;
+        // State is saved last, only after posting succeeded.
+        const demoted = [...outcome.demoted, ...capOverflow];
+        const newState = {
+            v: 1,
+            lastReviewedSha: headSha,
+            baseSha: prContext.baseSha,
+            blockingReviewId,
+            postedFingerprints: appendFingerprints(state?.postedFingerprints ?? [], newAnnotations.map((a) => fingerprints.get(a))),
+            openCounts,
+            runs: appendRun(state?.runs ?? [], {
+                sha: headSha.slice(0, 7),
+                at: new Date().toISOString().slice(0, 10),
+                scope: scope.mode === 'delta' ? 'delta' : 'full',
+                newFindings: newAnnotations.length,
+                cost: calculateCost(result.tokensUsed).toString(),
+            }),
+        };
+        await saveStickyComment(this.octokit, {
+            owner,
+            repo,
+            pullNumber,
+            commentId: input.commentId,
+            body: renderStickyComment({
+                result,
+                state: newState,
+                demoted: demoted.map((a) => ({
+                    path: a.path,
+                    startLine: a.startLine,
+                    severity: a.severity,
+                    title: a.title,
+                })),
+            }),
+        });
+        logger_logger.info({
+            pullNumber,
+            scope: scope.mode,
+            score: result.score,
+            newFindings: newAnnotations.length,
+            postedInline: outcome.posted.length,
+            openCounts,
+            llmCalls: result.callCount,
+            conclusion,
+        }, 'Review completed');
+        // Cumulative stats so failOn logic downstream (Action outputs) matches the check run.
+        return { ...result, stats: openCounts };
+    }
+    buildIncrementalBody(result, scope, newFindings, openCounts, blocking) {
+        const openTotal = Object.values(openCounts).reduce((a, b) => a + b, 0);
+        const lines = [];
+        lines.push(blocking ? '## 🤖 FiscalCR — changes requested' : '## 🤖 FiscalCR review update');
+        if (scope.mode === 'delta' && scope.sinceSha) {
+            lines.push(`\nIncremental review of changes since \`${scope.sinceSha.slice(0, 7)}\`.`);
+        }
+        lines.push(`\n**${newFindings} new finding(s)** this run · **${openTotal} open** across the PR · score ${result.score}/100`);
+        lines.push('\nSee the pinned FiscalCR summary comment for the full walkthrough and open findings.');
+        return lines.join('\n');
+    }
+    async runReview(prContext, deltaHint) {
         const usage = new UsageTracker();
         const pipeline = this.config.pipeline;
         const totalTokens = prContext.changedFiles.reduce((sum, f) => sum + (f.patch ? estimateTokens(f.patch) : 0), 0) +
             [...prContext.fileContents.values()].reduce((sum, c) => sum + estimateTokens(c), 0);
         if (!pipeline.enabled || totalTokens < pipeline.fastPathThreshold) {
             logger_logger.info({ totalTokens, pipelineEnabled: pipeline.enabled }, 'Using fast path (single call)');
-            return runFastPath(this.llm, prContext, this.config, usage);
+            return runFastPath(this.llm, prContext, this.config, usage, deltaHint);
         }
         logger_logger.info({ totalTokens }, 'Using multi-pass pipeline');
         // Pass 1: intent & walkthrough (non-fatal on failure)
@@ -54046,7 +54771,7 @@ class ReviewOrchestrator {
         // Pass 2: parallel per-group reviews
         const groups = groupFiles(prContext.changedFiles, prContext.fileContents, intent, this.config);
         logger_logger.info({ groups: groups.map((g) => ({ label: g.label, files: g.files.length, diffOnly: g.diffOnly })) }, 'Files grouped for review');
-        const outcomes = await runReviewPass(this.llm, prContext, groups, intent, this.config, usage, { workspaceRoot: this.options.workspaceRoot });
+        const outcomes = await runReviewPass(this.llm, prContext, groups, intent, this.config, usage, { workspaceRoot: this.options.workspaceRoot, deltaHint });
         if (outcomes.every((o) => o.failed)) {
             throw new ReviewError('All review groups failed', 'review-pass');
         }
@@ -54276,6 +55001,21 @@ const reviewConfigSchema = objectType({
             .default('suggestion'),
         maxAnnotations: numberType().min(1).max(100).default(30),
         failOn: enumType(['critical', 'warning', 'never']).default('critical'),
+        incremental: objectType({
+            enabled: booleanType().default(true),
+            /** Deltas touching more files than this fall back to a full review. */
+            maxDeltaFiles: numberType().min(1).max(299).default(150),
+        })
+            .default({}),
+        comments: objectType({
+            /** 'sticky': one updated summary + incremental reviews. 'legacy': stack a full review per run. */
+            mode: enumType(['sticky', 'legacy']).default('sticky'),
+            dedupe: booleanType().default(true),
+            resolveOutdated: booleanType().default(true),
+            /** Cumulative inline-comment cap; overflow demotes to check-run annotations. */
+            maxOpenComments: numberType().min(1).default(100),
+        })
+            .default({}),
     })
         .default({}),
     files: objectType({
@@ -54352,6 +55092,16 @@ const DEFAULT_CONFIG = {
         minSeverity: 'suggestion',
         maxAnnotations: 30,
         failOn: 'critical',
+        incremental: {
+            enabled: true,
+            maxDeltaFiles: 150,
+        },
+        comments: {
+            mode: 'sticky',
+            dedupe: true,
+            resolveOutdated: true,
+            maxOpenComments: 100,
+        },
     },
     files: {
         include: ['**/*'],
@@ -54471,7 +55221,9 @@ async function run() {
         const repo = context.repo.repo;
         const pullNumber = context.payload.pull_request.number;
         const headSha = context.payload.pull_request.head.sha;
-        core.info(`Reviewing PR #${pullNumber} (${headSha.slice(0, 7)})`);
+        const eventAction = context.payload.action ?? "";
+        const isDraft = Boolean(context.payload.pull_request.draft);
+        core.info(`Reviewing PR #${pullNumber} (${headSha.slice(0, 7)}, event: ${eventAction})`);
         // @actions/github getOctokit puts REST methods under .rest,
         // but our code expects @octokit/rest shape (octokit.checks, octokit.pulls, etc.)
         const restOctokit = octokit.rest;
@@ -54488,6 +55240,20 @@ async function run() {
         }
         if (baseUrlInput) {
             config.baseUrl = baseUrlInput;
+        }
+        // Honor auto-review settings (previously App-mode only)
+        if (isDraft && !config.review.auto.drafts) {
+            core.info("Skipping draft PR (review.auto.drafts is false).");
+            return;
+        }
+        if (eventAction === "synchronize" && !config.review.auto.onPush) {
+            core.info("Skipping push event (review.auto.onPush is false).");
+            return;
+        }
+        if (["opened", "reopened", "ready_for_review"].includes(eventAction) &&
+            !config.review.auto.onOpen) {
+            core.info(`Skipping ${eventAction} event (review.auto.onOpen is false).`);
+            return;
         }
         // Create model provider
         const llm = createLLMProvider({

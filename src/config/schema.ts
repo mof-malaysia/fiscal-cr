@@ -37,6 +37,25 @@ export const reviewConfigSchema = z.object({
       maxAnnotations: z.number().min(1).max(100).default(30),
 
       failOn: z.enum(['critical', 'warning', 'never']).default('critical'),
+
+      incremental: z
+        .object({
+          enabled: z.boolean().default(true),
+          /** Deltas touching more files than this fall back to a full review. */
+          maxDeltaFiles: z.number().min(1).max(299).default(150),
+        })
+        .default({}),
+
+      comments: z
+        .object({
+          /** 'sticky': one updated summary + incremental reviews. 'legacy': stack a full review per run. */
+          mode: z.enum(['sticky', 'legacy']).default('sticky'),
+          dedupe: z.boolean().default(true),
+          resolveOutdated: z.boolean().default(true),
+          /** Cumulative inline-comment cap; overflow demotes to check-run annotations. */
+          maxOpenComments: z.number().min(1).default(100),
+        })
+        .default({}),
     })
     .default({}),
 

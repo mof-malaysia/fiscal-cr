@@ -52,6 +52,35 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity: z.ZodDefault<z.ZodEnum<["critical", "warning", "suggestion", "nitpick"]>>;
         maxAnnotations: z.ZodDefault<z.ZodNumber>;
         failOn: z.ZodDefault<z.ZodEnum<["critical", "warning", "never"]>>;
+        incremental: z.ZodDefault<z.ZodObject<{
+            enabled: z.ZodDefault<z.ZodBoolean>;
+            /** Deltas touching more files than this fall back to a full review. */
+            maxDeltaFiles: z.ZodDefault<z.ZodNumber>;
+        }, "strip", z.ZodTypeAny, {
+            enabled: boolean;
+            maxDeltaFiles: number;
+        }, {
+            enabled?: boolean | undefined;
+            maxDeltaFiles?: number | undefined;
+        }>>;
+        comments: z.ZodDefault<z.ZodObject<{
+            /** 'sticky': one updated summary + incremental reviews. 'legacy': stack a full review per run. */
+            mode: z.ZodDefault<z.ZodEnum<["sticky", "legacy"]>>;
+            dedupe: z.ZodDefault<z.ZodBoolean>;
+            resolveOutdated: z.ZodDefault<z.ZodBoolean>;
+            /** Cumulative inline-comment cap; overflow demotes to check-run annotations. */
+            maxOpenComments: z.ZodDefault<z.ZodNumber>;
+        }, "strip", z.ZodTypeAny, {
+            mode: "sticky" | "legacy";
+            dedupe: boolean;
+            resolveOutdated: boolean;
+            maxOpenComments: number;
+        }, {
+            mode?: "sticky" | "legacy" | undefined;
+            dedupe?: boolean | undefined;
+            resolveOutdated?: boolean | undefined;
+            maxOpenComments?: number | undefined;
+        }>>;
     }, "strip", z.ZodTypeAny, {
         auto: {
             enabled: boolean;
@@ -72,6 +101,16 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity: "critical" | "warning" | "suggestion" | "nitpick";
         maxAnnotations: number;
         failOn: "critical" | "warning" | "never";
+        incremental: {
+            enabled: boolean;
+            maxDeltaFiles: number;
+        };
+        comments: {
+            mode: "sticky" | "legacy";
+            dedupe: boolean;
+            resolveOutdated: boolean;
+            maxOpenComments: number;
+        };
     }, {
         auto?: {
             enabled?: boolean | undefined;
@@ -92,6 +131,16 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity?: "critical" | "warning" | "suggestion" | "nitpick" | undefined;
         maxAnnotations?: number | undefined;
         failOn?: "critical" | "warning" | "never" | undefined;
+        incremental?: {
+            enabled?: boolean | undefined;
+            maxDeltaFiles?: number | undefined;
+        } | undefined;
+        comments?: {
+            mode?: "sticky" | "legacy" | undefined;
+            dedupe?: boolean | undefined;
+            resolveOutdated?: boolean | undefined;
+            maxOpenComments?: number | undefined;
+        } | undefined;
     }>>;
     files: z.ZodDefault<z.ZodObject<{
         include: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
@@ -201,6 +250,16 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity: "critical" | "warning" | "suggestion" | "nitpick";
         maxAnnotations: number;
         failOn: "critical" | "warning" | "never";
+        incremental: {
+            enabled: boolean;
+            maxDeltaFiles: number;
+        };
+        comments: {
+            mode: "sticky" | "legacy";
+            dedupe: boolean;
+            resolveOutdated: boolean;
+            maxOpenComments: number;
+        };
     };
     files: {
         include: string[];
@@ -259,6 +318,16 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity?: "critical" | "warning" | "suggestion" | "nitpick" | undefined;
         maxAnnotations?: number | undefined;
         failOn?: "critical" | "warning" | "never" | undefined;
+        incremental?: {
+            enabled?: boolean | undefined;
+            maxDeltaFiles?: number | undefined;
+        } | undefined;
+        comments?: {
+            mode?: "sticky" | "legacy" | undefined;
+            dedupe?: boolean | undefined;
+            resolveOutdated?: boolean | undefined;
+            maxOpenComments?: number | undefined;
+        } | undefined;
     } | undefined;
     files?: {
         include?: string[] | undefined;

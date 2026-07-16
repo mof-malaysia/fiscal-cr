@@ -34,12 +34,17 @@ name: FiscalCR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, review_requested]
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
 
 permissions:
   contents: read
   pull-requests: write
   checks: write
+
+# Prevent two reviews of the same PR from racing each other's state
+concurrency:
+  group: fiscalcr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 jobs:
   review:
@@ -167,6 +172,15 @@ review:
   minSeverity: suggestion
   maxAnnotations: 30
   failOn: critical
+  incremental:
+    enabled: true            # re-review only files changed since the last reviewed commit
+    maxDeltaFiles: 150       # larger deltas fall back to a full review
+  comments:
+    mode: sticky             # one updated summary comment + small incremental reviews
+                             # 'legacy' → stack a full review on every run (pre-v2 behavior)
+    dedupe: true             # never re-post a finding that was already posted
+    resolveOutdated: true    # auto-resolve threads whose finding no longer occurs
+    maxOpenComments: 100     # cumulative inline cap; overflow goes to check-run annotations
 
 files:
   include:
@@ -235,6 +249,33 @@ PR Event -> Extract Context -> Filter Files
    - **Pass 3 — synthesis**: code-side validation drops findings on lines outside the diff, filters by confidence, dedupes, and ranks; a final call merges group summaries into one review (skipped when there is only one group).
 6. Every LLM call goes through retry/backoff/timeout handling with `max_tokens` enforced
 7. Update the Check Run and PR review summary (intent, walkthrough table, findings, token usage)
+
+### Incremental reviews & comment lifecycle
+
+FiscalCR keeps its review state in a hidden marker inside one **sticky summary
+comment** per PR — no external storage, works identically in Action and App mode.
+
+- **First run** reviews the whole PR and posts the sticky summary plus inline comments.
+- **Each push** re-reviews only the files changed since the last reviewed commit
+  (`review.incremental`). The sticky comment is updated in place; a small review
+  with **only new findings** is posted — zero new findings means no review at all.
+- **Findings are fingerprinted** (`path + category + normalized title`), so the same
+  issue is never posted twice, even across full re-reviews. Deleting a bot comment
+  will not cause a re-nag.
+- **Fixed findings are cleaned up**: threads whose file changed but whose finding
+  did not recur are resolved automatically, and a passing run dismisses the
+  blocking REQUEST_CHANGES review ("Issues addressed as of `abc1234`").
+- **The check run reflects cumulative PR health** — an unfixed critical from an
+  earlier run keeps the check red even when a later push adds nothing new.
+- `@fiscalcr review` always forces a full re-review (still deduped).
+- Base branch changes, force-pushes, and oversized deltas automatically fall back
+  to a full review.
+
+**Limitations**: fork PRs run with a read-only token, so reviews cannot be posted
+(pre-existing GitHub Actions restriction). Thread auto-resolution needs the
+default `pull-requests: write` permission; when unavailable it degrades to a log
+line. Use the `concurrency` group shown in the Quick Start so concurrent runs on
+the same PR don't race each other's state.
 
 ## Cost model
 

@@ -318,10 +318,12 @@ Respond with a single JSON object:
 export function buildFastPathUserPrompt(
   ctx: PullRequestContext,
   files: ChangedFile[],
+  deltaHint?: string,
 ): string {
   const parts: string[] = [];
   parts.push(`## Pull Request #${ctx.pullNumber}: ${ctx.title}`);
   if (ctx.body) parts.push(`\n### Description\n${ctx.body}`);
+  if (deltaHint) parts.push(`\n${deltaHint}`);
 
   const withContent = files.filter((f) => ctx.fileContents.has(f.filename));
   if (withContent.length > 0) {

@@ -13,5 +13,7 @@ export declare function completeCheckRun(octokit: Octokit, params: {
     conclusion: 'success' | 'failure' | 'neutral';
     summary: string;
     annotations: ReviewAnnotation[];
+    /** Debug metadata only (review scope, call counts) — never parsed back. */
+    externalId?: string;
 }): Promise<void>;
 //# sourceMappingURL=checks.d.ts.map

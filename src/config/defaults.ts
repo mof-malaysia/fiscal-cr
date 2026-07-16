@@ -24,6 +24,16 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     minSeverity: 'suggestion',
     maxAnnotations: 30,
     failOn: 'critical',
+    incremental: {
+      enabled: true,
+      maxDeltaFiles: 150,
+    },
+    comments: {
+      mode: 'sticky',
+      dedupe: true,
+      resolveOutdated: true,
+      maxOpenComments: 100,
+    },
   },
   files: {
     include: ['**/*'],

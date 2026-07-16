@@ -39,6 +39,8 @@ export async function completeCheckRun(
     conclusion: 'success' | 'failure' | 'neutral';
     summary: string;
     annotations: ReviewAnnotation[];
+    /** Debug metadata only (review scope, call counts) — never parsed back. */
+    externalId?: string;
   },
 ): Promise<void> {
   const { owner, repo, checkRunId, conclusion, summary, annotations } = params;
@@ -57,6 +59,7 @@ export async function completeCheckRun(
     status: 'completed',
     conclusion,
     completed_at: new Date().toISOString(),
+    ...(params.externalId ? { external_id: params.externalId } : {}),
     output: {
       title: conclusion === 'success' ? 'No critical issues found' : 'Issues found',
       summary,
