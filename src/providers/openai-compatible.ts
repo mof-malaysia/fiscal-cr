@@ -102,8 +102,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '');
+      // Surface the endpoint's own message — a bare "400 Bad Request" is undiagnosable.
+      const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+      logger.warn(
+        { status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet },
+        'LLM API request rejected',
+      );
       throw new LLMApiError(
-        `LLM API error: ${res.status} ${res.statusText}`,
+        `LLM API error: ${res.status} ${res.statusText}${snippet ? ` — ${snippet}` : ''}`,
         res.status,
         errorBody,
         parseRetryAfter(res.headers.get('retry-after')),

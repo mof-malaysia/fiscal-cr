@@ -54849,7 +54849,10 @@ class OpenAICompatibleProvider {
         });
         if (!res.ok) {
             const errorBody = await res.text().catch(() => '');
-            throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}`, res.status, errorBody, parseRetryAfter(res.headers.get('retry-after')));
+            // Surface the endpoint's own message — a bare "400 Bad Request" is undiagnosable.
+            const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+            logger_logger.warn({ status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
+            throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}${snippet ? ` — ${snippet}` : ''}`, res.status, errorBody, parseRetryAfter(res.headers.get('retry-after')));
         }
         const data = (await res.json());
         const content = data.choices?.[0]?.message?.content ?? '';
