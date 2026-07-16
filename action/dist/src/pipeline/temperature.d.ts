@@ -1,4 +1,4 @@
-import type { ReviewConfig } from '../config/schema.js';
+import type { ReviewConfig } from "../config/schema.js";
 /**
  * Resolve the temperature for a review call: an explicit config value wins;
  * models that pin their own temperature get none at all (the server default

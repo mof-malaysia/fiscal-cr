@@ -53814,7 +53814,11 @@ function parseFastPathResponse(raw) {
 
 ;// CONCATENATED MODULE: ./src/pipeline/temperature.ts
 /** Models that reject any temperature other than their server-side default. */
-const FIXED_TEMPERATURE_MODELS = new Set(['kimi-for-coding']);
+const FIXED_TEMPERATURE_MODELS = new Set([
+    "kimi-for-coding",
+    "kimi-for-coding-highspeed",
+    "kimi-k3",
+]);
 /**
  * Resolve the temperature for a review call: an explicit config value wins;
  * models that pin their own temperature get none at all (the server default
