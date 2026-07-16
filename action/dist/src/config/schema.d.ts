@@ -1,10 +1,10 @@
-import { z } from 'zod';
+import { z } from "zod";
 export declare const reviewConfigSchema: z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
-    provider: z.ZodDefault<z.ZodEnum<["kimi", "openai-compatible"]>>;
+    provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi"]>>;
     model: z.ZodDefault<z.ZodString>;
     baseUrl: z.ZodOptional<z.ZodString>;
-    /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+    /** Custom User-Agent for endpoints that whitelist clients. */
     userAgent: z.ZodOptional<z.ZodString>;
     /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
     temperature: z.ZodOptional<z.ZodNumber>;
@@ -185,16 +185,6 @@ export declare const reviewConfigSchema: z.ZodObject<{
         systemAppend?: string | undefined;
         reviewFocus?: string | undefined;
     }>>;
-    cache: z.ZodDefault<z.ZodObject<{
-        enabled: z.ZodDefault<z.ZodBoolean>;
-        ttl: z.ZodDefault<z.ZodNumber>;
-    }, "strip", z.ZodTypeAny, {
-        enabled: boolean;
-        ttl: number;
-    }, {
-        enabled?: boolean | undefined;
-        ttl?: number | undefined;
-    }>>;
     pipeline: z.ZodDefault<z.ZodObject<{
         /** false → single-call review regardless of PR size (legacy behavior). */
         enabled: z.ZodDefault<z.ZodBoolean>;
@@ -231,7 +221,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
         maxOutputTokens?: number | undefined;
     }>>;
 }, "strip", z.ZodTypeAny, {
-    provider: "kimi" | "openai-compatible";
+    provider: "openai-compatible" | "kimi";
     model: string;
     language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
     review: {
@@ -280,10 +270,6 @@ export declare const reviewConfigSchema: z.ZodObject<{
         systemAppend?: string | undefined;
         reviewFocus?: string | undefined;
     };
-    cache: {
-        enabled: boolean;
-        ttl: number;
-    };
     pipeline: {
         enabled: boolean;
         concurrency: number;
@@ -300,7 +286,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
     userAgent?: string | undefined;
     temperature?: number | undefined;
 }, {
-    provider?: "kimi" | "openai-compatible" | undefined;
+    provider?: "openai-compatible" | "kimi" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
     baseUrl?: string | undefined;
@@ -351,10 +337,6 @@ export declare const reviewConfigSchema: z.ZodObject<{
     prompt?: {
         systemAppend?: string | undefined;
         reviewFocus?: string | undefined;
-    } | undefined;
-    cache?: {
-        enabled?: boolean | undefined;
-        ttl?: number | undefined;
     } | undefined;
     pipeline?: {
         enabled?: boolean | undefined;

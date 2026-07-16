@@ -6,9 +6,9 @@ export interface OpenAICompatibleProviderConfig {
     temperature?: number;
     timeout?: number;
     /**
-     * Override the User-Agent header. Some endpoints (e.g. Kimi for Coding)
-     * whitelist clients by User-Agent and reject unknown ones. When set, the
-     * X-Client-Name header is omitted so the request carries one identity.
+     * Override the User-Agent header. Some endpoints whitelist clients by
+     * User-Agent and reject unknown ones. When set, the X-Client-Name header
+     * is omitted so the request carries one identity.
      */
     userAgent?: string;
 }

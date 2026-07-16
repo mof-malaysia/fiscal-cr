@@ -1,12 +1,12 @@
-import { type ResilientProviderOptions } from './resilient.js';
-import type { LLMProvider } from './interface.js';
+import { type ResilientProviderOptions } from "./resilient.js";
+import type { LLMProvider } from "./interface.js";
 export declare const SUPPORTED_PROVIDERS: readonly ["openai-compatible", "kimi"];
 export declare function createLLMProvider(config: {
     apiKey: string;
     model: string;
     baseUrl?: string;
     provider: string;
-    /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+    /** Custom User-Agent for endpoints that whitelist clients. */
     userAgent?: string;
     retry?: ResilientProviderOptions;
 }): LLMProvider;

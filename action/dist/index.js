@@ -33764,7 +33764,7 @@ module.exports = parseParams
 
 const errSerializer = __nccwpck_require__(739)
 const errWithCauseSerializer = __nccwpck_require__(5602)
-const reqSerializers = __nccwpck_require__(4744)
+const reqSerializers = __nccwpck_require__(2363)
 const resSerializers = __nccwpck_require__(1186)
 
 module.exports = {
@@ -34087,7 +34087,7 @@ function errSerializer (err) {
 
 /***/ }),
 
-/***/ 4744:
+/***/ 2363:
 /***/ ((module) => {
 
 
@@ -45538,7 +45538,7 @@ var pino = __nccwpck_require__(9284);
 var pino_default = /*#__PURE__*/__nccwpck_require__.n(pino);
 ;// CONCATENATED MODULE: ./src/utils/logger.ts
 
-const logger_logger = pino_default()({
+const logger = pino_default()({
     level: process.env.LOG_LEVEL ?? 'info',
     transport: process.env.NODE_ENV === 'development'
         ? { target: 'pino-pretty', options: { colorize: true } }
@@ -45582,7 +45582,7 @@ class ApiFileSource {
                 }
             }
             catch (err) {
-                logger_logger.debug({ file: path, err }, 'Could not fetch file content');
+                logger.debug({ file: path, err }, 'Could not fetch file content');
             }
         })));
         return contents;
@@ -45619,7 +45619,7 @@ class LocalFileSource {
             }
         }));
         if (missing.length > 0 && this.fallback) {
-            logger_logger.debug({ count: missing.length }, 'Falling back to API for unreadable files');
+            logger.debug({ count: missing.length }, 'Falling back to API for unreadable files');
             const fromApi = await this.fallback.getContents(missing, maxFileSize);
             for (const [path, content] of fromApi)
                 contents.set(path, content);
@@ -45687,7 +45687,7 @@ async function extractPullRequestContext(octokit, owner, repo, pullNumber, confi
         .filter((f) => f.status !== 'removed')
         .map((f) => f.filename);
     const fileContents = await source.getContents(contentPaths, config.files.maxFileSize);
-    logger_logger.info({
+    logger.info({
         filesCount: files.length,
         fileContentsCount: fileContents.size,
         diffLength: diff.length,
@@ -45725,7 +45725,7 @@ async function createCheckRun(octokit, params) {
         status: 'in_progress',
         started_at: new Date().toISOString(),
     });
-    logger_logger.info({ checkRunId: data.id }, 'Check run created');
+    logger.info({ checkRunId: data.id }, 'Check run created');
     return data.id;
 }
 async function completeCheckRun(octokit, params) {
@@ -45763,7 +45763,7 @@ async function completeCheckRun(octokit, params) {
             },
         });
     }
-    logger_logger.info({ checkRunId, conclusion, annotationCount: annotations.length }, 'Check run completed');
+    logger.info({ checkRunId, conclusion, annotationCount: annotations.length }, 'Check run completed');
 }
 function toCheckAnnotation(a) {
     return {
@@ -45989,7 +45989,7 @@ async function createIncrementalReview(octokit, params) {
     const { placeable, demoted } = partitionPlaceable(inlineCandidates, changedFiles);
     demoted.push(...annotations.filter((a) => a.severity === 'nitpick'));
     if (placeable.length === 0 && event === 'COMMENT') {
-        logger_logger.info({ pullNumber }, 'No new placeable findings — no review posted');
+        logger.info({ pullNumber }, 'No new placeable findings — no review posted');
         return { reviewId: null, posted: [], demoted };
     }
     const comments = placeable.map((a) => ({
@@ -46008,13 +46008,13 @@ async function createIncrementalReview(octokit, params) {
             body,
             comments,
         });
-        logger_logger.info({ pullNumber, event, commentCount: comments.length }, 'Incremental review created');
+        logger.info({ pullNumber, event, commentCount: comments.length }, 'Incremental review created');
         return { reviewId: data.id, posted: placeable, demoted };
     }
     catch (err) {
         // Pre-validation should prevent this; if GitHub still rejects the inline
         // comments, fall back to a body-only review so the run is not lost.
-        logger_logger.warn({ err, pullNumber }, 'Inline comments rejected — posting body-only review');
+        logger.warn({ err, pullNumber }, 'Inline comments rejected — posting body-only review');
         const { data } = await octokit.pulls.createReview({
             owner,
             repo,
@@ -46039,11 +46039,11 @@ async function dismissBlockingReview(octokit, params) {
             review_id: params.reviewId,
             message: params.message,
         });
-        logger_logger.info({ reviewId: params.reviewId }, 'Blocking review dismissed');
+        logger.info({ reviewId: params.reviewId }, 'Blocking review dismissed');
         return true;
     }
     catch (err) {
-        logger_logger.warn({ err, reviewId: params.reviewId }, 'Could not dismiss blocking review — skipping');
+        logger.warn({ err, reviewId: params.reviewId }, 'Could not dismiss blocking review — skipping');
         return false;
     }
 }
@@ -46079,11 +46079,11 @@ async function createPRReview(octokit, params) {
             body,
             comments,
         });
-        logger_logger.info({ pullNumber, event, commentCount: comments.length }, 'PR review created');
+        logger.info({ pullNumber, event, commentCount: comments.length }, 'PR review created');
     }
     catch (err) {
         // If inline comments fail (e.g., line not in diff), fall back to body-only review
-        logger_logger.warn({ err }, 'Failed to create review with inline comments, falling back');
+        logger.warn({ err }, 'Failed to create review with inline comments, falling back');
         await octokit.pulls.createReview({
             owner,
             repo,
@@ -46247,7 +46247,7 @@ async function saveStickyComment(octokit, params) {
             return commentId;
         }
         catch (err) {
-            logger_logger.warn({ err, commentId }, 'Sticky comment update failed (deleted?) — creating a new one');
+            logger.warn({ err, commentId }, 'Sticky comment update failed (deleted?) — creating a new one');
         }
     }
     const { data } = await octokit.issues.createComment({
@@ -46388,7 +46388,7 @@ async function resolveOutdatedThreads(octokit, params) {
         threads = await listFiscalcrThreads(octokit, params);
     }
     catch (err) {
-        logger_logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
+        logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
         return [];
     }
     const outdated = threads.filter((t) => !t.isResolved &&
@@ -46411,11 +46411,11 @@ async function resolveOutdatedThreads(octokit, params) {
             resolved.push(thread);
         }
         catch (err) {
-            logger_logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');
+            logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');
         }
     }
     if (resolved.length > 0) {
-        logger_logger.info({ resolved: resolved.length }, 'Outdated review threads resolved');
+        logger.info({ resolved: resolved.length }, 'Outdated review threads resolved');
     }
     return resolved;
 }
@@ -48870,7 +48870,7 @@ function filterFiles(files, config) {
     });
     const skipped = files.length - filtered.length;
     if (skipped > 0) {
-        logger_logger.info({ total: files.length, filtered: filtered.length, skipped }, 'Files filtered');
+        logger.info({ total: files.length, filtered: filtered.length, skipped }, 'Files filtered');
     }
     return filtered;
 }
@@ -48909,7 +48909,7 @@ async function decideScope(octokit, params) {
     }
     catch (err) {
         // 404/422: the previously reviewed commit no longer exists (force-push).
-        logger_logger.warn({ err, since: state.lastReviewedSha }, 'Commit compare failed — full review');
+        logger.warn({ err, since: state.lastReviewedSha }, 'Commit compare failed — full review');
         return { mode: 'full', reason: 'last reviewed commit unreachable (force-push?)' };
     }
     if (compare.status === 'diverged' || compare.status === 'behind') {
@@ -53502,53 +53502,9 @@ const coerce = {
 
 const NEVER = (/* unused pure expression or super */ null && (INVALID));
 
-;// CONCATENATED MODULE: ./src/kimi/response-parser.ts
-
-
-// Accept both camelCase and snake_case field names
-const annotationSchema = objectType({
-    path: stringType(),
-    startLine: numberType().int().positive().optional(),
-    start_line: numberType().int().positive().optional(),
-    endLine: numberType().int().positive().optional(),
-    end_line: numberType().int().positive().optional(),
-    line: numberType().int().positive().optional(),
-    severity: enumType(['critical', 'warning', 'suggestion', 'nitpick']),
-    category: enumType([
-        'bug', 'security', 'performance', 'style',
-        'best-practice', 'documentation', 'testing', 'other',
-    ])
-        .catch('other'),
-    title: stringType(),
-    body: stringType().optional().default(''),
-    message: stringType().optional(),
-    description: stringType().optional(),
-    suggestedFix: stringType().nullable().optional(),
-    suggested_fix: stringType().nullable().optional(),
-})
-    .transform((a) => {
-    const startLine = a.startLine ?? a.start_line ?? a.line ?? 1;
-    const endLine = a.endLine ?? a.end_line ?? startLine;
-    const body = a.body || a.message || a.description || '';
-    const suggestedFix = a.suggestedFix ?? a.suggested_fix ?? undefined;
-    return {
-        path: a.path,
-        startLine,
-        endLine,
-        severity: a.severity,
-        category: a.category,
-        title: a.title,
-        body,
-        suggestedFix: suggestedFix ?? undefined,
-    };
-});
-const reviewResponseSchema = objectType({
-    summary: stringType(),
-    score: numberType().min(0).max(100),
-    annotations: arrayType(annotationSchema).default([]),
-});
+;// CONCATENATED MODULE: ./src/utils/json.ts
 /**
- * Try multiple strategies to extract a JSON object from the AI response.
+ * Try multiple strategies to extract a JSON object from an LLM response.
  */
 function extractJson(raw) {
     // Strategy 1: Direct JSON parse
@@ -53602,55 +53558,6 @@ function extractJson(raw) {
         }
     }
     return null;
-}
-function parseAIResponse(raw, tokenUsage) {
-    logger.info({ rawLength: raw.length, rawPreview: raw.slice(0, 300) }, 'Parsing AI response');
-    const parsed = extractJson(raw);
-    if (!parsed || typeof parsed !== 'object') {
-        logger.error({ rawPreview: raw.slice(0, 500) }, 'Could not extract JSON from AI response');
-        return {
-            summary: 'Failed to parse AI response as JSON.',
-            score: 50,
-            annotations: [],
-            stats: { critical: 0, warning: 0, suggestion: 0, nitpick: 0 },
-            tokensUsed: tokenUsage,
-        };
-    }
-    const result = reviewResponseSchema.safeParse(parsed);
-    if (result.success) {
-        const data = result.data;
-        const stats = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
-        for (const a of data.annotations) {
-            stats[a.severity]++;
-        }
-        return {
-            summary: data.summary,
-            score: data.score,
-            annotations: data.annotations,
-            stats,
-            tokensUsed: tokenUsage,
-        };
-    }
-    // Schema validation failed — salvage what we can
-    logger.warn({ errors: result.error.issues }, 'AI response schema validation failed, salvaging');
-    const partial = parsed;
-    const summary = typeof partial.summary === 'string' ? partial.summary : 'Review completed (partial parse)';
-    const score = typeof partial.score === 'number' ? Math.min(100, Math.max(0, partial.score)) : 50;
-    // Try to salvage annotations even if some are invalid
-    let annotations = [];
-    if (Array.isArray(partial.annotations)) {
-        for (const item of partial.annotations) {
-            const parsed = annotationSchema.safeParse(item);
-            if (parsed.success) {
-                annotations.push(parsed.data);
-            }
-        }
-    }
-    const stats = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
-    for (const a of annotations) {
-        stats[a.severity]++;
-    }
-    return { summary, score, annotations, stats, tokensUsed: tokenUsage };
 }
 
 ;// CONCATENATED MODULE: ./src/pipeline/schemas.ts
@@ -53715,7 +53622,7 @@ function parseIntentResponse(raw) {
         return null;
     const parsed = intentSchema.safeParse(json);
     if (!parsed.success) {
-        logger_logger.warn({ errors: parsed.error.issues }, 'Intent response failed validation');
+        logger.warn({ errors: parsed.error.issues }, 'Intent response failed validation');
         return null;
     }
     return parsed.data;
@@ -53733,7 +53640,7 @@ function parseGroupResponse(raw) {
         return null;
     const parsed = groupReviewSchema.safeParse(json);
     if (!parsed.success) {
-        logger_logger.warn({ errors: parsed.error.issues }, 'Group response failed validation');
+        logger.warn({ errors: parsed.error.issues }, 'Group response failed validation');
         return null;
     }
     const rawFindings = parsed.data.findings.length > 0
@@ -53765,7 +53672,7 @@ function parseSynthesisResponse(raw) {
         return null;
     const parsed = synthesisSchema.safeParse(json);
     if (!parsed.success) {
-        logger_logger.warn({ errors: parsed.error.issues }, 'Synthesis response failed validation');
+        logger.warn({ errors: parsed.error.issues }, 'Synthesis response failed validation');
         return null;
     }
     const d = parsed.data;
@@ -53791,7 +53698,7 @@ function parseFastPathResponse(raw) {
         return null;
     const parsed = fastPathSchema.safeParse(json);
     if (!parsed.success) {
-        logger_logger.warn({ errors: parsed.error.issues }, 'Fast-path response failed validation');
+        logger.warn({ errors: parsed.error.issues }, 'Fast-path response failed validation');
         return null;
     }
     const rawFindings = parsed.data.findings.length > 0
@@ -53856,7 +53763,7 @@ async function runIntentPass(llm, ctx, config, usage) {
         usage.add(response.usage);
         const intent = parseIntentResponse(response.content);
         if (!intent) {
-            logger_logger.warn('Intent pass returned unparseable output, continuing without it');
+            logger.warn('Intent pass returned unparseable output, continuing without it');
             return null;
         }
         // Keep only walkthrough/group paths that actually exist in the PR.
@@ -53866,11 +53773,11 @@ async function runIntentPass(llm, ctx, config, usage) {
             .map((g) => ({ ...g, files: g.files.filter((p) => known.has(p)) }))
             .filter((g) => g.files.length > 0);
         intent.riskHotspots = intent.riskHotspots.filter((h) => known.has(h.path));
-        logger_logger.info({ groups: intent.groups.length, hotspots: intent.riskHotspots.length }, 'Intent pass completed');
+        logger.info({ groups: intent.groups.length, hotspots: intent.riskHotspots.length }, 'Intent pass completed');
         return intent;
     }
     catch (err) {
-        logger_logger.warn({ err }, 'Intent pass failed, continuing without it');
+        logger.warn({ err }, 'Intent pass failed, continuing without it');
         return null;
     }
 }
@@ -54105,7 +54012,7 @@ async function collectRelatedContext(group, fileContents, workspaceRoot, config,
             budget -= tokens;
         }
         catch (err) {
-            logger_logger.debug({ path, err }, 'Could not read related file');
+            logger.debug({ path, err }, 'Could not read related file');
         }
     }
     return related;
@@ -54153,14 +54060,14 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
             usage.add(response.usage);
             const parsed = parseGroupResponse(response.content);
             if (!parsed) {
-                logger_logger.warn({ group: group.label }, 'Group review returned unparseable output');
+                logger.warn({ group: group.label }, 'Group review returned unparseable output');
                 return { group, summary: '', findings: [], failed: true };
             }
-            logger_logger.info({ group: group.label, findings: parsed.findings.length }, 'Group review completed');
+            logger.info({ group: group.label, findings: parsed.findings.length }, 'Group review completed');
             return { group, summary: parsed.groupSummary, findings: parsed.findings, failed: false };
         }
         catch (err) {
-            logger_logger.warn({ group: group.label, err }, 'Group review failed');
+            logger.warn({ group: group.label, err }, 'Group review failed');
             return { group, summary: '', findings: [], failed: true };
         }
     })));
@@ -54203,7 +54110,7 @@ function validateAndRankFindings(findings, changedFiles, config) {
         if (!patch)
             return false;
         if (!lineToDiffPosition(patch, f.endLine).found) {
-            logger_logger.debug({ path: f.path, line: f.endLine }, 'Dropping finding: line not in diff');
+            logger.debug({ path: f.path, line: f.endLine }, 'Dropping finding: line not in diff');
             return false;
         }
         return true;
@@ -54300,19 +54207,19 @@ async function synthesize(llm, input, config, usage) {
                     if (!f)
                         continue;
                     if (f.severity === 'critical') {
-                        logger_logger.info({ title: f.title }, 'Synthesis flagged a critical as false positive — keeping it');
+                        logger.info({ title: f.title }, 'Synthesis flagged a critical as false positive — keeping it');
                         continue;
                     }
                     toDrop.add(f);
                 }
                 if (toDrop.size > 0) {
-                    logger_logger.info({ dropped: toDrop.size }, 'Synthesis pruned findings');
+                    logger.info({ dropped: toDrop.size }, 'Synthesis pruned findings');
                     annotations = findings.filter((f) => !toDrop.has(f));
                 }
             }
         }
         catch (err) {
-            logger_logger.warn({ err }, 'Synthesis pass failed, using deterministic assembly');
+            logger.warn({ err }, 'Synthesis pass failed, using deterministic assembly');
         }
     }
     // Deterministic fallbacks
@@ -54397,7 +54304,7 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
     }
     const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config);
     const stats = countBySeverity(annotations);
-    logger_logger.info({ findings: parsed.findings.length, kept: annotations.length }, 'Fast-path review completed');
+    logger.info({ findings: parsed.findings.length, kept: annotations.length }, 'Fast-path review completed');
     return {
         summary: parsed.summary || 'Automated review completed.',
         score: parsed.score ?? deterministicScore(stats),
@@ -54498,12 +54405,12 @@ class ReviewOrchestrator {
                     });
                 }
             }
-            logger_logger.info({ pullNumber, scope: scope.mode, reason: scope.reason }, 'Review scope decided');
+            logger.info({ pullNumber, scope: scope.mode, reason: scope.reason }, 'Review scope decided');
             if (scope.mode === 'skip' && stickyRef?.state) {
                 return await this.completeSkippedRun({ owner, repo, checkRunId }, stickyRef.state, scope.reason);
             }
             // Step 3: Extract PR context (path-filtered for delta reviews)
-            logger_logger.info({ pullNumber }, 'Extracting PR context');
+            logger.info({ pullNumber }, 'Extracting PR context');
             const apiSource = new ApiFileSource(this.octokit, owner, repo, headSha);
             const fileSource = this.options.workspaceRoot
                 ? new LocalFileSource(this.options.workspaceRoot, apiSource)
@@ -54561,7 +54468,7 @@ class ReviewOrchestrator {
             });
         }
         catch (err) {
-            logger_logger.error({ err, pullNumber }, 'Review failed');
+            logger.error({ err, pullNumber }, 'Review failed');
             await completeCheckRun(this.octokit, {
                 owner,
                 repo,
@@ -54585,7 +54492,7 @@ class ReviewOrchestrator {
             annotations: [],
             externalId: JSON.stringify({ scope: 'skip' }),
         });
-        logger_logger.info({ reason, conclusion }, 'Review skipped');
+        logger.info({ reason, conclusion }, 'Review skipped');
         return {
             summary,
             score: deterministicScore(state.openCounts),
@@ -54616,7 +54523,7 @@ class ReviewOrchestrator {
             result,
             failOn: this.config.review.failOn,
         });
-        logger_logger.info({
+        logger.info({
             pullNumber,
             score: result.score,
             annotations: result.annotations.length,
@@ -54649,7 +54556,7 @@ class ReviewOrchestrator {
         const inlineNew = newAnnotations.slice(0, inlineBudget);
         const capOverflow = newAnnotations.slice(inlineBudget);
         if (capOverflow.length > 0) {
-            logger_logger.info({ overflow: capOverflow.length, cap: commentsCfg.maxOpenComments }, 'maxOpenComments reached — overflow findings demoted to check-run annotations');
+            logger.info({ overflow: capOverflow.length, cap: commentsCfg.maxOpenComments }, 'maxOpenComments reached — overflow findings demoted to check-run annotations');
         }
         // Resolve threads whose file changed but whose finding did not recur.
         let resolvedCounts = { ...EMPTY_COUNTS };
@@ -54756,7 +54663,7 @@ class ReviewOrchestrator {
                 })),
             }),
         });
-        logger_logger.info({
+        logger.info({
             pullNumber,
             scope: scope.mode,
             score: result.score,
@@ -54786,15 +54693,15 @@ class ReviewOrchestrator {
         const totalTokens = prContext.changedFiles.reduce((sum, f) => sum + (f.patch ? estimateTokens(f.patch) : 0), 0) +
             [...prContext.fileContents.values()].reduce((sum, c) => sum + estimateTokens(c), 0);
         if (!pipeline.enabled || totalTokens < pipeline.fastPathThreshold) {
-            logger_logger.info({ totalTokens, pipelineEnabled: pipeline.enabled }, 'Using fast path (single call)');
+            logger.info({ totalTokens, pipelineEnabled: pipeline.enabled }, 'Using fast path (single call)');
             return runFastPath(this.llm, prContext, this.config, usage, deltaHint);
         }
-        logger_logger.info({ totalTokens }, 'Using multi-pass pipeline');
+        logger.info({ totalTokens }, 'Using multi-pass pipeline');
         // Pass 1: intent & walkthrough (non-fatal on failure)
         const intent = await runIntentPass(this.llm, prContext, this.config, usage);
         // Pass 2: parallel per-group reviews
         const groups = groupFiles(prContext.changedFiles, prContext.fileContents, intent, this.config);
-        logger_logger.info({ groups: groups.map((g) => ({ label: g.label, files: g.files.length, diffOnly: g.diffOnly })) }, 'Files grouped for review');
+        logger.info({ groups: groups.map((g) => ({ label: g.label, files: g.files.length, diffOnly: g.diffOnly })) }, 'Files grouped for review');
         const outcomes = await runReviewPass(this.llm, prContext, groups, intent, this.config, usage, { workspaceRoot: this.options.workspaceRoot, deltaHint });
         if (outcomes.every((o) => o.failed)) {
             throw new ReviewError('All review groups failed', 'review-pass');
@@ -54875,7 +54782,7 @@ class OpenAICompatibleProvider {
             const errorBody = await res.text().catch(() => '');
             // Surface the endpoint's own message — a bare "400 Bad Request" is undiagnosable.
             const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
-            logger_logger.warn({ status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
+            logger.warn({ status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
             throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}${snippet ? ` — ${snippet}` : ''}`, res.status, errorBody, parseRetryAfter(res.headers.get('retry-after')));
         }
         const data = (await res.json());
@@ -54885,7 +54792,7 @@ class OpenAICompatibleProvider {
             output: data.usage?.completion_tokens ?? 0,
             cached: data.usage?.cached_tokens ?? 0,
         };
-        logger_logger.info({
+        logger.info({
             model: this.model,
             baseUrl: this.baseUrl,
             promptTokens: usage.input,
@@ -54935,7 +54842,7 @@ class ResilientProvider {
                     throw err;
                 }
                 const delay = this.backoffDelay(attempt, err);
-                logger_logger.warn({
+                logger.warn({
                     attempt: attempt + 1,
                     maxRetries: this.maxRetries,
                     delayMs: Math.round(delay),
@@ -54962,13 +54869,13 @@ function sleep(ms) {
 
 
 
-const SUPPORTED_PROVIDERS = ['openai-compatible', 'kimi'];
-const KIMI_API_BASE_URL = 'https://api.kimi.com/coding/v1';
+const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi"];
+const KIMI_API_BASE_URL = "https://api.kimi.com/coding/v1";
 function parseProvider(provider) {
-    if (provider === 'openai-compatible' || provider === 'kimi') {
+    if (provider === "openai-compatible" || provider === "kimi") {
         return provider;
     }
-    throw new ConfigError(`Invalid provider: "${provider}". Supported providers: ${SUPPORTED_PROVIDERS.join(', ')}`);
+    throw new ConfigError(`Invalid provider: "${provider}". Supported providers: ${SUPPORTED_PROVIDERS.join(", ")}`);
 }
 function createLLMProvider(config) {
     const provider = parseProvider(config.provider);
@@ -54976,7 +54883,7 @@ function createLLMProvider(config) {
     // Adding non-compatible providers (e.g., Anthropic) is straightforward.
     let inner;
     switch (provider) {
-        case 'openai-compatible':
+        case "openai-compatible":
             if (!config.baseUrl) {
                 throw new ConfigError('Missing baseUrl for provider "openai-compatible". Configure an operator-controlled BASE_URL.');
             }
@@ -54987,7 +54894,7 @@ function createLLMProvider(config) {
                 userAgent: config.userAgent,
             });
             break;
-        case 'kimi':
+        case "kimi":
         default:
             inner = new OpenAICompatibleProvider({
                 apiKey: config.apiKey,
@@ -55005,11 +54912,11 @@ var dist = __nccwpck_require__(6159);
 ;// CONCATENATED MODULE: ./src/config/schema.ts
 
 const reviewConfigSchema = objectType({
-    language: enumType(['en', 'zh-TW', 'zh-CN', 'ja', 'ko']).default('en'),
-    provider: enumType(['kimi', 'openai-compatible']).default('kimi'),
-    model: stringType().default('kimi-k2.5'),
+    language: enumType(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
+    provider: enumType(["openai-compatible", "kimi"]).default("kimi"),
+    model: stringType().default("kimi-for-coding"),
     baseUrl: stringType().url().optional(),
-    /** Custom User-Agent for endpoints that whitelist clients (e.g. Kimi for Coding). */
+    /** Custom User-Agent for endpoints that whitelist clients. */
     userAgent: stringType().max(200).optional(),
     /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
     temperature: numberType().min(0).max(2).optional(),
@@ -55032,10 +54939,10 @@ const reviewConfigSchema = objectType({
             testing: booleanType().default(false),
         })
             .default({}),
-        minSeverity: enumType(['critical', 'warning', 'suggestion', 'nitpick'])
-            .default('suggestion'),
+        minSeverity: enumType(["critical", "warning", "suggestion", "nitpick"])
+            .default("suggestion"),
         maxAnnotations: numberType().min(1).max(100).default(30),
-        failOn: enumType(['critical', 'warning', 'never']).default('critical'),
+        failOn: enumType(["critical", "warning", "never"]).default("critical"),
         incremental: objectType({
             enabled: booleanType().default(true),
             /** Deltas touching more files than this fall back to a full review. */
@@ -55044,7 +54951,7 @@ const reviewConfigSchema = objectType({
             .default({}),
         comments: objectType({
             /** 'sticky': one updated summary + incremental reviews. 'legacy': stack a full review per run. */
-            mode: enumType(['sticky', 'legacy']).default('sticky'),
+            mode: enumType(["sticky", "legacy"]).default("sticky"),
             dedupe: booleanType().default(true),
             resolveOutdated: booleanType().default(true),
             /** Cumulative inline-comment cap; overflow demotes to check-run annotations. */
@@ -55054,17 +54961,17 @@ const reviewConfigSchema = objectType({
     })
         .default({}),
     files: objectType({
-        include: arrayType(stringType()).default(['**/*']),
+        include: arrayType(stringType()).default(["**/*"]),
         exclude: arrayType(stringType())
             .default([
-            '**/node_modules/**',
-            '**/dist/**',
-            '**/build/**',
-            '**/*.lock',
-            '**/*.min.*',
-            '**/package-lock.json',
-            '**/yarn.lock',
-            '**/pnpm-lock.yaml',
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/*.lock",
+            "**/*.min.*",
+            "**/package-lock.json",
+            "**/yarn.lock",
+            "**/pnpm-lock.yaml",
         ]),
         maxFileSize: numberType().default(100_000),
     })
@@ -55073,17 +54980,13 @@ const reviewConfigSchema = objectType({
         name: stringType(),
         description: stringType(),
         filePattern: stringType().optional(),
-        severity: enumType(['critical', 'warning', 'suggestion']).default('warning'),
+        severity: enumType(["critical", "warning", "suggestion"])
+            .default("warning"),
     }))
         .default([]),
     prompt: objectType({
         systemAppend: stringType().max(2000).optional(),
         reviewFocus: stringType().max(500).optional(),
-    })
-        .default({}),
-    cache: objectType({
-        enabled: booleanType().default(true),
-        ttl: numberType().default(3600),
     })
         .default({}),
     pipeline: objectType({
@@ -55104,9 +55007,9 @@ const reviewConfigSchema = objectType({
 
 ;// CONCATENATED MODULE: ./src/config/defaults.ts
 const DEFAULT_CONFIG = {
-    language: 'en',
-    provider: 'kimi',
-    model: 'kimi-k2.5',
+    language: "en",
+    provider: "kimi",
+    model: "kimi-for-coding",
     review: {
         auto: {
             enabled: true,
@@ -55124,40 +55027,36 @@ const DEFAULT_CONFIG = {
             documentation: false,
             testing: false,
         },
-        minSeverity: 'suggestion',
+        minSeverity: "suggestion",
         maxAnnotations: 30,
-        failOn: 'critical',
+        failOn: "critical",
         incremental: {
             enabled: true,
             maxDeltaFiles: 150,
         },
         comments: {
-            mode: 'sticky',
+            mode: "sticky",
             dedupe: true,
             resolveOutdated: true,
             maxOpenComments: 100,
         },
     },
     files: {
-        include: ['**/*'],
+        include: ["**/*"],
         exclude: [
-            '**/node_modules/**',
-            '**/dist/**',
-            '**/build/**',
-            '**/*.lock',
-            '**/*.min.*',
-            '**/package-lock.json',
-            '**/yarn.lock',
-            '**/pnpm-lock.yaml',
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/*.lock",
+            "**/*.min.*",
+            "**/package-lock.json",
+            "**/yarn.lock",
+            "**/pnpm-lock.yaml",
         ],
         maxFileSize: 100_000,
     },
     rules: [],
     prompt: {},
-    cache: {
-        enabled: true,
-        ttl: 3600,
-    },
     pipeline: {
         enabled: true,
         concurrency: 3,
@@ -55194,24 +55093,24 @@ async function loadConfig(octokit, owner, repo, configPath = CONFIG_FILENAME) {
             path: configPath,
         });
         if (!('content' in data) || data.encoding !== 'base64') {
-            logger_logger.info('Config file found but not a regular file, using defaults');
+            logger.info('Config file found but not a regular file, using defaults');
             return DEFAULT_CONFIG;
         }
         const content = Buffer.from(data.content, 'base64').toString('utf-8');
         const parsed = parseYaml(content);
         const result = reviewConfigSchema.safeParse(parsed);
         if (!result.success) {
-            logger_logger.warn({ errors: result.error.issues }, 'Config validation failed, using defaults');
+            logger.warn({ errors: result.error.issues }, 'Config validation failed, using defaults');
             throw new ConfigError(`Invalid config: ${result.error.message}`);
         }
-        logger_logger.info({ language: result.data.language, model: result.data.model }, 'Config loaded');
+        logger.info({ language: result.data.language, model: result.data.model }, 'Config loaded');
         return result.data;
     }
     catch (err) {
         if (err instanceof ConfigError)
             throw err;
         if (isNotFoundError(err)) {
-            logger_logger.info({ configPath }, `No ${configPath} found, using defaults`);
+            logger.info({ configPath }, `No ${configPath} found, using defaults`);
             return DEFAULT_CONFIG;
         }
         throw err;
@@ -55234,14 +55133,14 @@ function parseYaml(content) {
 async function run() {
     try {
         // Get inputs
-        const apiKey = core.getInput("api_key") || core.getInput("kimi_api_key");
+        const apiKey = core.getInput("api_key");
         if (!apiKey) {
-            throw new Error("Missing required input: api_key (or legacy kimi_api_key)");
+            throw new Error("Missing required input: api_key");
         }
         const githubToken = core.getInput("github_token");
         const providerInput = core.getInput("provider") || undefined;
         const modelInput = core.getInput("model") || undefined;
-        const baseUrlInput = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+        const baseUrlInput = core.getInput("base_url") || undefined;
         const userAgentInput = core.getInput("user_agent") || undefined;
         const languageInput = core.getInput("language") || undefined;
         const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
