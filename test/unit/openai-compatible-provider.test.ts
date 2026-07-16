@@ -43,4 +43,43 @@ describe('OpenAICompatibleProvider', () => {
 
     expect(body.max_tokens).toBeUndefined();
   });
+
+  it('sends the default User-Agent and client name', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      }),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'm',
+      baseUrl: 'https://api.example.com/v1',
+    });
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers['User-Agent']).toBe('fiscalcr/1.0');
+    expect(headers['X-Client-Name']).toBe('fiscalcr');
+  });
+
+  it('sends a custom User-Agent verbatim and omits X-Client-Name (whitelisted endpoints)', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      }),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'gated-model',
+      baseUrl: 'https://api.example.com/v1',
+      userAgent: 'MyCodingAgent/2.1.0',
+    });
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers['User-Agent']).toBe('MyCodingAgent/2.1.0');
+    expect(headers['X-Client-Name']).toBeUndefined();
+  });
 });

@@ -1,7 +1,7 @@
 {
   "name": "fiscalcr",
   "version": "0.1.0",
-  "description": "AI-powered, model-agnostic code review for GitHub — forked from howardpen9/kimi-code-reviewer",
+  "description": "AI-powered, model-agnostic code review for GitHub",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -15,13 +15,10 @@
     "clean": "rm -rf dist action/dist"
   },
   "keywords": [
-    "kimi",
-    "moonshot",
     "code-review",
     "github-action",
     "github-app",
-    "ai",
-    "256k-context"
+    "ai"
   ],
   "author": "",
   "license": "MIT",

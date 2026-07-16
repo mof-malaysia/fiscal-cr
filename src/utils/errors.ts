@@ -3,6 +3,8 @@ export class LLMApiError extends Error {
     message: string,
     public statusCode: number,
     public responseBody?: unknown,
+    /** Parsed Retry-After header in milliseconds, when the API provided one. */
+    public retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'LLMApiError';

@@ -102,6 +102,22 @@ export function parsePatch(patch: string): DiffHunk[] {
  * Convert a source file line number (1-indexed) to a GitHub diff position.
  * Returns the position for the RIGHT side (new file) of the diff.
  */
+/**
+ * All NEW-side line numbers in a patch that can host a PR review comment
+ * (additions and context lines — the RIGHT side of the diff view).
+ */
+export function commentableLines(patch: string): Set<number> {
+  const lines = new Set<number>();
+  for (const hunk of parsePatch(patch)) {
+    for (const line of hunk.lines) {
+      if ((line.type === 'addition' || line.type === 'context') && line.newLine !== undefined) {
+        lines.add(line.newLine);
+      }
+    }
+  }
+  return lines;
+}
+
 export function lineToDiffPosition(
   patch: string,
   targetLine: number,

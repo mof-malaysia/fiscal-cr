@@ -8,15 +8,16 @@ import { calculateCost } from "../src/utils/tokens.js";
 async function run(): Promise<void> {
   try {
     // Get inputs
-    const apiKey = core.getInput("api_key") || core.getInput("kimi_api_key");
+    const apiKey = core.getInput("api_key");
     if (!apiKey) {
-      throw new Error("Missing required input: api_key (or legacy kimi_api_key)");
+      throw new Error("Missing required input: api_key");
     }
 
     const githubToken = core.getInput("github_token");
     const providerInput = core.getInput("provider") || undefined;
     const modelInput = core.getInput("model") || undefined;
-    const baseUrlInput = core.getInput("base_url") || core.getInput("kimi_base_url") || undefined;
+    const baseUrlInput = core.getInput("base_url") || undefined;
+    const userAgentInput = core.getInput("user_agent") || undefined;
     const languageInput = core.getInput("language") || undefined;
     const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
     const failOnInput = (core.getInput("fail_on") || undefined) as
@@ -37,8 +38,10 @@ async function run(): Promise<void> {
     const repo = context.repo.repo;
     const pullNumber = context.payload.pull_request.number;
     const headSha = context.payload.pull_request.head.sha;
+    const eventAction = context.payload.action ?? "";
+    const isDraft = Boolean(context.payload.pull_request.draft);
 
-    core.info(`Reviewing PR #${pullNumber} (${headSha.slice(0, 7)})`);
+    core.info(`Reviewing PR #${pullNumber} (${headSha.slice(0, 7)}, event: ${eventAction})`);
 
     // @actions/github getOctokit puts REST methods under .rest,
     // but our code expects @octokit/rest shape (octokit.checks, octokit.pulls, etc.)
@@ -58,6 +61,26 @@ async function run(): Promise<void> {
     if (baseUrlInput) {
       config.baseUrl = baseUrlInput;
     }
+    if (userAgentInput) {
+      config.userAgent = userAgentInput;
+    }
+
+    // Honor auto-review settings (previously App-mode only)
+    if (isDraft && !config.review.auto.drafts) {
+      core.info("Skipping draft PR (review.auto.drafts is false).");
+      return;
+    }
+    if (eventAction === "synchronize" && !config.review.auto.onPush) {
+      core.info("Skipping push event (review.auto.onPush is false).");
+      return;
+    }
+    if (
+      ["opened", "reopened", "ready_for_review"].includes(eventAction) &&
+      !config.review.auto.onOpen
+    ) {
+      core.info(`Skipping ${eventAction} event (review.auto.onOpen is false).`);
+      return;
+    }
 
     // Create model provider
     const llm = createLLMProvider({
@@ -65,6 +88,7 @@ async function run(): Promise<void> {
       provider: providerInput || config.provider,
       model: config.model,
       baseUrl: config.baseUrl,
+      userAgent: config.userAgent,
     });
 
     // Run review
@@ -72,6 +96,7 @@ async function run(): Promise<void> {
       restOctokit as any,
       llm,
       config,
+      { workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd() },
     );
     const result = await orchestrator.reviewPullRequest({
       owner,

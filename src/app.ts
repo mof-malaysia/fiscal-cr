@@ -11,6 +11,7 @@ export interface AppConfig {
   provider?: string;
   model?: string;
   baseUrl?: string;
+  userAgent?: string;
 }
 
 export function createApp(config: AppConfig): App {
@@ -25,6 +26,7 @@ export function createApp(config: AppConfig): App {
     provider: config.provider,
     model: config.model,
     baseUrl: config.baseUrl,
+    userAgent: config.userAgent,
     getInstallationOctokit: async (installationId: number) => {
       return (await app.getInstallationOctokit(installationId)) as unknown as Octokit;
     },

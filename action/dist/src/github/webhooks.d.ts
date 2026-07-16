@@ -5,6 +5,7 @@ interface AppContext {
     provider?: string;
     model?: string;
     baseUrl?: string;
+    userAgent?: string;
     getInstallationOctokit: (installationId: number) => Promise<Octokit>;
 }
 export declare function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void;

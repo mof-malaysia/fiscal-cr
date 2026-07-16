@@ -16,8 +16,21 @@ export function buildSummary(result: ReviewResult): string {
   const lines: string[] = [];
 
   lines.push(`## Score: ${result.score}/100\n`);
+  if (result.intent) {
+    lines.push(`> ${result.intent}\n`);
+  }
   lines.push(result.summary);
   lines.push('');
+
+  if (result.walkthrough && result.walkthrough.length > 0) {
+    lines.push('### Walkthrough\n');
+    lines.push('| File | Change Summary |');
+    lines.push('|------|----------------|');
+    for (const entry of result.walkthrough) {
+      lines.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
+    }
+    lines.push('');
+  }
 
   // Stats table
   const hasIssues = Object.values(result.stats).some((v) => v > 0);
@@ -44,6 +57,9 @@ export function buildSummary(result: ReviewResult): string {
   lines.push(`| Input tokens | ${result.tokensUsed.input.toLocaleString()} |`);
   lines.push(`| Output tokens | ${result.tokensUsed.output.toLocaleString()} |`);
   lines.push(`| Cached tokens | ${result.tokensUsed.cached.toLocaleString()} |`);
+  if (result.callCount !== undefined) {
+    lines.push(`| LLM calls | ${result.callCount} |`);
+  }
   lines.push(`| Estimated cost | $${cost} |`);
   lines.push('</details>');
 

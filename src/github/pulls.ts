@@ -1,7 +1,15 @@
 import type { Octokit } from '@octokit/rest';
 import type { PullRequestContext, ChangedFile } from '../types/review.js';
 import type { ReviewConfig } from '../config/schema.js';
+import { ApiFileSource, type FileContentSource } from '../review/file-source.js';
 import { logger } from '../utils/logger.js';
+
+export interface ExtractOptions {
+  /** Where to load file contents from. Defaults to the GitHub contents API. */
+  fileSource?: FileContentSource;
+  /** When set, restrict the context to these paths (delta reviews). */
+  pathFilter?: string[];
+}
 
 export async function extractPullRequestContext(
   octokit: Octokit,
@@ -9,12 +17,13 @@ export async function extractPullRequestContext(
   repo: string,
   pullNumber: number,
   config: ReviewConfig,
+  options: ExtractOptions = {},
 ): Promise<PullRequestContext> {
   // Fetch PR metadata
   const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
 
   // Fetch changed files list
-  const files: ChangedFile[] = [];
+  let files: ChangedFile[] = [];
   let page = 1;
   while (true) {
     const { data } = await octokit.pulls.listFiles({
@@ -38,6 +47,11 @@ export async function extractPullRequestContext(
     page++;
   }
 
+  if (options.pathFilter) {
+    const allowed = new Set(options.pathFilter);
+    files = files.filter((f) => allowed.has(f.filename));
+  }
+
   // Fetch the unified diff
   const { data: diff } = await octokit.pulls.get({
     owner,
@@ -46,34 +60,22 @@ export async function extractPullRequestContext(
     mediaType: { format: 'diff' },
   }) as unknown as { data: string };
 
-  // Fetch full file contents for context (head version)
-  const fileContents = new Map<string, string>();
-  const maxFileSize = config.files.maxFileSize;
-
-  for (const file of files) {
-    if (file.status === 'removed') continue;
-
-    try {
-      const { data } = await octokit.repos.getContent({
-        owner,
-        repo,
-        path: file.filename,
-        ref: pr.head.sha,
-      });
-
-      if ('content' in data && data.encoding === 'base64') {
-        const content = Buffer.from(data.content, 'base64').toString('utf-8');
-        if (content.length <= maxFileSize) {
-          fileContents.set(file.filename, content);
-        }
-      }
-    } catch (err) {
-      logger.debug({ file: file.filename, err }, 'Could not fetch file content');
-    }
-  }
+  // Fetch full file contents (head version) via the configured source —
+  // local checkout in Action mode, parallel API calls otherwise.
+  const source =
+    options.fileSource ?? new ApiFileSource(octokit, owner, repo, pr.head.sha);
+  const contentPaths = files
+    .filter((f) => f.status !== 'removed')
+    .map((f) => f.filename);
+  const fileContents = await source.getContents(contentPaths, config.files.maxFileSize);
 
   logger.info(
-    { filesCount: files.length, fileContentsCount: fileContents.size, diffLength: (diff as string).length },
+    {
+      filesCount: files.length,
+      fileContentsCount: fileContents.size,
+      diffLength: (diff as string).length,
+      localSource: source.isLocal,
+    },
     'PR context extracted',
   );
 

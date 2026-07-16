@@ -14,7 +14,7 @@ server.get('/health', (c) => {
 
 // GitHub webhook endpoint
 server.post('/api/webhook', async (c) => {
-  const apiKey = process.env.API_KEY ?? process.env.FISCALCR_API_KEY ?? process.env.KIMI_API_KEY;
+  const apiKey = process.env.API_KEY ?? process.env.FISCALCR_API_KEY;
   if (!apiKey) {
     logger.error('Missing required API key configuration');
     return c.json({ error: 'Server misconfigured: missing API key' }, 500);
@@ -26,8 +26,9 @@ server.post('/api/webhook', async (c) => {
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET!,
     apiKey,
     provider: process.env.MODEL_PROVIDER,
-    model: process.env.MODEL ?? process.env.FISCALCR_MODEL ?? process.env.KIMI_MODEL,
-    baseUrl: process.env.BASE_URL ?? process.env.FISCALCR_BASE_URL ?? process.env.KIMI_BASE_URL,
+    model: process.env.MODEL ?? process.env.FISCALCR_MODEL,
+    baseUrl: process.env.BASE_URL ?? process.env.FISCALCR_BASE_URL,
+    userAgent: process.env.LLM_USER_AGENT,
   });
 
   const id = c.req.header('x-github-delivery') ?? '';

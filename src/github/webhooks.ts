@@ -10,15 +10,21 @@ interface AppContext {
   provider?: string;
   model?: string;
   baseUrl?: string;
+  userAgent?: string;
   getInstallationOctokit: (installationId: number) => Promise<Octokit>;
 }
 
 type FiscalCRCommand = 'review' | 'help' | 'unknown';
 
 export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
-  // Auto-review on PR opened or new commits pushed
+  // Auto-review on PR opened, new commits pushed, reopened, or marked ready
   webhooks.on(
-    ['pull_request.opened', 'pull_request.synchronize'],
+    [
+      'pull_request.opened',
+      'pull_request.synchronize',
+      'pull_request.reopened',
+      'pull_request.ready_for_review',
+    ],
     async ({ payload }) => {
       const installationId = payload.installation?.id;
       if (!installationId) return;
@@ -40,7 +46,8 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       }
 
       if (!config.review.auto.enabled) return;
-      if (payload.action === 'opened' && !config.review.auto.onOpen) return;
+      // reopened / ready_for_review follow the onOpen setting.
+      if (payload.action !== 'synchronize' && !config.review.auto.onOpen) return;
       if (payload.action === 'synchronize' && !config.review.auto.onPush) return;
 
       const llm = createLLMProvider({
@@ -48,6 +55,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         provider: appCtx.provider ?? config.provider,
         model: appCtx.model ?? config.model,
         baseUrl: appCtx.baseUrl,
+        userAgent: appCtx.userAgent ?? config.userAgent,
       });
 
       const orchestrator = new ReviewOrchestrator(octokit, llm, config);
@@ -79,6 +87,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         provider: appCtx.provider ?? config.provider,
         model: appCtx.model ?? config.model,
         baseUrl: appCtx.baseUrl,
+        userAgent: appCtx.userAgent ?? config.userAgent,
       });
 
       const { data: pr } = await octokit.pulls.get({
@@ -88,11 +97,13 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       });
 
       const orchestrator = new ReviewOrchestrator(octokit, llm, config);
+      // An explicit @fiscalcr review always re-reviews the whole PR.
       await orchestrator.reviewPullRequest({
         owner,
         repo,
         pullNumber,
         headSha: pr.head.sha,
+        forceFull: true,
       });
     } else if (command === 'help') {
       await octokit.issues.createComment({
@@ -132,6 +143,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       provider: appCtx.provider ?? config.provider,
       model: appCtx.model ?? config.model,
       baseUrl: appCtx.baseUrl,
+      userAgent: appCtx.userAgent ?? config.userAgent,
     });
 
     const orchestrator = new ReviewOrchestrator(octokit, llm, config);

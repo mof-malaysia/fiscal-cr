@@ -1,9 +1,13 @@
-import { z } from 'zod';
+import { z } from "zod";
 export declare const reviewConfigSchema: z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
-    provider: z.ZodDefault<z.ZodEnum<["kimi", "openai-compatible"]>>;
+    provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi"]>>;
     model: z.ZodDefault<z.ZodString>;
     baseUrl: z.ZodOptional<z.ZodString>;
+    /** Custom User-Agent for endpoints that whitelist clients. */
+    userAgent: z.ZodOptional<z.ZodString>;
+    /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
+    temperature: z.ZodOptional<z.ZodNumber>;
     review: z.ZodDefault<z.ZodObject<{
         auto: z.ZodDefault<z.ZodObject<{
             enabled: z.ZodDefault<z.ZodBoolean>;
@@ -52,6 +56,35 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity: z.ZodDefault<z.ZodEnum<["critical", "warning", "suggestion", "nitpick"]>>;
         maxAnnotations: z.ZodDefault<z.ZodNumber>;
         failOn: z.ZodDefault<z.ZodEnum<["critical", "warning", "never"]>>;
+        incremental: z.ZodDefault<z.ZodObject<{
+            enabled: z.ZodDefault<z.ZodBoolean>;
+            /** Deltas touching more files than this fall back to a full review. */
+            maxDeltaFiles: z.ZodDefault<z.ZodNumber>;
+        }, "strip", z.ZodTypeAny, {
+            enabled: boolean;
+            maxDeltaFiles: number;
+        }, {
+            enabled?: boolean | undefined;
+            maxDeltaFiles?: number | undefined;
+        }>>;
+        comments: z.ZodDefault<z.ZodObject<{
+            /** 'sticky': one updated summary + incremental reviews. 'legacy': stack a full review per run. */
+            mode: z.ZodDefault<z.ZodEnum<["sticky", "legacy"]>>;
+            dedupe: z.ZodDefault<z.ZodBoolean>;
+            resolveOutdated: z.ZodDefault<z.ZodBoolean>;
+            /** Cumulative inline-comment cap; overflow demotes to check-run annotations. */
+            maxOpenComments: z.ZodDefault<z.ZodNumber>;
+        }, "strip", z.ZodTypeAny, {
+            mode: "sticky" | "legacy";
+            dedupe: boolean;
+            resolveOutdated: boolean;
+            maxOpenComments: number;
+        }, {
+            mode?: "sticky" | "legacy" | undefined;
+            dedupe?: boolean | undefined;
+            resolveOutdated?: boolean | undefined;
+            maxOpenComments?: number | undefined;
+        }>>;
     }, "strip", z.ZodTypeAny, {
         auto: {
             enabled: boolean;
@@ -72,6 +105,16 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity: "critical" | "warning" | "suggestion" | "nitpick";
         maxAnnotations: number;
         failOn: "critical" | "warning" | "never";
+        incremental: {
+            enabled: boolean;
+            maxDeltaFiles: number;
+        };
+        comments: {
+            mode: "sticky" | "legacy";
+            dedupe: boolean;
+            resolveOutdated: boolean;
+            maxOpenComments: number;
+        };
     }, {
         auto?: {
             enabled?: boolean | undefined;
@@ -92,6 +135,16 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity?: "critical" | "warning" | "suggestion" | "nitpick" | undefined;
         maxAnnotations?: number | undefined;
         failOn?: "critical" | "warning" | "never" | undefined;
+        incremental?: {
+            enabled?: boolean | undefined;
+            maxDeltaFiles?: number | undefined;
+        } | undefined;
+        comments?: {
+            mode?: "sticky" | "legacy" | undefined;
+            dedupe?: boolean | undefined;
+            resolveOutdated?: boolean | undefined;
+            maxOpenComments?: number | undefined;
+        } | undefined;
     }>>;
     files: z.ZodDefault<z.ZodObject<{
         include: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
@@ -132,18 +185,43 @@ export declare const reviewConfigSchema: z.ZodObject<{
         systemAppend?: string | undefined;
         reviewFocus?: string | undefined;
     }>>;
-    cache: z.ZodDefault<z.ZodObject<{
+    pipeline: z.ZodDefault<z.ZodObject<{
+        /** false → single-call review regardless of PR size (legacy behavior). */
         enabled: z.ZodDefault<z.ZodBoolean>;
-        ttl: z.ZodDefault<z.ZodNumber>;
+        concurrency: z.ZodDefault<z.ZodNumber>;
+        groupTokenBudget: z.ZodDefault<z.ZodNumber>;
+        relatedContextBudget: z.ZodDefault<z.ZodNumber>;
+        maxGroups: z.ZodDefault<z.ZodNumber>;
+        fastPathThreshold: z.ZodDefault<z.ZodNumber>;
+        minConfidence: z.ZodDefault<z.ZodNumber>;
+        maxRetries: z.ZodDefault<z.ZodNumber>;
+        callTimeoutMs: z.ZodDefault<z.ZodNumber>;
+        maxOutputTokens: z.ZodDefault<z.ZodNumber>;
     }, "strip", z.ZodTypeAny, {
         enabled: boolean;
-        ttl: number;
+        concurrency: number;
+        groupTokenBudget: number;
+        relatedContextBudget: number;
+        maxGroups: number;
+        fastPathThreshold: number;
+        minConfidence: number;
+        maxRetries: number;
+        callTimeoutMs: number;
+        maxOutputTokens: number;
     }, {
         enabled?: boolean | undefined;
-        ttl?: number | undefined;
+        concurrency?: number | undefined;
+        groupTokenBudget?: number | undefined;
+        relatedContextBudget?: number | undefined;
+        maxGroups?: number | undefined;
+        fastPathThreshold?: number | undefined;
+        minConfidence?: number | undefined;
+        maxRetries?: number | undefined;
+        callTimeoutMs?: number | undefined;
+        maxOutputTokens?: number | undefined;
     }>>;
 }, "strip", z.ZodTypeAny, {
-    provider: "kimi" | "openai-compatible";
+    provider: "openai-compatible" | "kimi";
     model: string;
     language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
     review: {
@@ -166,6 +244,16 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity: "critical" | "warning" | "suggestion" | "nitpick";
         maxAnnotations: number;
         failOn: "critical" | "warning" | "never";
+        incremental: {
+            enabled: boolean;
+            maxDeltaFiles: number;
+        };
+        comments: {
+            mode: "sticky" | "legacy";
+            dedupe: boolean;
+            resolveOutdated: boolean;
+            maxOpenComments: number;
+        };
     };
     files: {
         include: string[];
@@ -182,16 +270,28 @@ export declare const reviewConfigSchema: z.ZodObject<{
         systemAppend?: string | undefined;
         reviewFocus?: string | undefined;
     };
-    cache: {
+    pipeline: {
         enabled: boolean;
-        ttl: number;
+        concurrency: number;
+        groupTokenBudget: number;
+        relatedContextBudget: number;
+        maxGroups: number;
+        fastPathThreshold: number;
+        minConfidence: number;
+        maxRetries: number;
+        callTimeoutMs: number;
+        maxOutputTokens: number;
     };
     baseUrl?: string | undefined;
+    userAgent?: string | undefined;
+    temperature?: number | undefined;
 }, {
-    provider?: "kimi" | "openai-compatible" | undefined;
+    provider?: "openai-compatible" | "kimi" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
     baseUrl?: string | undefined;
+    userAgent?: string | undefined;
+    temperature?: number | undefined;
     review?: {
         auto?: {
             enabled?: boolean | undefined;
@@ -212,6 +312,16 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minSeverity?: "critical" | "warning" | "suggestion" | "nitpick" | undefined;
         maxAnnotations?: number | undefined;
         failOn?: "critical" | "warning" | "never" | undefined;
+        incremental?: {
+            enabled?: boolean | undefined;
+            maxDeltaFiles?: number | undefined;
+        } | undefined;
+        comments?: {
+            mode?: "sticky" | "legacy" | undefined;
+            dedupe?: boolean | undefined;
+            resolveOutdated?: boolean | undefined;
+            maxOpenComments?: number | undefined;
+        } | undefined;
     } | undefined;
     files?: {
         include?: string[] | undefined;
@@ -228,9 +338,17 @@ export declare const reviewConfigSchema: z.ZodObject<{
         systemAppend?: string | undefined;
         reviewFocus?: string | undefined;
     } | undefined;
-    cache?: {
+    pipeline?: {
         enabled?: boolean | undefined;
-        ttl?: number | undefined;
+        concurrency?: number | undefined;
+        groupTokenBudget?: number | undefined;
+        relatedContextBudget?: number | undefined;
+        maxGroups?: number | undefined;
+        fastPathThreshold?: number | undefined;
+        minConfidence?: number | undefined;
+        maxRetries?: number | undefined;
+        callTimeoutMs?: number | undefined;
+        maxOutputTokens?: number | undefined;
     } | undefined;
 }>;
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;

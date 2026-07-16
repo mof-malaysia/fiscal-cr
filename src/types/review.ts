@@ -19,6 +19,13 @@ export interface ReviewAnnotation {
   title: string;
   body: string;
   suggestedFix?: string;
+  /** Model self-assessed confidence 0–1. Defaults to 0.7 when a model omits it. */
+  confidence?: number;
+}
+
+export interface WalkthroughEntry {
+  path: string;
+  summary: string;
 }
 
 export interface ReviewResult {
@@ -31,6 +38,12 @@ export interface ReviewResult {
     output: number;
     cached: number;
   };
+  /** One-line-per-file walkthrough table (multi-pass pipeline output). */
+  walkthrough?: WalkthroughEntry[];
+  /** Short description of what the PR is trying to do. */
+  intent?: string;
+  /** Number of LLM calls made to produce this review. */
+  callCount?: number;
 }
 
 export interface ChangedFile {
@@ -57,12 +70,4 @@ export interface PullRequestContext {
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
-}
-
-export interface PackResult {
-  messages: ChatMessage[];
-  totalTokens: number;
-  includedFiles: string[];
-  truncatedFiles: string[];
-  strategy: 'full' | 'mixed' | 'chunked';
 }
