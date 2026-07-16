@@ -142,6 +142,41 @@ export declare const reviewConfigSchema: z.ZodObject<{
         enabled?: boolean | undefined;
         ttl?: number | undefined;
     }>>;
+    pipeline: z.ZodDefault<z.ZodObject<{
+        /** false → single-call review regardless of PR size (legacy behavior). */
+        enabled: z.ZodDefault<z.ZodBoolean>;
+        concurrency: z.ZodDefault<z.ZodNumber>;
+        groupTokenBudget: z.ZodDefault<z.ZodNumber>;
+        relatedContextBudget: z.ZodDefault<z.ZodNumber>;
+        maxGroups: z.ZodDefault<z.ZodNumber>;
+        fastPathThreshold: z.ZodDefault<z.ZodNumber>;
+        minConfidence: z.ZodDefault<z.ZodNumber>;
+        maxRetries: z.ZodDefault<z.ZodNumber>;
+        callTimeoutMs: z.ZodDefault<z.ZodNumber>;
+        maxOutputTokens: z.ZodDefault<z.ZodNumber>;
+    }, "strip", z.ZodTypeAny, {
+        enabled: boolean;
+        concurrency: number;
+        groupTokenBudget: number;
+        relatedContextBudget: number;
+        maxGroups: number;
+        fastPathThreshold: number;
+        minConfidence: number;
+        maxRetries: number;
+        callTimeoutMs: number;
+        maxOutputTokens: number;
+    }, {
+        enabled?: boolean | undefined;
+        concurrency?: number | undefined;
+        groupTokenBudget?: number | undefined;
+        relatedContextBudget?: number | undefined;
+        maxGroups?: number | undefined;
+        fastPathThreshold?: number | undefined;
+        minConfidence?: number | undefined;
+        maxRetries?: number | undefined;
+        callTimeoutMs?: number | undefined;
+        maxOutputTokens?: number | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     provider: "kimi" | "openai-compatible";
     model: string;
@@ -185,6 +220,18 @@ export declare const reviewConfigSchema: z.ZodObject<{
     cache: {
         enabled: boolean;
         ttl: number;
+    };
+    pipeline: {
+        enabled: boolean;
+        concurrency: number;
+        groupTokenBudget: number;
+        relatedContextBudget: number;
+        maxGroups: number;
+        fastPathThreshold: number;
+        minConfidence: number;
+        maxRetries: number;
+        callTimeoutMs: number;
+        maxOutputTokens: number;
     };
     baseUrl?: string | undefined;
 }, {
@@ -231,6 +278,18 @@ export declare const reviewConfigSchema: z.ZodObject<{
     cache?: {
         enabled?: boolean | undefined;
         ttl?: number | undefined;
+    } | undefined;
+    pipeline?: {
+        enabled?: boolean | undefined;
+        concurrency?: number | undefined;
+        groupTokenBudget?: number | undefined;
+        relatedContextBudget?: number | undefined;
+        maxGroups?: number | undefined;
+        fastPathThreshold?: number | undefined;
+        minConfidence?: number | undefined;
+        maxRetries?: number | undefined;
+        callTimeoutMs?: number | undefined;
+        maxOutputTokens?: number | undefined;
     } | undefined;
 }>;
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;

@@ -83,6 +83,22 @@ export const reviewConfigSchema = z.object({
       ttl: z.number().default(3600),
     })
     .default({}),
+
+  pipeline: z
+    .object({
+      /** false → single-call review regardless of PR size (legacy behavior). */
+      enabled: z.boolean().default(true),
+      concurrency: z.number().min(1).max(8).default(3),
+      groupTokenBudget: z.number().min(8_000).default(40_000),
+      relatedContextBudget: z.number().min(0).default(15_000),
+      maxGroups: z.number().min(1).max(20).default(8),
+      fastPathThreshold: z.number().default(25_000),
+      minConfidence: z.number().min(0).max(1).default(0.6),
+      maxRetries: z.number().min(0).max(5).default(3),
+      callTimeoutMs: z.number().default(120_000),
+      maxOutputTokens: z.number().default(8_192),
+    })
+    .default({}),
 });
 
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;

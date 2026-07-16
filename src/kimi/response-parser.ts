@@ -51,7 +51,7 @@ const reviewResponseSchema = z.object({
 /**
  * Try multiple strategies to extract a JSON object from the AI response.
  */
-function extractJson(raw: string): unknown | null {
+export function extractJson(raw: string): unknown | null {
   // Strategy 1: Direct JSON parse
   try {
     return JSON.parse(raw);

@@ -19,6 +19,7 @@ export declare class ReviewOrchestrator {
     private options;
     constructor(octokit: Octokit, llm: LLMProvider, config: ReviewConfig, options?: OrchestratorOptions);
     reviewPullRequest(params: ReviewParams): Promise<ReviewResult>;
+    private runReview;
 }
 export {};
 //# sourceMappingURL=orchestrator.d.ts.map

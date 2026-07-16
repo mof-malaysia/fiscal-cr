@@ -78,10 +78,25 @@ function buildReviewBody(result: ReviewResult): string {
   const lines: string[] = [];
 
   lines.push('## 🤖 FiscalCR Code Review\n');
+  if (result.intent) {
+    lines.push(`> ${result.intent}\n`);
+  }
   lines.push(result.summary);
   lines.push('');
   lines.push(`**Score:** ${result.score}/100`);
   lines.push('');
+
+  if (result.walkthrough && result.walkthrough.length > 0) {
+    lines.push('<details>');
+    lines.push('<summary>📝 Walkthrough</summary>\n');
+    lines.push('| File | Change Summary |');
+    lines.push('|------|----------------|');
+    for (const entry of result.walkthrough) {
+      lines.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
+    }
+    lines.push('</details>\n');
+  }
+
   lines.push('| Severity | Count |');
   lines.push('|----------|-------|');
   for (const [severity, count] of Object.entries(result.stats)) {
@@ -100,7 +115,7 @@ function buildReviewBody(result: ReviewResult): string {
   lines.push('</details>\n');
 
   lines.push('---');
-  lines.push('*Powered by [Kimi Code Reviewer](https://github.com/kimi-code-reviewer/kimi-code-reviewer) — Moonshot AI 256K context*');
+  lines.push('*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
 
   return lines.join('\n');
 }

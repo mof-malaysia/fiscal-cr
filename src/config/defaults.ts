@@ -45,4 +45,16 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     enabled: true,
     ttl: 3600,
   },
+  pipeline: {
+    enabled: true,
+    concurrency: 3,
+    groupTokenBudget: 40_000,
+    relatedContextBudget: 15_000,
+    maxGroups: 8,
+    fastPathThreshold: 25_000,
+    minConfidence: 0.6,
+    maxRetries: 3,
+    callTimeoutMs: 120_000,
+    maxOutputTokens: 8_192,
+  },
 };

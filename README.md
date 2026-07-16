@@ -195,6 +195,18 @@ prompt:
 cache:
   enabled: true
   ttl: 3600
+
+pipeline:
+  enabled: true              # false → single-call review regardless of PR size (legacy behavior)
+  concurrency: 3             # parallel group-review calls (1–8)
+  groupTokenBudget: 40000    # max tokens of file content per review group
+  relatedContextBudget: 15000 # tokens of unchanged imported files per group (Action mode only)
+  maxGroups: 8               # overflow groups are reviewed diff-only
+  fastPathThreshold: 25000   # PRs under this total use a single combined call
+  minConfidence: 0.6         # findings below this are dropped (criticals kept to 0.4)
+  maxRetries: 3
+  callTimeoutMs: 120000
+  maxOutputTokens: 8192
 ```
 
 If the configured file is not found, FiscalCR falls back to built-in defaults. Invalid configs fail fast instead of being silently ignored.
@@ -202,29 +214,27 @@ If the configured file is not found, FiscalCR falls back to built-in defaults. I
 ## How it works
 
 ```text
-PR Event -> Extract Context -> Pack Context -> Call LLM -> Parse JSON -> Publish Annotations
+PR Event -> Extract Context -> Filter Files
+  ├── Fast path (small PR): one combined LLM call (intent + walkthrough + findings)
+  └── Full pipeline (large PR):
+        Pass 1: PR intent, walkthrough, grouping hints   (1 small call)
+        Pass 2: parallel per-group file reviews          (N calls)
+        Pass 3: validate/dedupe/rank + synthesis         (1 call, skipped for 1 group)
+  -> Publish Check Run + PR review
 ```
 
 ### Review pipeline
 
 1. Create a GitHub Check Run
-2. Extract PR metadata, diff, and changed files
+2. Extract PR metadata, diff, and changed files (local checkout in Action mode, parallel API otherwise)
 3. Filter files by include/exclude rules
-4. Pack context to fit the available model budget
-5. Build cache-friendly prompt ordering
-6. Call the selected LLM provider
-7. Parse structured review output
-8. Filter annotations by minimum severity
-9. Limit annotation count
-10. Update the Check Run and PR review summary
-
-### Context packing strategies
-
-| PR size | Strategy | What gets sent |
-| ------- | -------- | -------------- |
-| Small (<50K tokens) | Full | Full file contents + diff |
-| Medium (50K–150K) | Mixed | Most-changed files in full, others as diff |
-| Large (>150K) | Chunked | Diff-heavy review with selective file context |
+4. PRs under `pipeline.fastPathThreshold` tokens take the fast path: a single combined call
+5. Larger PRs run the multi-pass pipeline:
+   - **Pass 1 — intent**: a small call summarizes the PR's intent, produces a file walkthrough, and suggests file groupings. Failure here is non-fatal.
+   - **Pass 2 — group reviews**: files are deterministically grouped (hints → directory clustering → bin-packing to `groupTokenBudget`) and reviewed in parallel. In Action mode each group also sees unchanged files it imports (`relatedContextBudget`). One failed group does not fail the review.
+   - **Pass 3 — synthesis**: code-side validation drops findings on lines outside the diff, filters by confidence, dedupes, and ranks; a final call merges group summaries into one review (skipped when there is only one group).
+6. Every LLM call goes through retry/backoff/timeout handling with `max_tokens` enforced
+7. Update the Check Run and PR review summary (intent, walkthrough table, findings, token usage)
 
 ## Cost model
 
@@ -252,6 +262,7 @@ fiscal-cr/
 │   ├── config/
 │   ├── github/
 │   ├── kimi/
+│   ├── pipeline/
 │   ├── providers/
 │   ├── review/
 │   ├── types/

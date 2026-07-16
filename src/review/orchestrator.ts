@@ -1,17 +1,20 @@
 import type { Octokit } from '@octokit/rest';
 import type { ReviewConfig } from '../config/schema.js';
-import type { ReviewAnnotation, ReviewResult } from '../types/review.js';
+import type { ReviewResult } from '../types/review.js';
 import type { LLMProvider } from '../providers/interface.js';
-import { packContext } from '../kimi/context-packer.js';
-import { buildReviewMessages } from '../kimi/prompt-builder.js';
-import { buildCacheOptimizedMessages } from '../kimi/cache-strategy.js';
-import { parseAIResponse } from '../kimi/response-parser.js';
 import { extractPullRequestContext } from '../github/pulls.js';
-import { ApiFileSource, LocalFileSource } from './file-source.js';
 import { createCheckRun, completeCheckRun } from '../github/checks.js';
 import { createPRReview } from '../github/comments.js';
 import { filterFiles } from './file-filter.js';
 import { buildSummary } from './summary-builder.js';
+import { ApiFileSource, LocalFileSource } from './file-source.js';
+import { runIntentPass } from '../pipeline/pass1-intent.js';
+import { groupFiles } from '../pipeline/grouper.js';
+import { runReviewPass } from '../pipeline/pass2-review.js';
+import { synthesize, validateAndRankFindings } from '../pipeline/pass3-synthesis.js';
+import { runFastPath } from '../pipeline/fast-path.js';
+import { UsageTracker } from '../pipeline/usage.js';
+import { estimateTokens } from '../utils/tokens.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -64,6 +67,11 @@ export class ReviewOrchestrator {
       // Step 3: Filter files
       const filteredFiles = filterFiles(prContext.changedFiles, this.config);
       prContext.changedFiles = filteredFiles;
+      // Keep contents only for reviewable files (never prompt with lockfiles etc.)
+      const reviewable = new Set(filteredFiles.map((f) => f.filename));
+      for (const path of [...prContext.fileContents.keys()]) {
+        if (!reviewable.has(path)) prContext.fileContents.delete(path);
+      }
 
       if (filteredFiles.length === 0) {
         const result: ReviewResult = {
@@ -86,45 +94,10 @@ export class ReviewOrchestrator {
         return result;
       }
 
-      // Step 4: Pack context (256K optimization)
-      const packed = packContext(prContext, this.config);
-      logger.info(
-        { strategy: packed.strategy, totalTokens: packed.totalTokens },
-        'Context packed',
-      );
+      // Step 4: Run the review (fast path or multi-pass pipeline)
+      const result = await this.runReview(prContext);
 
-      // Step 5: Build messages (cache-optimized order)
-      const systemPrompt = buildReviewMessages(prContext, this.config)[0].content;
-      const messages = buildCacheOptimizedMessages(
-        systemPrompt,
-        prContext,
-        this.config,
-        prContext.fileContents,
-      );
-
-      // Step 6: Call LLM API
-      logger.info({ messageCount: messages.length }, 'Calling LLM API');
-      const response = await this.llm.chatCompletion({
-        messages,
-        responseFormat: { type: 'json_object' },
-      });
-
-      // Step 7: Parse response
-      const result = parseAIResponse(response.content, response.usage);
-
-      // Step 8: Filter by severity
-      const minSeverityOrder = ['critical', 'warning', 'suggestion', 'nitpick'];
-      const minIdx = minSeverityOrder.indexOf(this.config.review.minSeverity);
-      result.annotations = result.annotations.filter(
-        (a: ReviewAnnotation) => minSeverityOrder.indexOf(a.severity) <= minIdx,
-      );
-
-      // Step 9: Limit annotations
-      if (result.annotations.length > this.config.review.maxAnnotations) {
-        result.annotations = result.annotations.slice(0, this.config.review.maxAnnotations);
-      }
-
-      // Step 10: Determine conclusion
+      // Step 5: Determine conclusion
       const conclusion =
         this.config.review.failOn === 'critical' && result.stats.critical > 0
           ? 'failure'
@@ -133,7 +106,7 @@ export class ReviewOrchestrator {
             ? 'failure'
             : 'success';
 
-      // Step 11: Update Check Run
+      // Step 6: Update Check Run
       const summaryMd = buildSummary(result);
       await completeCheckRun(this.octokit, {
         owner,
@@ -144,7 +117,7 @@ export class ReviewOrchestrator {
         annotations: result.annotations,
       });
 
-      // Step 12: Create PR Review
+      // Step 7: Create PR Review
       await createPRReview(this.octokit, {
         owner,
         repo,
@@ -159,6 +132,7 @@ export class ReviewOrchestrator {
           pullNumber,
           score: result.score,
           annotations: result.annotations.length,
+          llmCalls: result.callCount,
           conclusion,
         },
         'Review completed',
@@ -182,5 +156,60 @@ export class ReviewOrchestrator {
         'orchestration',
       );
     }
+  }
+
+  private async runReview(prContext: Parameters<typeof runFastPath>[1]): Promise<ReviewResult> {
+    const usage = new UsageTracker();
+    const pipeline = this.config.pipeline;
+
+    const totalTokens =
+      prContext.changedFiles.reduce(
+        (sum, f) => sum + (f.patch ? estimateTokens(f.patch) : 0),
+        0,
+      ) +
+      [...prContext.fileContents.values()].reduce((sum, c) => sum + estimateTokens(c), 0);
+
+    if (!pipeline.enabled || totalTokens < pipeline.fastPathThreshold) {
+      logger.info({ totalTokens, pipelineEnabled: pipeline.enabled }, 'Using fast path (single call)');
+      return runFastPath(this.llm, prContext, this.config, usage);
+    }
+
+    logger.info({ totalTokens }, 'Using multi-pass pipeline');
+
+    // Pass 1: intent & walkthrough (non-fatal on failure)
+    const intent = await runIntentPass(this.llm, prContext, this.config, usage);
+
+    // Pass 2: parallel per-group reviews
+    const groups = groupFiles(
+      prContext.changedFiles,
+      prContext.fileContents,
+      intent,
+      this.config,
+    );
+    logger.info(
+      { groups: groups.map((g) => ({ label: g.label, files: g.files.length, diffOnly: g.diffOnly })) },
+      'Files grouped for review',
+    );
+    const outcomes = await runReviewPass(
+      this.llm,
+      prContext,
+      groups,
+      intent,
+      this.config,
+      usage,
+      { workspaceRoot: this.options.workspaceRoot },
+    );
+
+    if (outcomes.every((o) => o.failed)) {
+      throw new ReviewError('All review groups failed', 'review-pass');
+    }
+
+    // Pass 3: deterministic validation + LLM synthesis
+    const findings = validateAndRankFindings(
+      outcomes.flatMap((o) => o.findings),
+      prContext.changedFiles,
+      this.config,
+    );
+    return synthesize(this.llm, { ctx: prContext, intent, outcomes, findings }, this.config, usage);
   }
 }
