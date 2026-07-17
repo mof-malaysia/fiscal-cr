@@ -7,6 +7,12 @@ export interface LLMTokenUsage {
 export interface LLMCompletionResponse {
     content: string;
     usage: LLMTokenUsage;
+    /**
+     * Why the model stopped generating. `'length'` means the response was
+     * truncated at the token cap — the content is very likely incomplete
+     * (e.g. cut-off JSON). Undefined when the endpoint omits it.
+     */
+    finishReason?: string;
 }
 export interface ChatCompletionParams {
     messages: ChatMessage[];

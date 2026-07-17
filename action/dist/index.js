@@ -54060,7 +54060,10 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
             usage.add(response.usage);
             const parsed = parseGroupResponse(response.content);
             if (!parsed) {
-                logger.warn({ group: group.label }, 'Group review returned unparseable output');
+                const truncated = response.finishReason === 'length';
+                logger.warn({ group: group.label, truncated, maxOutputTokens: config.pipeline.maxOutputTokens }, truncated
+                    ? 'Group review output truncated at the output-token cap; increase pipeline.maxOutputTokens'
+                    : 'Group review returned unparseable output');
                 return { group, summary: '', findings: [], failed: true };
             }
             logger.info({ group: group.label, findings: parsed.findings.length }, 'Group review completed');
@@ -54298,6 +54301,10 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
         timeoutMs: config.pipeline.callTimeoutMs,
     });
     usage.add(response.usage);
+    if (response.finishReason === 'length') {
+        throw new ReviewError(`Review response was truncated at the output-token cap (maxOutputTokens=${config.pipeline.maxOutputTokens}); ` +
+            'the JSON is incomplete. Increase pipeline.maxOutputTokens.', 'fast-path');
+    }
     const parsed = parseFastPathResponse(response.content);
     if (!parsed) {
         throw new ReviewError('Could not parse review response as JSON', 'fast-path');
@@ -54787,6 +54794,7 @@ class OpenAICompatibleProvider {
         }
         const data = (await res.json());
         const content = data.choices?.[0]?.message?.content ?? '';
+        const finishReason = data.choices?.[0]?.finish_reason;
         const usage = {
             input: data.usage?.prompt_tokens ?? 0,
             output: data.usage?.completion_tokens ?? 0,
@@ -54798,8 +54806,9 @@ class OpenAICompatibleProvider {
             promptTokens: usage.input,
             completionTokens: usage.output,
             cachedTokens: usage.cached,
+            finishReason,
         }, 'LLM API call completed');
-        return { content, usage };
+        return { content, usage, finishReason };
     }
 }
 
@@ -55000,7 +55009,7 @@ const reviewConfigSchema = objectType({
         minConfidence: numberType().min(0).max(1).default(0.6),
         maxRetries: numberType().min(0).max(5).default(3),
         callTimeoutMs: numberType().default(120_000),
-        maxOutputTokens: numberType().default(8_192),
+        maxOutputTokens: numberType().default(16_384),
     })
         .default({}),
 });
@@ -55067,7 +55076,7 @@ const DEFAULT_CONFIG = {
         minConfidence: 0.6,
         maxRetries: 3,
         callTimeoutMs: 120_000,
-        maxOutputTokens: 8_192,
+        maxOutputTokens: 16_384,
     },
 };
 
