@@ -1,4 +1,11 @@
 import { z } from "zod";
+/**
+ * Files excluded from review by default: dependency dirs, build output, and
+ * lockfiles/generated manifests. These are machine-generated, often huge, and
+ * carry no review value while consuming a large share of the token budget.
+ * Shared by the schema default and DEFAULT_CONFIG so the two never drift.
+ */
+export declare const DEFAULT_EXCLUDE_PATTERNS: readonly ["**/node_modules/**", "**/dist/**", "**/build/**", "**/*.min.*", "**/*.lock", "**/*.lockb", "**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/bun.lockb", "**/go.sum", "**/go.work.sum", "**/packages.lock.json"];
 export declare const reviewConfigSchema: z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
     provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi"]>>;

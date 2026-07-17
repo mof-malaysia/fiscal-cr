@@ -1,4 +1,4 @@
-import type { ReviewConfig } from "./schema.js";
+import { DEFAULT_EXCLUDE_PATTERNS, type ReviewConfig } from "./schema.js";
 
 export const DEFAULT_CONFIG: ReviewConfig = {
   language: "en",
@@ -37,16 +37,7 @@ export const DEFAULT_CONFIG: ReviewConfig = {
   },
   files: {
     include: ["**/*"],
-    exclude: [
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/build/**",
-      "**/*.lock",
-      "**/*.min.*",
-      "**/package-lock.json",
-      "**/yarn.lock",
-      "**/pnpm-lock.yaml",
-    ],
+    exclude: [...DEFAULT_EXCLUDE_PATTERNS],
     maxFileSize: 100_000,
   },
   rules: [],

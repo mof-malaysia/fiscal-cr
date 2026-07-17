@@ -55013,6 +55013,30 @@ function createLLMProvider(config) {
 var dist = __nccwpck_require__(6159);
 ;// CONCATENATED MODULE: ./src/config/schema.ts
 
+/**
+ * Files excluded from review by default: dependency dirs, build output, and
+ * lockfiles/generated manifests. These are machine-generated, often huge, and
+ * carry no review value while consuming a large share of the token budget.
+ * Shared by the schema default and DEFAULT_CONFIG so the two never drift.
+ */
+const DEFAULT_EXCLUDE_PATTERNS = [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    // Minified bundles.
+    "**/*.min.*",
+    // Lockfiles / generated dependency manifests, across ecosystems.
+    "**/*.lock", // Cargo.lock, composer.lock, Gemfile.lock, poetry.lock, Podfile.lock, flake.lock, …
+    "**/*.lockb", // bun.lockb
+    "**/package-lock.json",
+    "**/npm-shrinkwrap.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/bun.lockb",
+    "**/go.sum",
+    "**/go.work.sum",
+    "**/packages.lock.json", // NuGet
+];
 const reviewConfigSchema = objectType({
     language: enumType(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
     provider: enumType(["openai-compatible", "kimi"]).default("kimi"),
@@ -55064,17 +55088,7 @@ const reviewConfigSchema = objectType({
         .default({}),
     files: objectType({
         include: arrayType(stringType()).default(["**/*"]),
-        exclude: arrayType(stringType())
-            .default([
-            "**/node_modules/**",
-            "**/dist/**",
-            "**/build/**",
-            "**/*.lock",
-            "**/*.min.*",
-            "**/package-lock.json",
-            "**/yarn.lock",
-            "**/pnpm-lock.yaml",
-        ]),
+        exclude: arrayType(stringType()).default([...DEFAULT_EXCLUDE_PATTERNS]),
         maxFileSize: numberType().default(100_000),
     })
         .default({}),
@@ -55109,6 +55123,7 @@ const reviewConfigSchema = objectType({
 });
 
 ;// CONCATENATED MODULE: ./src/config/defaults.ts
+
 const DEFAULT_CONFIG = {
     language: "en",
     provider: "kimi",
@@ -55146,16 +55161,7 @@ const DEFAULT_CONFIG = {
     },
     files: {
         include: ["**/*"],
-        exclude: [
-            "**/node_modules/**",
-            "**/dist/**",
-            "**/build/**",
-            "**/*.lock",
-            "**/*.min.*",
-            "**/package-lock.json",
-            "**/yarn.lock",
-            "**/pnpm-lock.yaml",
-        ],
+        exclude: [...DEFAULT_EXCLUDE_PATTERNS],
         maxFileSize: 100_000,
     },
     rules: [],

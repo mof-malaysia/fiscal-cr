@@ -25,14 +25,24 @@ describe('filterFiles', () => {
     expect(filtered[0].filename).toBe('src/index.ts');
   });
 
-  it('should exclude lock files', () => {
+  it('should exclude lock files across ecosystems', () => {
     const files = [
       makeFile('src/app.ts'),
       makeFile('package-lock.json'),
+      makeFile('npm-shrinkwrap.json'),
       makeFile('yarn.lock'),
+      makeFile('pnpm-lock.yaml'),
+      makeFile('bun.lockb'),
+      makeFile('Cargo.lock'),
+      makeFile('composer.lock'),
+      makeFile('Gemfile.lock'),
+      makeFile('poetry.lock'),
+      makeFile('go.sum'),
+      makeFile('nested/dir/go.sum'),
+      makeFile('packages.lock.json'),
     ];
     const filtered = filterFiles(files, DEFAULT_CONFIG);
-    expect(filtered).toHaveLength(1);
+    expect(filtered.map((f) => f.filename)).toEqual(['src/app.ts']);
   });
 
   it('should exclude removed files', () => {
