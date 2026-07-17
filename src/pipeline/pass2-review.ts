@@ -7,6 +7,7 @@ import { parseGroupResponse, type IntentResult } from './schemas.js';
 import { collectRelatedContext } from './related-context.js';
 import type { FileGroup } from './grouper.js';
 import { reviewTemperature } from './temperature.js';
+import { reviewMaxOutputTokens } from './max-output.js';
 import type { UsageTracker } from './usage.js';
 import { logger } from '../utils/logger.js';
 
@@ -39,6 +40,7 @@ export async function runReviewPass(
   const systemPrompt = buildGroupSystemPrompt(config);
   const changedPaths = new Set(ctx.changedFiles.map((f) => f.filename));
   const limit = pLimit(config.pipeline.concurrency);
+  const maxOutputTokens = reviewMaxOutputTokens(config);
 
   return Promise.all(
     groups.map((group) =>
@@ -63,7 +65,7 @@ export async function runReviewPass(
               },
             ],
             responseFormat: { type: 'json_object' },
-            maxTokens: config.pipeline.maxOutputTokens,
+            maxTokens: maxOutputTokens,
             temperature: reviewTemperature(config),
             timeoutMs: config.pipeline.callTimeoutMs,
           });
@@ -73,7 +75,7 @@ export async function runReviewPass(
           if (!parsed) {
             const truncated = response.finishReason === 'length';
             logger.warn(
-              { group: group.label, truncated, maxOutputTokens: config.pipeline.maxOutputTokens },
+              { group: group.label, truncated, maxOutputTokens },
               truncated
                 ? 'Group review output truncated at the output-token cap; increase pipeline.maxOutputTokens'
                 : 'Group review returned unparseable output',

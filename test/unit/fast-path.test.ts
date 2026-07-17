@@ -28,10 +28,29 @@ function llmReturning(response: LLMCompletionResponse): LLMProvider {
 }
 
 describe('runFastPath', () => {
-  it('throws an actionable truncation error when the response is cut off at the token cap', async () => {
+  it('salvages the complete findings when the response is truncated mid-array', async () => {
+    // Two complete findings, then a third cut off — the model hit the token cap.
     const llm = llmReturning({
-      content: '{"summary":"ok","findings":[', // truncated, unparseable
-      usage: { input: 100, output: 8192, cached: 0 },
+      content:
+        '{"summary":"partial","score":80,"findings":[' +
+        '{"path":"a.ts","startLine":1,"severity":"warning","category":"bug","title":"one"},' +
+        '{"path":"a.ts","startLine":2,"severity":"suggestion","category":"style","title":"two"},' +
+        '{"path":"a.ts","startLine":3,"severity":"war', // truncated here
+      usage: { input: 100, output: 16384, cached: 0 },
+      finishReason: 'length',
+    });
+
+    const result = await runFastPath(llm, context(), DEFAULT_CONFIG, new UsageTracker());
+    // The two fully-emitted findings survive; the partial third is dropped.
+    expect(result.annotations).toHaveLength(2);
+    expect(result.annotations.map((a) => a.title)).toEqual(['one', 'two']);
+    expect(result.summary).toBe('partial');
+  });
+
+  it('throws an actionable truncation error when nothing can be salvaged', async () => {
+    const llm = llmReturning({
+      content: '{"summary":"', // truncated before any complete value
+      usage: { input: 100, output: 16384, cached: 0 },
       finishReason: 'length',
     });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractJson } from '../../src/utils/json.js';
+import { extractJson, repairTruncatedJson } from '../../src/utils/json.js';
 
 describe('extractJson', () => {
   it('parses valid JSON directly', () => {
@@ -32,5 +32,42 @@ That concludes my review.`;
 
   it('returns null for completely unparseable text', () => {
     expect(extractJson('I cannot provide a review for this PR.')).toBeNull();
+  });
+
+  it('salvages a response truncated mid-array (via strategy 4)', () => {
+    const raw = '{"summary":"ok","findings":[{"path":"a.ts","title":"one"},{"pa';
+    expect(extractJson(raw)).toEqual({
+      summary: 'ok',
+      findings: [{ path: 'a.ts', title: 'one' }],
+    });
+  });
+});
+
+describe('repairTruncatedJson', () => {
+  it('keeps complete array elements and drops the partial trailing one', () => {
+    const raw = '{"findings":[{"a":1},{"a":2},{"a":';
+    expect(repairTruncatedJson(raw)).toEqual({ findings: [{ a: 1 }, { a: 2 }] });
+  });
+
+  it('closes an object truncated after a complete member', () => {
+    const raw = '{"summary":"done","score":90,"walkthrough":[{"path":"x"}],"extra":"cut off';
+    expect(repairTruncatedJson(raw)).toEqual({
+      summary: 'done',
+      score: 90,
+      walkthrough: [{ path: 'x' }],
+    });
+  });
+
+  it('does not mistake commas or braces inside strings for boundaries', () => {
+    const raw = '{"summary":"a, b, {c}","findings":[{"title":"x"},{"title":"incomp';
+    expect(repairTruncatedJson(raw)).toEqual({
+      summary: 'a, b, {c}',
+      findings: [{ title: 'x' }],
+    });
+  });
+
+  it('returns null when nothing complete precedes the truncation', () => {
+    expect(repairTruncatedJson('{"summary":"')).toBeNull();
+    expect(repairTruncatedJson('no json here')).toBeNull();
   });
 });

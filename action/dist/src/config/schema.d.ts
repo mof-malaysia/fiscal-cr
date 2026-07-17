@@ -196,7 +196,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minConfidence: z.ZodDefault<z.ZodNumber>;
         maxRetries: z.ZodDefault<z.ZodNumber>;
         callTimeoutMs: z.ZodDefault<z.ZodNumber>;
-        maxOutputTokens: z.ZodDefault<z.ZodNumber>;
+        maxOutputTokens: z.ZodOptional<z.ZodNumber>;
     }, "strip", z.ZodTypeAny, {
         enabled: boolean;
         concurrency: number;
@@ -207,7 +207,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minConfidence: number;
         maxRetries: number;
         callTimeoutMs: number;
-        maxOutputTokens: number;
+        maxOutputTokens?: number | undefined;
     }, {
         enabled?: boolean | undefined;
         concurrency?: number | undefined;
@@ -280,7 +280,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
         minConfidence: number;
         maxRetries: number;
         callTimeoutMs: number;
-        maxOutputTokens: number;
+        maxOutputTokens?: number | undefined;
     };
     baseUrl?: string | undefined;
     userAgent?: string | undefined;

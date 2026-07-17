@@ -33764,7 +33764,7 @@ module.exports = parseParams
 
 const errSerializer = __nccwpck_require__(739)
 const errWithCauseSerializer = __nccwpck_require__(5602)
-const reqSerializers = __nccwpck_require__(2363)
+const reqSerializers = __nccwpck_require__(4744)
 const resSerializers = __nccwpck_require__(1186)
 
 module.exports = {
@@ -34087,7 +34087,7 @@ function errSerializer (err) {
 
 /***/ }),
 
-/***/ 2363:
+/***/ 4744:
 /***/ ((module) => {
 
 
@@ -53557,7 +53557,68 @@ function extractJson(raw) {
             }
         }
     }
-    return null;
+    // Strategy 4: Repair a truncated object (response cut off at the token cap).
+    return repairTruncatedJson(raw);
+}
+/**
+ * Best-effort recovery of a JSON object that was cut off mid-generation
+ * (e.g. the model hit its output-token cap). Rewinds to the last point where
+ * the structure was at a value boundary — after a closing `}`/`]`, or just
+ * before a `,` — drops the incomplete trailing token, and closes every still-
+ * open array/object. This preserves the elements that were fully emitted (e.g.
+ * the complete findings before truncation) and discards the partial last one.
+ * Returns null when nothing salvageable precedes the truncation point.
+ */
+function repairTruncatedJson(raw) {
+    const start = raw.indexOf('{');
+    if (start < 0)
+        return null;
+    const text = raw.slice(start);
+    const stack = [];
+    let inString = false;
+    let escape = false;
+    // Furthest offset we can safely cut at, plus the open-container stack there.
+    let cut = -1;
+    let cutStack = [];
+    const mark = (end) => {
+        cut = end;
+        cutStack = stack.slice();
+    };
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            if (escape)
+                escape = false;
+            else if (ch === '\\')
+                escape = true;
+            else if (ch === '"')
+                inString = false;
+            continue;
+        }
+        if (ch === '"')
+            inString = true;
+        else if (ch === '{' || ch === '[')
+            stack.push(ch);
+        else if (ch === '}' || ch === ']') {
+            stack.pop();
+            mark(i + 1); // a container just closed — clean boundary after it
+        }
+        else if (ch === ',') {
+            mark(i); // the value before the comma is complete — cut before it
+        }
+    }
+    if (cut <= 0)
+        return null;
+    let repaired = text.slice(0, cut);
+    for (let i = cutStack.length - 1; i >= 0; i--) {
+        repaired += cutStack[i] === '{' ? '}' : ']';
+    }
+    try {
+        return JSON.parse(repaired);
+    }
+    catch {
+        return null;
+    }
 }
 
 ;// CONCATENATED MODULE: ./src/pipeline/schemas.ts
@@ -54018,7 +54079,31 @@ async function collectRelatedContext(group, fileContents, workspaceRoot, config,
     return related;
 }
 
+;// CONCATENATED MODULE: ./src/pipeline/max-output.ts
+/** Cap for models known to sustain large structured output (Kimi coding models). */
+const KIMI_MAX_OUTPUT_TOKENS = 65_536;
+/** Conservative cap for any other/unknown model. */
+const DEFAULT_MAX_OUTPUT_TOKENS = 32_768;
+/** True when the review runs against a Kimi model, by provider or model name. */
+function isKimiModel(config) {
+    return (config.provider === "kimi" || config.model.toLowerCase().startsWith("kimi"));
+}
+/**
+ * Resolve the output-token cap for a review call: an explicit
+ * `pipeline.maxOutputTokens` wins; Kimi models get a larger cap since they
+ * reliably emit long structured output (and short caps truncate mid-JSON);
+ * everything else uses a conservative default that unknown endpoints accept.
+ */
+function reviewMaxOutputTokens(config) {
+    if (config.pipeline.maxOutputTokens !== undefined)
+        return config.pipeline.maxOutputTokens;
+    if (isKimiModel(config))
+        return KIMI_MAX_OUTPUT_TOKENS;
+    return DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
 ;// CONCATENATED MODULE: ./src/pipeline/pass2-review.ts
+
 
 
 
@@ -54033,6 +54118,7 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
     const systemPrompt = buildGroupSystemPrompt(config);
     const changedPaths = new Set(ctx.changedFiles.map((f) => f.filename));
     const limit = pLimit(config.pipeline.concurrency);
+    const maxOutputTokens = reviewMaxOutputTokens(config);
     return Promise.all(groups.map((group) => limit(async () => {
         try {
             const relatedFiles = options.workspaceRoot
@@ -54053,7 +54139,7 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
                     },
                 ],
                 responseFormat: { type: 'json_object' },
-                maxTokens: config.pipeline.maxOutputTokens,
+                maxTokens: maxOutputTokens,
                 temperature: reviewTemperature(config),
                 timeoutMs: config.pipeline.callTimeoutMs,
             });
@@ -54061,7 +54147,7 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
             const parsed = parseGroupResponse(response.content);
             if (!parsed) {
                 const truncated = response.finishReason === 'length';
-                logger.warn({ group: group.label, truncated, maxOutputTokens: config.pipeline.maxOutputTokens }, truncated
+                logger.warn({ group: group.label, truncated, maxOutputTokens }, truncated
                     ? 'Group review output truncated at the output-token cap; increase pipeline.maxOutputTokens'
                     : 'Group review returned unparseable output');
                 return { group, summary: '', findings: [], failed: true };
@@ -54285,29 +54371,36 @@ class ReviewError extends Error {
 
 
 
+
 /**
  * Fast path: one combined call for small PRs (and the `pipeline.enabled: false`
  * kill-switch). Same output contract and code-side validation as the pipeline.
  */
 async function runFastPath(llm, ctx, config, usage, deltaHint) {
+    const maxOutputTokens = reviewMaxOutputTokens(config);
     const response = await llm.chatCompletion({
         messages: [
             { role: 'system', content: buildFastPathSystemPrompt(config) },
             { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
         ],
         responseFormat: { type: 'json_object' },
-        maxTokens: config.pipeline.maxOutputTokens,
+        maxTokens: maxOutputTokens,
         temperature: reviewTemperature(config),
         timeoutMs: config.pipeline.callTimeoutMs,
     });
     usage.add(response.usage);
-    if (response.finishReason === 'length') {
-        throw new ReviewError(`Review response was truncated at the output-token cap (maxOutputTokens=${config.pipeline.maxOutputTokens}); ` +
-            'the JSON is incomplete. Increase pipeline.maxOutputTokens.', 'fast-path');
-    }
+    const truncated = response.finishReason === 'length';
     const parsed = parseFastPathResponse(response.content);
     if (!parsed) {
-        throw new ReviewError('Could not parse review response as JSON', 'fast-path');
+        throw new ReviewError(truncated
+            ? `Review response was truncated at the output-token cap ` +
+                `(maxOutputTokens=${maxOutputTokens}) and could not be salvaged as JSON. ` +
+                `Increase pipeline.maxOutputTokens.`
+            : 'Could not parse review response as JSON', 'fast-path');
+    }
+    if (truncated) {
+        logger.warn({ maxOutputTokens, kept: parsed.findings.length }, 'Review response truncated at output-token cap; salvaged a partial review. ' +
+            'Consider increasing pipeline.maxOutputTokens.');
     }
     const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config);
     const stats = countBySeverity(annotations);
@@ -55009,7 +55102,8 @@ const reviewConfigSchema = objectType({
         minConfidence: numberType().min(0).max(1).default(0.6),
         maxRetries: numberType().min(0).max(5).default(3),
         callTimeoutMs: numberType().default(120_000),
-        maxOutputTokens: numberType().default(16_384),
+        // Unset → resolved per model (Kimi gets a larger cap). See reviewMaxOutputTokens.
+        maxOutputTokens: numberType().optional(),
     })
         .default({}),
 });
@@ -55076,7 +55170,7 @@ const DEFAULT_CONFIG = {
         minConfidence: 0.6,
         maxRetries: 3,
         callTimeoutMs: 120_000,
-        maxOutputTokens: 16_384,
+        // maxOutputTokens omitted → resolved per model (see reviewMaxOutputTokens).
     },
 };
 
