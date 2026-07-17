@@ -1,5 +1,30 @@
 import { z } from "zod";
 
+/**
+ * Files excluded from review by default: dependency dirs, build output, and
+ * lockfiles/generated manifests. These are machine-generated, often huge, and
+ * carry no review value while consuming a large share of the token budget.
+ * Shared by the schema default and DEFAULT_CONFIG so the two never drift.
+ */
+export const DEFAULT_EXCLUDE_PATTERNS = [
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/build/**",
+  // Minified bundles.
+  "**/*.min.*",
+  // Lockfiles / generated dependency manifests, across ecosystems.
+  "**/*.lock", // Cargo.lock, composer.lock, Gemfile.lock, poetry.lock, Podfile.lock, flake.lock, …
+  "**/*.lockb", // bun.lockb
+  "**/package-lock.json",
+  "**/npm-shrinkwrap.json",
+  "**/yarn.lock",
+  "**/pnpm-lock.yaml",
+  "**/bun.lockb",
+  "**/go.sum",
+  "**/go.work.sum",
+  "**/packages.lock.json", // NuGet
+] as const;
+
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
   provider: z.enum(["openai-compatible", "kimi"]).default("kimi"),
@@ -66,18 +91,7 @@ export const reviewConfigSchema = z.object({
   files: z
     .object({
       include: z.array(z.string()).default(["**/*"]),
-      exclude: z
-        .array(z.string())
-        .default([
-          "**/node_modules/**",
-          "**/dist/**",
-          "**/build/**",
-          "**/*.lock",
-          "**/*.min.*",
-          "**/package-lock.json",
-          "**/yarn.lock",
-          "**/pnpm-lock.yaml",
-        ]),
+      exclude: z.array(z.string()).default([...DEFAULT_EXCLUDE_PATTERNS]),
       maxFileSize: z.number().default(100_000),
     })
     .default({}),
@@ -114,7 +128,8 @@ export const reviewConfigSchema = z.object({
       minConfidence: z.number().min(0).max(1).default(0.6),
       maxRetries: z.number().min(0).max(5).default(3),
       callTimeoutMs: z.number().default(120_000),
-      maxOutputTokens: z.number().default(8_192),
+      // Unset → resolved per model (Kimi gets a larger cap). See reviewMaxOutputTokens.
+      maxOutputTokens: z.number().optional(),
     })
     .default({}),
 });

@@ -9,6 +9,7 @@ import {
   validateAndRankFindings,
 } from './pass3-synthesis.js';
 import { reviewTemperature } from './temperature.js';
+import { reviewMaxOutputTokens } from './max-output.js';
 import type { UsageTracker } from './usage.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -24,21 +25,37 @@ export async function runFastPath(
   usage: UsageTracker,
   deltaHint?: string,
 ): Promise<ReviewResult> {
+  const maxOutputTokens = reviewMaxOutputTokens(config);
   const response = await llm.chatCompletion({
     messages: [
       { role: 'system', content: buildFastPathSystemPrompt(config) },
       { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
     ],
     responseFormat: { type: 'json_object' },
-    maxTokens: config.pipeline.maxOutputTokens,
+    maxTokens: maxOutputTokens,
     temperature: reviewTemperature(config),
     timeoutMs: config.pipeline.callTimeoutMs,
   });
   usage.add(response.usage);
 
+  const truncated = response.finishReason === 'length';
   const parsed = parseFastPathResponse(response.content);
   if (!parsed) {
-    throw new ReviewError('Could not parse review response as JSON', 'fast-path');
+    throw new ReviewError(
+      truncated
+        ? `Review response was truncated at the output-token cap ` +
+          `(maxOutputTokens=${maxOutputTokens}) and could not be salvaged as JSON. ` +
+          `Increase pipeline.maxOutputTokens.`
+        : 'Could not parse review response as JSON',
+      'fast-path',
+    );
+  }
+  if (truncated) {
+    logger.warn(
+      { maxOutputTokens, kept: parsed.findings.length },
+      'Review response truncated at output-token cap; salvaged a partial review. ' +
+        'Consider increasing pipeline.maxOutputTokens.',
+    );
   }
 
   const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config);

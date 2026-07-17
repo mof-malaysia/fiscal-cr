@@ -23,6 +23,7 @@ export interface OpenAICompatibleProviderConfig {
 interface OpenAICompatibleResponse {
   choices: Array<{
     message: { content: string };
+    finish_reason?: string;
   }>;
   usage?: {
     prompt_tokens?: number;
@@ -118,6 +119,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     const data = (await res.json()) as OpenAICompatibleResponse;
     const content = data.choices?.[0]?.message?.content ?? '';
+    const finishReason = data.choices?.[0]?.finish_reason;
 
     const usage = {
       input: data.usage?.prompt_tokens ?? 0,
@@ -132,10 +134,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
         promptTokens: usage.input,
         completionTokens: usage.output,
         cachedTokens: usage.cached,
+        finishReason,
       },
       'LLM API call completed',
     );
 
-    return { content, usage };
+    return { content, usage, finishReason };
   }
 }

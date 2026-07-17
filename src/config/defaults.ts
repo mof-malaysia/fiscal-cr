@@ -1,4 +1,4 @@
-import type { ReviewConfig } from "./schema.js";
+import { DEFAULT_EXCLUDE_PATTERNS, type ReviewConfig } from "./schema.js";
 
 export const DEFAULT_CONFIG: ReviewConfig = {
   language: "en",
@@ -37,16 +37,7 @@ export const DEFAULT_CONFIG: ReviewConfig = {
   },
   files: {
     include: ["**/*"],
-    exclude: [
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/build/**",
-      "**/*.lock",
-      "**/*.min.*",
-      "**/package-lock.json",
-      "**/yarn.lock",
-      "**/pnpm-lock.yaml",
-    ],
+    exclude: [...DEFAULT_EXCLUDE_PATTERNS],
     maxFileSize: 100_000,
   },
   rules: [],
@@ -61,6 +52,6 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     minConfidence: 0.6,
     maxRetries: 3,
     callTimeoutMs: 120_000,
-    maxOutputTokens: 8_192,
+    // maxOutputTokens omitted → resolved per model (see reviewMaxOutputTokens).
   },
 };
