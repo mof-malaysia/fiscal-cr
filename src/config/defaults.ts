@@ -61,6 +61,6 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     minConfidence: 0.6,
     maxRetries: 3,
     callTimeoutMs: 120_000,
-    maxOutputTokens: 8_192,
+    maxOutputTokens: 16_384,
   },
 };

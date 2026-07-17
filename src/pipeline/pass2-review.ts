@@ -71,7 +71,13 @@ export async function runReviewPass(
 
           const parsed = parseGroupResponse(response.content);
           if (!parsed) {
-            logger.warn({ group: group.label }, 'Group review returned unparseable output');
+            const truncated = response.finishReason === 'length';
+            logger.warn(
+              { group: group.label, truncated, maxOutputTokens: config.pipeline.maxOutputTokens },
+              truncated
+                ? 'Group review output truncated at the output-token cap; increase pipeline.maxOutputTokens'
+                : 'Group review returned unparseable output',
+            );
             return { group, summary: '', findings: [], failed: true };
           }
           logger.info(

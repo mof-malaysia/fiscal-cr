@@ -114,7 +114,7 @@ export const reviewConfigSchema = z.object({
       minConfidence: z.number().min(0).max(1).default(0.6),
       maxRetries: z.number().min(0).max(5).default(3),
       callTimeoutMs: z.number().default(120_000),
-      maxOutputTokens: z.number().default(8_192),
+      maxOutputTokens: z.number().default(16_384),
     })
     .default({}),
 });

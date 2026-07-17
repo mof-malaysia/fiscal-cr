@@ -44,6 +44,29 @@ describe('OpenAICompatibleProvider', () => {
     expect(body.max_tokens).toBeUndefined();
   });
 
+  it('surfaces finish_reason so truncation is detectable', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"summary":"ok"' }, finish_reason: 'length' }],
+          usage: { prompt_tokens: 1000, completion_tokens: 8192, cached_tokens: 0 },
+        }),
+        { status: 200, statusText: 'OK' },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'm',
+      baseUrl: 'https://api.example.com/v1',
+    });
+    const result = await provider.chatCompletion({
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(result.finishReason).toBe('length');
+  });
+
   it('sends the default User-Agent and client name', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {

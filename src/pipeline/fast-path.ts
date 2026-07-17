@@ -36,6 +36,14 @@ export async function runFastPath(
   });
   usage.add(response.usage);
 
+  if (response.finishReason === 'length') {
+    throw new ReviewError(
+      `Review response was truncated at the output-token cap (maxOutputTokens=${config.pipeline.maxOutputTokens}); ` +
+        'the JSON is incomplete. Increase pipeline.maxOutputTokens.',
+      'fast-path',
+    );
+  }
+
   const parsed = parseFastPathResponse(response.content);
   if (!parsed) {
     throw new ReviewError('Could not parse review response as JSON', 'fast-path');
