@@ -53811,19 +53811,29 @@ function reviewTemperature(config, preferred = 0.3) {
  */
 async function runIntentPass(llm, ctx, config, usage) {
     try {
+        const messages = [
+            { role: 'system', content: buildIntentSystemPrompt(config) },
+            { role: 'user', content: buildIntentUserPrompt(ctx) },
+        ];
+        const startedAt = Date.now();
+        usage.startCall();
         const response = await llm.chatCompletion({
-            messages: [
-                { role: 'system', content: buildIntentSystemPrompt(config) },
-                { role: 'user', content: buildIntentUserPrompt(ctx) },
-            ],
+            messages,
             responseFormat: { type: 'json_object' },
             maxTokens: 2_048,
             temperature: reviewTemperature(config),
             timeoutMs: 60_000,
         });
-        usage.add(response.usage);
+        usage.add(response.usage, {
+            stage: 'intent',
+            messages,
+            maxOutputTokens: 2_048,
+            durationMs: Date.now() - startedAt,
+            finishReason: response.finishReason,
+        });
         const intent = parseIntentResponse(response.content);
         if (!intent) {
+            usage.emit({ type: 'stage_result', stage: 'intent', status: 'failed' });
             logger.warn('Intent pass returned unparseable output, continuing without it');
             return null;
         }
@@ -53835,9 +53845,17 @@ async function runIntentPass(llm, ctx, config, usage) {
             .filter((g) => g.files.length > 0);
         intent.riskHotspots = intent.riskHotspots.filter((h) => known.has(h.path));
         logger.info({ groups: intent.groups.length, hotspots: intent.riskHotspots.length }, 'Intent pass completed');
+        usage.emit({
+            type: 'stage_result',
+            stage: 'intent',
+            status: 'success',
+            groups: intent.groups.length,
+            hotspots: intent.riskHotspots.length,
+        });
         return intent;
     }
     catch (err) {
+        usage.emit({ type: 'stage_result', stage: 'intent', status: 'failed' });
         logger.warn({ err }, 'Intent pass failed, continuing without it');
         return null;
     }
@@ -54119,33 +54137,50 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
     const changedPaths = new Set(ctx.changedFiles.map((f) => f.filename));
     const limit = pLimit(config.pipeline.concurrency);
     const maxOutputTokens = reviewMaxOutputTokens(config);
-    return Promise.all(groups.map((group) => limit(async () => {
+    return Promise.all(groups.map((group, groupIndex) => limit(async () => {
         try {
             const relatedFiles = options.workspaceRoot
                 ? await collectRelatedContext(group, ctx.fileContents, options.workspaceRoot, config, changedPaths)
                 : new Map();
+            const messages = [
+                { role: 'system', content: systemPrompt },
+                {
+                    role: 'user',
+                    content: buildGroupUserPrompt({
+                        ctx,
+                        group,
+                        intent,
+                        relatedFiles,
+                        deltaHint: options.deltaHint,
+                    }),
+                },
+            ];
+            const startedAt = Date.now();
+            usage.startCall();
             const response = await llm.chatCompletion({
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    {
-                        role: 'user',
-                        content: buildGroupUserPrompt({
-                            ctx,
-                            group,
-                            intent,
-                            relatedFiles,
-                            deltaHint: options.deltaHint,
-                        }),
-                    },
-                ],
+                messages,
                 responseFormat: { type: 'json_object' },
                 maxTokens: maxOutputTokens,
                 temperature: reviewTemperature(config),
                 timeoutMs: config.pipeline.callTimeoutMs,
             });
-            usage.add(response.usage);
+            usage.add(response.usage, {
+                stage: 'group-review',
+                messages,
+                maxOutputTokens,
+                durationMs: Date.now() - startedAt,
+                groupIndex,
+                fileCount: group.files.length,
+                finishReason: response.finishReason,
+            });
             const parsed = parseGroupResponse(response.content);
             if (!parsed) {
+                usage.emit({
+                    type: 'stage_result',
+                    stage: 'group-review',
+                    status: 'failed',
+                    groupIndex,
+                });
                 const truncated = response.finishReason === 'length';
                 logger.warn({ group: group.label, truncated, maxOutputTokens }, truncated
                     ? 'Group review output truncated at the output-token cap; increase pipeline.maxOutputTokens'
@@ -54153,9 +54188,22 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
                 return { group, summary: '', findings: [], failed: true };
             }
             logger.info({ group: group.label, findings: parsed.findings.length }, 'Group review completed');
+            usage.emit({
+                type: 'stage_result',
+                stage: 'group-review',
+                status: 'success',
+                groupIndex,
+                findingsGenerated: parsed.findings.length,
+            });
             return { group, summary: parsed.groupSummary, findings: parsed.findings, failed: false };
         }
         catch (err) {
+            usage.emit({
+                type: 'stage_result',
+                stage: 'group-review',
+                status: 'failed',
+                groupIndex,
+            });
             logger.warn({ group: group.label, err }, 'Group review failed');
             return { group, summary: '', findings: [], failed: true };
         }
@@ -54253,29 +54301,38 @@ async function synthesize(llm, input, config, usage) {
     if (shouldCallLLM) {
         try {
             const ids = new Map(findings.map((f, i) => [`f${i + 1}`, f]));
+            const messages = [
+                { role: 'system', content: buildSynthesisSystemPrompt(config) },
+                {
+                    role: 'user',
+                    content: buildSynthesisUserPrompt({
+                        ctx,
+                        intent,
+                        groupSummaries: outcomes.map((o) => ({ label: o.group.label, summary: o.summary })),
+                        findings: [...ids.entries()].map(([id, f]) => ({
+                            id,
+                            line: `${id} | ${f.path}:${f.startLine}-${f.endLine} | ${f.severity} | ${(f.confidence ?? DEFAULT_CONFIDENCE).toFixed(2)} | ${f.title}`,
+                        })),
+                        failedGroupNote,
+                    }),
+                },
+            ];
+            const startedAt = Date.now();
+            usage.startCall();
             const response = await llm.chatCompletion({
-                messages: [
-                    { role: 'system', content: buildSynthesisSystemPrompt(config) },
-                    {
-                        role: 'user',
-                        content: buildSynthesisUserPrompt({
-                            ctx,
-                            intent,
-                            groupSummaries: outcomes.map((o) => ({ label: o.group.label, summary: o.summary })),
-                            findings: [...ids.entries()].map(([id, f]) => ({
-                                id,
-                                line: `${id} | ${f.path}:${f.startLine}-${f.endLine} | ${f.severity} | ${(f.confidence ?? DEFAULT_CONFIDENCE).toFixed(2)} | ${f.title}`,
-                            })),
-                            failedGroupNote,
-                        }),
-                    },
-                ],
+                messages,
                 responseFormat: { type: 'json_object' },
                 maxTokens: 4_096,
                 temperature: reviewTemperature(config),
                 timeoutMs: 90_000,
             });
-            usage.add(response.usage);
+            usage.add(response.usage, {
+                stage: 'synthesis',
+                messages,
+                maxOutputTokens: 4_096,
+                durationMs: Date.now() - startedAt,
+                finishReason: response.finishReason,
+            });
             const parsed = parseSynthesisResponse(response.content);
             if (parsed) {
                 summary = parsed.summary;
@@ -54305,9 +54362,20 @@ async function synthesize(llm, input, config, usage) {
                     logger.info({ dropped: toDrop.size }, 'Synthesis pruned findings');
                     annotations = findings.filter((f) => !toDrop.has(f));
                 }
+                usage.emit({
+                    type: 'stage_result',
+                    stage: 'synthesis',
+                    status: 'success',
+                    findingsGenerated: findings.length,
+                    findingsRetained: annotations.length,
+                });
+            }
+            else {
+                usage.emit({ type: 'stage_result', stage: 'synthesis', status: 'failed' });
             }
         }
         catch (err) {
+            usage.emit({ type: 'stage_result', stage: 'synthesis', status: 'failed' });
             logger.warn({ err }, 'Synthesis pass failed, using deterministic assembly');
         }
     }
@@ -54378,20 +54446,36 @@ class ReviewError extends Error {
  */
 async function runFastPath(llm, ctx, config, usage, deltaHint) {
     const maxOutputTokens = reviewMaxOutputTokens(config);
-    const response = await llm.chatCompletion({
-        messages: [
-            { role: 'system', content: buildFastPathSystemPrompt(config) },
-            { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
-        ],
+    const messages = [
+        { role: 'system', content: buildFastPathSystemPrompt(config) },
+        { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
+    ];
+    const startedAt = Date.now();
+    usage.startCall();
+    const response = await llm
+        .chatCompletion({
+        messages,
         responseFormat: { type: 'json_object' },
         maxTokens: maxOutputTokens,
         temperature: reviewTemperature(config),
         timeoutMs: config.pipeline.callTimeoutMs,
+    })
+        .catch((err) => {
+        usage.emit({ type: 'stage_result', stage: 'fast-path', status: 'failed' });
+        throw err;
     });
-    usage.add(response.usage);
+    usage.add(response.usage, {
+        stage: 'fast-path',
+        messages,
+        maxOutputTokens,
+        durationMs: Date.now() - startedAt,
+        fileCount: ctx.changedFiles.length,
+        finishReason: response.finishReason,
+    });
     const truncated = response.finishReason === 'length';
     const parsed = parseFastPathResponse(response.content);
     if (!parsed) {
+        usage.emit({ type: 'stage_result', stage: 'fast-path', status: 'failed' });
         throw new ReviewError(truncated
             ? `Review response was truncated at the output-token cap ` +
                 `(maxOutputTokens=${maxOutputTokens}) and could not be salvaged as JSON. ` +
@@ -54404,6 +54488,13 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
     }
     const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config);
     const stats = countBySeverity(annotations);
+    usage.emit({
+        type: 'stage_result',
+        stage: 'fast-path',
+        status: 'success',
+        findingsGenerated: parsed.findings.length,
+        findingsRetained: annotations.length,
+    });
     logger.info({ findings: parsed.findings.length, kept: annotations.length }, 'Fast-path review completed');
     return {
         summary: parsed.summary || 'Automated review completed.',
@@ -54418,15 +54509,62 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
 }
 
 ;// CONCATENATED MODULE: ./src/pipeline/usage.ts
+
+const SAFE_FINISH_REASONS = new Set([
+    'stop',
+    'length',
+    'content_filter',
+    'tool_calls',
+    'function_call',
+]);
+function safeFinishReason(value) {
+    if (value === undefined)
+        return undefined;
+    return SAFE_FINISH_REASONS.has(value)
+        ? value
+        : 'other';
+}
 /** Aggregates token usage and call counts across all pipeline LLM calls. */
 class UsageTracker {
+    telemetry;
     totals = { input: 0, output: 0, cached: 0 };
     callCount = 0;
-    add(usage) {
+    constructor(telemetry) {
+        this.telemetry = telemetry;
+    }
+    startCall() {
+        this.callCount++;
+    }
+    add(usage, call) {
         this.totals.input += usage.input;
         this.totals.output += usage.output;
         this.totals.cached += usage.cached;
-        this.callCount++;
+        if (call && this.telemetry) {
+            const finishReason = safeFinishReason(call.finishReason);
+            this.emit({
+                type: 'llm_call',
+                stage: call.stage,
+                ...(call.groupIndex === undefined ? {} : { groupIndex: call.groupIndex }),
+                ...(call.fileCount === undefined ? {} : { fileCount: call.fileCount }),
+                estimatedInputTokens: call.messages.reduce((total, message) => total + estimateTokens(message.content), 0),
+                inputTokens: usage.input,
+                outputTokens: usage.output,
+                cachedTokens: usage.cached,
+                maxOutputTokens: call.maxOutputTokens,
+                durationMs: Math.max(0, call.durationMs),
+                ...(finishReason === undefined ? {} : { finishReason }),
+            });
+        }
+    }
+    emit(event) {
+        try {
+            const result = this.telemetry?.(event);
+            if (result)
+                void Promise.resolve(result).catch(() => { });
+        }
+        catch {
+            // Observability must never affect review behavior.
+        }
     }
     total() {
         return { ...this.totals };
@@ -54788,7 +54926,7 @@ class ReviewOrchestrator {
         return lines.join('\n');
     }
     async runReview(prContext, deltaHint) {
-        const usage = new UsageTracker();
+        const usage = new UsageTracker(this.options.telemetry);
         const pipeline = this.config.pipeline;
         const totalTokens = prContext.changedFiles.reduce((sum, f) => sum + (f.patch ? estimateTokens(f.patch) : 0), 0) +
             [...prContext.fileContents.values()].reduce((sum, c) => sum + estimateTokens(c), 0);
@@ -55232,7 +55370,22 @@ function parseYaml(content) {
     return parsed;
 }
 
+;// CONCATENATED MODULE: ./action/telemetry.ts
+function telemetryFromActionInput(core) {
+    if (!core.getBooleanInput("telemetry"))
+        return undefined;
+    return (event) => {
+        try {
+            core.info(`[fiscalcr-telemetry] ${JSON.stringify(event)}`);
+        }
+        catch {
+            // Telemetry must never affect review behavior.
+        }
+    };
+}
+
 ;// CONCATENATED MODULE: ./action/index.ts
+
 
 
 
@@ -55311,12 +55464,24 @@ async function run() {
             userAgent: config.userAgent,
         });
         // Run review
-        const orchestrator = new ReviewOrchestrator(restOctokit, llm, config, { workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd() });
+        const telemetry = telemetryFromActionInput(core);
+        const orchestrator = new ReviewOrchestrator(restOctokit, llm, config, {
+            workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd(),
+            telemetry,
+        });
         const result = await orchestrator.reviewPullRequest({
             owner,
             repo,
             pullNumber,
             headSha,
+        });
+        telemetry?.({
+            type: "review_completed",
+            calls: result.callCount ?? 0,
+            inputTokens: result.tokensUsed.input,
+            outputTokens: result.tokensUsed.output,
+            cachedTokens: result.tokensUsed.cached,
+            annotations: result.annotations.length,
         });
         // Set outputs
         core.setOutput("review_summary", result.summary);

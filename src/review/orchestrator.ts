@@ -36,6 +36,7 @@ import {
 } from '../pipeline/pass3-synthesis.js';
 import { runFastPath } from '../pipeline/fast-path.js';
 import { UsageTracker } from '../pipeline/usage.js';
+import type { TelemetrySink } from '../pipeline/usage.js';
 import { calculateCost, estimateTokens } from '../utils/tokens.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -52,6 +53,8 @@ interface ReviewParams {
 export interface OrchestratorOptions {
   /** Local checkout root (Action mode). Enables disk reads instead of API fetches. */
   workspaceRoot?: string;
+  /** Optional metrics-only event sink. Prompt and repository content are never included. */
+  telemetry?: TelemetrySink;
 }
 
 function conclusionFor(
@@ -470,7 +473,7 @@ export class ReviewOrchestrator {
     prContext: PullRequestContext,
     deltaHint?: string,
   ): Promise<ReviewResult> {
-    const usage = new UsageTracker();
+    const usage = new UsageTracker(this.options.telemetry);
     const pipeline = this.config.pipeline;
 
     const totalTokens =

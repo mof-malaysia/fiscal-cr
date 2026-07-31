@@ -18,20 +18,30 @@ export async function runIntentPass(
   usage: UsageTracker,
 ): Promise<IntentResult | null> {
   try {
+    const messages = [
+      { role: 'system' as const, content: buildIntentSystemPrompt(config) },
+      { role: 'user' as const, content: buildIntentUserPrompt(ctx) },
+    ];
+    const startedAt = Date.now();
+    usage.startCall();
     const response = await llm.chatCompletion({
-      messages: [
-        { role: 'system', content: buildIntentSystemPrompt(config) },
-        { role: 'user', content: buildIntentUserPrompt(ctx) },
-      ],
+      messages,
       responseFormat: { type: 'json_object' },
       maxTokens: 2_048,
       temperature: reviewTemperature(config),
       timeoutMs: 60_000,
     });
-    usage.add(response.usage);
+    usage.add(response.usage, {
+      stage: 'intent',
+      messages,
+      maxOutputTokens: 2_048,
+      durationMs: Date.now() - startedAt,
+      finishReason: response.finishReason,
+    });
 
     const intent = parseIntentResponse(response.content);
     if (!intent) {
+      usage.emit({ type: 'stage_result', stage: 'intent', status: 'failed' });
       logger.warn('Intent pass returned unparseable output, continuing without it');
       return null;
     }
@@ -47,8 +57,16 @@ export async function runIntentPass(
       { groups: intent.groups.length, hotspots: intent.riskHotspots.length },
       'Intent pass completed',
     );
+    usage.emit({
+      type: 'stage_result',
+      stage: 'intent',
+      status: 'success',
+      groups: intent.groups.length,
+      hotspots: intent.riskHotspots.length,
+    });
     return intent;
   } catch (err) {
+    usage.emit({ type: 'stage_result', stage: 'intent', status: 'failed' });
     logger.warn({ err }, 'Intent pass failed, continuing without it');
     return null;
   }

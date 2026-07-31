@@ -43,36 +43,53 @@ export async function runReviewPass(
   const maxOutputTokens = reviewMaxOutputTokens(config);
 
   return Promise.all(
-    groups.map((group) =>
+    groups.map((group, groupIndex) =>
       limit(async (): Promise<GroupReviewOutcome> => {
         try {
           const relatedFiles = options.workspaceRoot
             ? await collectRelatedContext(group, ctx.fileContents, options.workspaceRoot, config, changedPaths)
             : new Map<string, string>();
 
+          const messages = [
+            { role: 'system' as const, content: systemPrompt },
+            {
+              role: 'user' as const,
+              content: buildGroupUserPrompt({
+                ctx,
+                group,
+                intent,
+                relatedFiles,
+                deltaHint: options.deltaHint,
+              }),
+            },
+          ];
+          const startedAt = Date.now();
+          usage.startCall();
           const response = await llm.chatCompletion({
-            messages: [
-              { role: 'system', content: systemPrompt },
-              {
-                role: 'user',
-                content: buildGroupUserPrompt({
-                  ctx,
-                  group,
-                  intent,
-                  relatedFiles,
-                  deltaHint: options.deltaHint,
-                }),
-              },
-            ],
+            messages,
             responseFormat: { type: 'json_object' },
             maxTokens: maxOutputTokens,
             temperature: reviewTemperature(config),
             timeoutMs: config.pipeline.callTimeoutMs,
           });
-          usage.add(response.usage);
+          usage.add(response.usage, {
+            stage: 'group-review',
+            messages,
+            maxOutputTokens,
+            durationMs: Date.now() - startedAt,
+            groupIndex,
+            fileCount: group.files.length,
+            finishReason: response.finishReason,
+          });
 
           const parsed = parseGroupResponse(response.content);
           if (!parsed) {
+            usage.emit({
+              type: 'stage_result',
+              stage: 'group-review',
+              status: 'failed',
+              groupIndex,
+            });
             const truncated = response.finishReason === 'length';
             logger.warn(
               { group: group.label, truncated, maxOutputTokens },
@@ -86,8 +103,21 @@ export async function runReviewPass(
             { group: group.label, findings: parsed.findings.length },
             'Group review completed',
           );
+          usage.emit({
+            type: 'stage_result',
+            stage: 'group-review',
+            status: 'success',
+            groupIndex,
+            findingsGenerated: parsed.findings.length,
+          });
           return { group, summary: parsed.groupSummary, findings: parsed.findings, failed: false };
         } catch (err) {
+          usage.emit({
+            type: 'stage_result',
+            stage: 'group-review',
+            status: 'failed',
+            groupIndex,
+          });
           logger.warn({ group: group.label, err }, 'Group review failed');
           return { group, summary: '', findings: [], failed: true };
         }
