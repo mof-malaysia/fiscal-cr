@@ -4,6 +4,7 @@ import { ReviewOrchestrator } from "../src/review/orchestrator.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
 import { calculateCost } from "../src/utils/tokens.js";
+import { telemetryFromActionInput } from "./telemetry.js";
 
 async function run(): Promise<void> {
   try {
@@ -92,17 +93,29 @@ async function run(): Promise<void> {
     });
 
     // Run review
+    const telemetry = telemetryFromActionInput(core);
     const orchestrator = new ReviewOrchestrator(
       restOctokit as any,
       llm,
       config,
-      { workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd() },
+      {
+        workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd(),
+        telemetry,
+      },
     );
     const result = await orchestrator.reviewPullRequest({
       owner,
       repo,
       pullNumber,
       headSha,
+    });
+    telemetry?.({
+      type: "review_completed",
+      calls: result.callCount ?? 0,
+      inputTokens: result.tokensUsed.input,
+      outputTokens: result.tokensUsed.output,
+      cachedTokens: result.tokensUsed.cached,
+      annotations: result.annotations.length,
     });
 
     // Set outputs

@@ -68,6 +68,7 @@ jobs:
 | `language`     | No       | Repo config or built-in default | Review language override                                          |
 | `fail_on`      | No       | Repo config or built-in default | `critical`, `warning`, or `never`                                 |
 | `config_path`  | No       | `.fiscalcr-review.yml`          | Path to config file relative to repo root                         |
+| `telemetry`    | No       | `false`                         | Emit metrics-only token telemetry to Action logs                  |
 
 ### Action outputs
 
@@ -84,6 +85,16 @@ jobs:
 - Repo config is loaded from `.fiscalcr-review.yml` by default.
 - Action inputs override repo config only when you explicitly provide them.
 - `openai-compatible` requires an explicit `base_url`.
+
+### Token telemetry
+
+Set `telemetry: true` to emit structured lines prefixed with
+`[fiscalcr-telemetry]` in the GitHub Actions log. Events contain token counts,
+pipeline stage, timing, output limits, and finding counts. They never contain
+prompts, source code, secrets, repository or pull request identifiers, or file
+paths. Telemetry is disabled by default and is not sent to an external service.
+`calls` counts pipeline-level LLM invocations; transparent provider retries are
+not counted separately.
 
 ### Endpoints that whitelist clients
 
