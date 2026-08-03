@@ -26,21 +26,37 @@ export async function runFastPath(
   deltaHint?: string,
 ): Promise<ReviewResult> {
   const maxOutputTokens = reviewMaxOutputTokens(config);
-  const response = await llm.chatCompletion({
-    messages: [
-      { role: 'system', content: buildFastPathSystemPrompt(config) },
-      { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
-    ],
-    responseFormat: { type: 'json_object' },
-    maxTokens: maxOutputTokens,
-    temperature: reviewTemperature(config),
-    timeoutMs: config.pipeline.callTimeoutMs,
+  const messages = [
+    { role: 'system' as const, content: buildFastPathSystemPrompt(config) },
+    { role: 'user' as const, content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
+  ];
+  const startedAt = Date.now();
+  usage.startCall();
+  const response = await llm
+    .chatCompletion({
+      messages,
+      responseFormat: { type: 'json_object' },
+      maxTokens: maxOutputTokens,
+      temperature: reviewTemperature(config),
+      timeoutMs: config.pipeline.callTimeoutMs,
+    })
+    .catch((err: unknown) => {
+      usage.emit({ type: 'stage_result', stage: 'fast-path', status: 'failed' });
+      throw err;
+    });
+  usage.add(response.usage, {
+    stage: 'fast-path',
+    messages,
+    maxOutputTokens,
+    durationMs: Date.now() - startedAt,
+    fileCount: ctx.changedFiles.length,
+    finishReason: response.finishReason,
   });
-  usage.add(response.usage);
 
   const truncated = response.finishReason === 'length';
   const parsed = parseFastPathResponse(response.content);
   if (!parsed) {
+    usage.emit({ type: 'stage_result', stage: 'fast-path', status: 'failed' });
     throw new ReviewError(
       truncated
         ? `Review response was truncated at the output-token cap ` +
@@ -60,6 +76,13 @@ export async function runFastPath(
 
   const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config);
   const stats = countBySeverity(annotations);
+  usage.emit({
+    type: 'stage_result',
+    stage: 'fast-path',
+    status: 'success',
+    findingsGenerated: parsed.findings.length,
+    findingsRetained: annotations.length,
+  });
 
   logger.info(
     { findings: parsed.findings.length, kept: annotations.length },

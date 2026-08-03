@@ -133,29 +133,38 @@ export async function synthesize(
   if (shouldCallLLM) {
     try {
       const ids = new Map(findings.map((f, i) => [`f${i + 1}`, f]));
+      const messages = [
+        { role: 'system' as const, content: buildSynthesisSystemPrompt(config) },
+        {
+          role: 'user' as const,
+          content: buildSynthesisUserPrompt({
+            ctx,
+            intent,
+            groupSummaries: outcomes.map((o) => ({ label: o.group.label, summary: o.summary })),
+            findings: [...ids.entries()].map(([id, f]) => ({
+              id,
+              line: `${id} | ${f.path}:${f.startLine}-${f.endLine} | ${f.severity} | ${(f.confidence ?? DEFAULT_CONFIDENCE).toFixed(2)} | ${f.title}`,
+            })),
+            failedGroupNote,
+          }),
+        },
+      ];
+      const startedAt = Date.now();
+      usage.startCall();
       const response = await llm.chatCompletion({
-        messages: [
-          { role: 'system', content: buildSynthesisSystemPrompt(config) },
-          {
-            role: 'user',
-            content: buildSynthesisUserPrompt({
-              ctx,
-              intent,
-              groupSummaries: outcomes.map((o) => ({ label: o.group.label, summary: o.summary })),
-              findings: [...ids.entries()].map(([id, f]) => ({
-                id,
-                line: `${id} | ${f.path}:${f.startLine}-${f.endLine} | ${f.severity} | ${(f.confidence ?? DEFAULT_CONFIDENCE).toFixed(2)} | ${f.title}`,
-              })),
-              failedGroupNote,
-            }),
-          },
-        ],
+        messages,
         responseFormat: { type: 'json_object' },
         maxTokens: 4_096,
         temperature: reviewTemperature(config),
         timeoutMs: 90_000,
       });
-      usage.add(response.usage);
+      usage.add(response.usage, {
+        stage: 'synthesis',
+        messages,
+        maxOutputTokens: 4_096,
+        durationMs: Date.now() - startedAt,
+        finishReason: response.finishReason,
+      });
 
       const parsed = parseSynthesisResponse(response.content);
       if (parsed) {
@@ -184,8 +193,18 @@ export async function synthesize(
           logger.info({ dropped: toDrop.size }, 'Synthesis pruned findings');
           annotations = findings.filter((f) => !toDrop.has(f));
         }
+        usage.emit({
+          type: 'stage_result',
+          stage: 'synthesis',
+          status: 'success',
+          findingsGenerated: findings.length,
+          findingsRetained: annotations.length,
+        });
+      } else {
+        usage.emit({ type: 'stage_result', stage: 'synthesis', status: 'failed' });
       }
     } catch (err) {
+      usage.emit({ type: 'stage_result', stage: 'synthesis', status: 'failed' });
       logger.warn({ err }, 'Synthesis pass failed, using deterministic assembly');
     }
   }

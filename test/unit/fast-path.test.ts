@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runFastPath } from '../../src/pipeline/fast-path.js';
-import { UsageTracker } from '../../src/pipeline/usage.js';
+import { UsageTracker, type TelemetryEvent } from '../../src/pipeline/usage.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import { ReviewError } from '../../src/utils/errors.js';
 import type { LLMCompletionResponse, LLMProvider } from '../../src/providers/interface.js';
@@ -74,5 +74,21 @@ describe('runFastPath', () => {
     expect(result.summary).toBe('looks good');
     expect(result.score).toBe(95);
     expect(result.annotations).toEqual([]);
+  });
+
+  it('records a failed attempted call when the provider rejects', async () => {
+    const error = new Error('provider unavailable');
+    const llm: LLMProvider = { chatCompletion: vi.fn(async () => Promise.reject(error)) };
+    const events: TelemetryEvent[] = [];
+    const usage = new UsageTracker((event) => {
+      events.push(event);
+    });
+
+    await expect(runFastPath(llm, context(), DEFAULT_CONFIG, usage)).rejects.toBe(error);
+
+    expect(usage.calls()).toBe(1);
+    expect(events).toEqual([
+      { type: 'stage_result', stage: 'fast-path', status: 'failed' },
+    ]);
   });
 });

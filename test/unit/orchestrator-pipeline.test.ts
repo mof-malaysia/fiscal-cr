@@ -3,6 +3,7 @@ import { ReviewOrchestrator } from '../../src/review/orchestrator.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import type { ReviewConfig } from '../../src/config/schema.js';
 import type { ChatCompletionParams } from '../../src/providers/interface.js';
+import type { TelemetryEvent } from '../../src/pipeline/usage.js';
 
 const PATCH = '@@ -1,2 +1,3 @@\n line one\n+line two\n+line three';
 
@@ -124,7 +125,10 @@ describe('ReviewOrchestrator pipeline routing', () => {
       },
     ]);
 
-    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg());
+    const telemetry: TelemetryEvent[] = [];
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg(), {
+      telemetry: (event) => telemetry.push(event),
+    });
     const result = await orchestrator.reviewPullRequest({
       owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha',
     });
@@ -134,6 +138,25 @@ describe('ReviewOrchestrator pipeline routing', () => {
     expect(result.intent).toBe('Small change');
     expect(result.walkthrough).toEqual([{ path: 'src/a.ts', summary: 'tweak' }]);
     expect(result.tokensUsed).toEqual({ input: 100, output: 50, cached: 10 });
+    expect(telemetry).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'llm_call',
+          stage: 'fast-path',
+          inputTokens: 100,
+          outputTokens: 50,
+          cachedTokens: 10,
+          fileCount: 1,
+        }),
+        expect.objectContaining({
+          type: 'stage_result',
+          stage: 'fast-path',
+          status: 'success',
+          findingsGenerated: 0,
+          findingsRetained: 0,
+        }),
+      ]),
+    );
   });
 
   it('large PR runs intent + N groups + synthesis and aggregates usage', async () => {

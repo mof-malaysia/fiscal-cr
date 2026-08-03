@@ -2,6 +2,7 @@ import type { Octokit } from '@octokit/rest';
 import type { ReviewConfig } from '../config/schema.js';
 import type { ReviewResult } from '../types/review.js';
 import type { LLMProvider } from '../providers/interface.js';
+import type { TelemetrySink } from '../pipeline/usage.js';
 interface ReviewParams {
     owner: string;
     repo: string;
@@ -13,6 +14,8 @@ interface ReviewParams {
 export interface OrchestratorOptions {
     /** Local checkout root (Action mode). Enables disk reads instead of API fetches. */
     workspaceRoot?: string;
+    /** Optional metrics-only event sink. Prompt and repository content are never included. */
+    telemetry?: TelemetrySink;
 }
 export declare class ReviewOrchestrator {
     private octokit;
