@@ -5,6 +5,7 @@ import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
 import { calculateCost } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
+import { experimentalFromActionInput } from "./experimental.js";
 
 async function run(): Promise<void> {
   try {
@@ -20,6 +21,7 @@ async function run(): Promise<void> {
     const baseUrlInput = core.getInput("base_url") || undefined;
     const userAgentInput = core.getInput("user_agent") || undefined;
     const languageInput = core.getInput("language") || undefined;
+    const experimentalInput = experimentalFromActionInput(core);
     const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
     const failOnInput = (core.getInput("fail_on") || undefined) as
       | "critical"
@@ -64,6 +66,9 @@ async function run(): Promise<void> {
     }
     if (userAgentInput) {
       config.userAgent = userAgentInput;
+    }
+    if (experimentalInput !== undefined) {
+      config.experimental = experimentalInput;
     }
 
     // Honor auto-review settings (previously App-mode only)

@@ -69,6 +69,7 @@ jobs:
 | `fail_on`      | No       | Repo config or built-in default | `critical`, `warning`, or `never`                                 |
 | `config_path`  | No       | `.fiscalcr-review.yml`          | Path to config file relative to repo root                         |
 | `telemetry`    | No       | `false`                         | Emit metrics-only token telemetry to Action logs                  |
+| `experimental` | No       | Repo config or `false`          | Enable experimental prompt optimizations                          |
 
 ### Action outputs
 
@@ -95,6 +96,12 @@ prompts, source code, secrets, repository or pull request identifiers, or file
 paths. Telemetry is disabled by default and is not sent to an external service.
 `calls` counts pipeline-level LLM invocations; transparent provider retries are
 not counted separately.
+
+### Experimental features
+
+Set `experimental: true` in `.fiscalcr-review.yml`, or pass the explicit Action
+input, to enable experimental prompt optimizations. These optimizations may
+change between releases. The default is `false`, preserving stable prompts.
 
 ### Endpoints that whitelist clients
 
@@ -169,6 +176,7 @@ provider: openai-compatible
 model: kimi-for-coding-highspeed
 baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
+experimental: false # opt in to prompt optimizations that may change between releases
 
 review:
   auto:
@@ -334,6 +342,28 @@ pnpm test
 pnpm lint
 pnpm build:action
 ```
+
+## Local LLM evaluation
+
+Run the real provider and fast-path code against a deterministic gold benchmark
+suite — no GitHub API or repository needed. Each case is a synthetic PR with
+hand-authored expected issues; every case runs once as baseline and once as
+experimental per round.
+
+Prerequisite: put your provider API key in a root `.env` (never commit it). The
+harness reads `API_KEY` (falling back to `FISCALCR_API_KEY`, then `KIMI_API_KEY`)
+from the environment only and never logs it.
+
+```bash
+make eval-llm-dry        # keyless plan preview and prompt stats
+make eval-llm            # smoke: 3 cases × 1 run × 2 variants = 6 calls
+make eval-llm-full       # full: 10 cases × 1 run × 2 variants = 20 calls
+EVAL_CASES=clean-01,local-01 make eval-llm   # focused: 2 cases × 2 variants = 4 calls
+```
+
+Calls are billable. Set `EVAL_MAX_CALLS` to raise the budget guard; a 10-case ×
+4-run decision run needs `EVAL_MAX_CALLS=80`. See [docs/llm-evaluation.md](docs/llm-evaluation.md)
+for suite taxonomy, metrics, blind review workflow, and configuration reference.
 
 ## Severity levels
 

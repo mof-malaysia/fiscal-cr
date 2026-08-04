@@ -297,6 +297,18 @@ export function buildSynthesisUserPrompt(input: SynthesisPromptInput): string {
 // Fast path: single combined call
 
 export function buildFastPathSystemPrompt(config: ReviewConfig): string {
+  const concisionRules = config.experimental
+    ? `
+
+## Concision Rules
+- Return compact JSON only. Do not narrate the schema, response process, validation, or field completeness.
+- Keep intent to at most 40 words.
+- Keep summary to at most 80 words. Lead with the highest-severity issue, or the overall verdict when there are no findings.
+- Keep each walkthrough summary to at most 20 words.
+- Keep each finding body to at most 80 words: state the problem, impact, and concrete fix without repetition or hedging.
+- Preserve JSON keys, code, symbols, paths, line numbers, and suggested fixes exactly. Do not use caveman grammar in user-facing text.`
+    : '';
+
   return `${sharedReviewerPreamble(config)}
 
 ## Output Format
@@ -307,7 +319,7 @@ Respond with a single JSON object:
   "score": "number 0-100 (90-100 excellent, 70-89 good, 50-69 needs improvement, <50 significant issues)",
   "walkthrough": [{ "path": "file path", "summary": "one line: what changed in this file" }],
   "findings": [${FINDING_SCHEMA}]
-}
+}${concisionRules}
 
 ## Line Number Rules
 - Only report findings on lines that are added or modified in the diff.

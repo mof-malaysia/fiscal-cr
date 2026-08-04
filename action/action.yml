@@ -40,6 +40,9 @@ inputs:
     description: 'Emit metrics-only token telemetry to Action logs'
     required: false
     default: 'false'
+  experimental:
+    description: 'Enable experimental prompt optimizations (overrides repo config when provided)'
+    required: false
 
 outputs:
   review_summary:

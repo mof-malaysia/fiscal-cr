@@ -6,7 +6,7 @@ describe('loadConfig', () => {
   it('loads a config from a custom path', async () => {
     const getContent = vi.fn().mockResolvedValue({
       data: {
-        content: Buffer.from('language: ja\nprovider: openai-compatible\nmodel: gpt-4.1-mini\n', 'utf8').toString('base64'),
+        content: Buffer.from('language: ja\nprovider: openai-compatible\nmodel: gpt-4.1-mini\nexperimental: true\n', 'utf8').toString('base64'),
         encoding: 'base64',
       },
     });
@@ -26,6 +26,7 @@ describe('loadConfig', () => {
     });
     expect(config.language).toBe('ja');
     expect(config.provider).toBe('openai-compatible');
+    expect(config.experimental).toBe(true);
   });
 
   it('falls back to defaults when the config file is missing', async () => {

@@ -34,6 +34,8 @@ export const reviewConfigSchema = z.object({
   userAgent: z.string().max(200).optional(),
   /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
   temperature: z.number().min(0).max(2).optional(),
+  /** Enables opt-in prompt optimizations that may change between releases. */
+  experimental: z.boolean().default(false),
 
   review: z
     .object({
