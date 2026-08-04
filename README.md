@@ -343,6 +343,74 @@ pnpm lint
 pnpm build:action
 ```
 
+## Local LLM evaluation
+
+A local harness exercises the real provider, fast-path, and usage-tracking code
+against a deterministic synthetic PR — no GitHub API, repository, or pull
+request involved.
+
+```bash
+# Keyless, no network: builds both system/user prompts and reports prompt sizes
+make eval-llm-dry
+
+# Live: two billable LLM calls (experimental=false, then experimental=true)
+read -rsp "API key: " API_KEY; echo
+export API_KEY
+make eval-llm
+```
+
+Secure usage:
+
+- Export the key in your shell; never paste it into chat, commit it, or pass it
+  on the command line. The harness reads `API_KEY` (fallbacks
+  `FISCALCR_API_KEY`, then `KIMI_API_KEY`) from the environment only and never
+  prints or logs it.
+- A root `.env` is auto-loaded when present, so `make eval-llm` needs no manual
+  exports. Already-exported variables win over `.env`. `.env` is gitignored —
+  never commit it, and the harness never reads, prints, or logs its values.
+- `make eval-llm` makes exactly **two billable calls** against the same
+  synthetic PR (baseline, then experimental mode) and reports per-run duration,
+  token usage (input/output/cached), call count, score, finding count, intent,
+  summary, walkthrough, and findings, plus a compact token/duration delta.
+- `make eval-llm-dry` makes **zero calls** — it builds the prompts and prints
+  character counts, estimated tokens, and whether the Concision Rules block is
+  present. It may load `.env` but never prints credentials or endpoint details.
+
+Environment variables:
+
+| Variable             | Default            | Notes                                             |
+| -------------------- | ------------------ | ------------------------------------------------- |
+| `API_KEY`            | — (live only)      | Falls back to `FISCALCR_API_KEY`, then `KIMI_API_KEY` |
+| `MODEL_PROVIDER`     | `kimi`             | `kimi` or `openai-compatible`                     |
+| `MODEL`              | `kimi-for-coding`  | Falls back to `KIMI_MODEL`, then the default      |
+| `KIMI_MODEL`         | `kimi-for-coding`  | Kimi model override, e.g. `kimi-k2.5`             |
+| `BASE_URL`           | provider default   | Falls back to `FISCALCR_BASE_URL`                 |
+| `LLM_USER_AGENT`     | —                  | Optional custom User-Agent for whitelisting       |
+
+Examples:
+
+```bash
+export API_KEY=sk-...
+export MODEL_PROVIDER=openai-compatible
+export MODEL=gpt-4.1-mini
+export BASE_URL=https://api.openai.com/v1
+make eval-llm
+```
+
+Or drop the same variables in a root `.env` (exported env still wins) and run
+bare:
+
+```bash
+make eval-llm
+make eval-llm-dry   # still zero calls — the key is read but never sent
+```
+
+```bash
+export MODEL_PROVIDER=kimi
+export MODEL=kimi-for-coding
+make eval-llm-dry   # zero calls — no key required
+```
+
 ## Severity levels
 
 | Level        | Meaning               | Example                                      |
