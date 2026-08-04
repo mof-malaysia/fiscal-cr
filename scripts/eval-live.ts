@@ -1,72 +1,50 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { createLLMProvider } from '../src/providers/factory.js';
-import { runFastPath } from '../src/pipeline/fast-path.js';
-import { UsageTracker } from '../src/pipeline/usage.js';
-import type { PullRequestContext, ReviewResult } from '../src/types/review.js';
 import {
-  buildPromptReport,
-  evalReviewConfig,
+  assertCallBudget,
+  buildEvalPlan,
+  checkCallBudget,
+  resolveEvalSelection,
+  type BudgetCheck,
+  type EvalPlan,
+  type EvalSelection,
+} from './eval-plan.js';
+import { SUITE_ID, SUITE_VERSION } from './eval-cases.js';
+import {
+  assertArtifactSafe,
+  buildBenchmarkArtifact,
+  buildBenchmarkResult,
+  type AggregateQualitySummary,
+  type BenchmarkArtifactV2,
+  type ExecutionAggregate,
+  type PairsSummary,
+  type RegressionReport,
+  type VariantLabel,
+  type VariantPerformanceAggregate,
+  type VariantReliabilityAggregate,
+} from './eval-benchmark.js';
+import {
+  buildSuitePromptMetadata,
+  executePlan,
+  gitRepoMetadata,
+  DEFAULT_CALL_TIMEOUT_MS,
+  DEFAULT_RETRIES,
+  type SuitePromptMetadata,
+} from './eval-runtime.js';
+import {
   formatDuration,
   requireApiKey,
   resolveEvalEnv,
   type EvalEnvConfig,
-  type PromptReport,
 } from './eval-helpers.js';
-import { wrapCapturingProvider } from './eval-capture.js';
+import type { Attempt, CompletedAttempt } from './eval-benchmark.js';
 import {
-  aggregateRuns,
-  buildArtifact,
-  buildRunMetrics,
-  captureFromResponse,
-  computeDelta,
-  mean,
-  pairRunOrder,
-  resolveEvalRuns,
-  type BenchmarkDelta,
-  type CapturedCall,
-  type RunMetrics,
-  type VariantAggregate,
-  type VariantLabel,
-} from './eval-metrics.js';
-import { buildSyntheticContext } from './eval-fixture.js';
+  buildBlindKey,
+  buildBlindPairsFromAttempts,
+  buildBlindReport,
+} from './eval-blind-report.js';
 
 const RESULT_DIR = '.eval-results';
-const FIXTURE_NAME = 'synthetic-review-pr';
-const FIXTURE_VERSION = 1;
-
-interface RunOutcome {
-  metrics: RunMetrics;
-  result: ReviewResult;
-}
-
-function sourceOf(env: NodeJS.ProcessEnv, key: string): string {
-  return env[key] ? `env ${key}` : 'default';
-}
-
-function modelSource(env: NodeJS.ProcessEnv): string {
-  if (env.MODEL) return 'env MODEL';
-  if (env.KIMI_MODEL) return 'env KIMI_MODEL';
-  return 'default';
-}
-
-function header(
-  env: NodeJS.ProcessEnv,
-  cfg: EvalEnvConfig,
-  runs: number,
-  totalCalls: number,
-  changedFileCount: number,
-): string {
-  const lines = [
-    'FiscalCR LLM eval harness (local)',
-    `  provider: ${cfg.provider} (${sourceOf(env, 'MODEL_PROVIDER')})`,
-    `  model:    ${cfg.model} (${modelSource(env)})`,
-    `  fixture:  ${FIXTURE_NAME} (${changedFileCount} changed files)`,
-    `  runs:     ${runs} A/B pair(s) = ${totalCalls} planned calls`,
-    `  order:    alternates per pair (baseline→experimental, experimental→baseline)`,
-  ];
-  return lines.join('\n');
-}
 
 // ---------------------------------------------------------------------------
 // Terminal styling — disabled when NO_COLOR is set or stdout is not a TTY.
@@ -80,7 +58,6 @@ const bold = (s: string) => color(1, s);
 const red = (s: string) => color(31, s);
 const green = (s: string) => color(32, s);
 const yellow = (s: string) => color(33, s);
-const cyan = (s: string) => color(36, s);
 
 function lpad(s: string, n: number): string {
   return s.length >= n ? s : ' '.repeat(n - s.length) + s;
@@ -97,16 +74,6 @@ function pct(v: number): string {
   return `${(v * 100).toFixed(0)}%`;
 }
 
-function signedNumber(n: number): string {
-  return n > 0 ? `+${n}` : `${n}`;
-}
-
-function signedDurationMs(ms: number): string {
-  const sign = ms > 0 ? '+' : ms < 0 ? '-' : '';
-  const abs = Math.abs(ms);
-  return `${sign}${formatDuration(abs)}`;
-}
-
 function fmtNum(n: number, digits = 1): string {
   const fixed = n.toFixed(digits);
   const [intPart, decPart] = fixed.split('.');
@@ -114,158 +81,235 @@ function fmtNum(n: number, digits = 1): string {
   return decPart ? `${formattedInt}.${decPart}` : formattedInt;
 }
 
-// ---------------------------------------------------------------------------
-// Per-run execution
+function signedNumber(n: number): string {
+  return n > 0 ? `+${n}` : `${n}`;
+}
 
-async function runOnce(
-  cfg: EvalEnvConfig,
-  apiKey: string,
-  ctx: PullRequestContext,
-  experimental: boolean,
-  pairIndex: number,
-  runIndex: number,
-): Promise<RunOutcome> {
-  const config = evalReviewConfig(cfg, experimental);
-  const captures: CapturedCall[] = [];
-  const provider = wrapCapturingProvider(
-    createLLMProvider({
-      apiKey,
-      model: config.model,
-      baseUrl: config.baseUrl,
-      provider: config.provider,
-      userAgent: config.userAgent,
-      retry: { maxRetries: 0 },
-    }),
-    (info) => {
-      const capture = captureFromResponse(info.response, info.order, info.durationMs);
-      captures.push(capture);
-    },
-  );
-  const usage = new UsageTracker();
-  const startedAt = Date.now();
+function fmtPctNullable(v: number | null): string {
+  return v === null ? 'unavailable' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+}
+
+// ---------------------------------------------------------------------------
+// Env provenance (which source supplied provider/model — for transparency)
+
+function sourceOf(env: NodeJS.ProcessEnv, key: string): string {
+  return env[key] ? `env ${key}` : 'default';
+}
+
+function modelSource(env: NodeJS.ProcessEnv): string {
+  if (env.MODEL) return 'env MODEL';
+  if (env.KIMI_MODEL) return 'env KIMI_MODEL';
+  return 'default';
+}
+
+// ---------------------------------------------------------------------------
+// Header + dry-run output
+
+function header(env: NodeJS.ProcessEnv, cfg: EvalEnvConfig, selection: EvalSelection, plan: EvalPlan): string {
+  const suiteLabel = selection.explicit
+    ? `override (EVAL_CASES: ${selection.caseIds.join(', ')})`
+    : `${selection.suite} (${selection.caseIds.length} cases)`;
+  return [
+    'FiscalCR LLM eval harness (local) — fiscalcr-eval-v2',
+    `  provider: ${cfg.provider} (${sourceOf(env, 'MODEL_PROVIDER')})`,
+    `  model:    ${cfg.model} (${modelSource(env)})`,
+    `  suite:    ${suiteLabel}`,
+    `  cases:    ${selection.caseIds.join(', ')}`,
+    `  seed:     ${selection.seed}`,
+    `  rounds:   ${selection.runs} round(s) per case`,
+    `  plan:     ${plan.plannedCalls} calls (${selection.caseIds.length} cases × ${selection.runs} × 2 variants)`,
+  ].join('\n');
+}
+
+function printDryBudget(budget: BudgetCheck): void {
+  const status = budget.exceeded
+    ? red(`EXCEEDS EVAL_MAX_CALLS=${budget.max} — live would fail; raise the guard, e.g. EVAL_MAX_CALLS=${budget.planned}`)
+    : green(`ok (≤ EVAL_MAX_CALLS=${budget.max})`);
+  console.log(`\nBudget: ${budget.planned} planned calls ${status}`);
+}
+
+function printSuitePrompts(experimental: boolean, info: SuitePromptMetadata): void {
   const label = experimental ? 'experimental' : 'baseline';
+  const s = info.stats;
+  console.log(`Prompts (${label}) — suite-level across ${s.cases} selected case(s)`);
+  console.log(`  total:  ${fmt(s.totalChars)} chars  (~${fmt(s.totalEstimatedTokens)} est. tokens)`);
+  console.log(`  range:  ${fmt(s.minChars)} – ${fmt(s.maxChars)} chars per case`);
+  console.log(`  sha256: ${info.metadata.sha256.slice(0, 16)}… (${info.metadata.sha256.length} hex)`);
+  console.log();
+}
 
-  console.log(
-    `[pair ${pairIndex + 1}] ${label}  start  (timeout ${formatDuration(config.pipeline.callTimeoutMs)}, retries 0)`,
-  );
-  const heartbeat = setInterval(() => {
+// ---------------------------------------------------------------------------
+// Per-attempt console output
+
+function printAttempt(attempt: Attempt, callNumber: number, totalCalls: number): void {
+  const tag = `[${callNumber}/${totalCalls}][${attempt.case.caseId} r${attempt.identity.roundIndex}] ${rpad(attempt.identity.variant, 12)}`;
+  if (attempt.status === 'failed') {
     console.log(
-      `[pair ${pairIndex + 1}] ${label}  wait   ${formatDuration(Date.now() - startedAt)}`,
+      `${tag} ${red('FAIL')}  (${attempt.error.code}) ${attempt.error.message}  [${formatDuration(attempt.durationMs)}]`,
     );
-  }, 15_000);
-
-  try {
-    const result = await runFastPath(provider, ctx, config, usage);
-    const durationMs = Date.now() - startedAt;
-    console.log(`[pair ${pairIndex + 1}] ${label}  done   ${formatDuration(durationMs)}`);
-    const metrics = buildRunMetrics({
-      experimental,
-      pairIndex,
-      runIndex,
-      durationMs,
-      tokens: usage.total(),
-      calls: usage.calls(),
-      captures,
-      result,
-      changedFilePaths: ctx.changedFiles.map((f) => f.filename),
-    });
-    return { metrics, result };
-  } finally {
-    clearInterval(heartbeat);
+    return;
   }
+  const m = attempt.metrics;
+  const q = attempt.quality.postGate;
+  const parseStr = m.parseSuccess ? green('ok') : red('FAIL');
+  const contractStr = m.contractComplete ? green('ok') : yellow('INCOMPLETE');
+  const fmtStr = m.conciseCompliant ? green('yes') : red('NO');
+  console.log(
+    `${tag} ${lpad(formatDuration(m.durationMs), 6)}  ` +
+      `parse:${parseStr} contract:${contractStr} fmt:${fmtStr}  ` +
+      `retained ${m.retainedFindings}/${q.goldIssues} gold  ` +
+      `TP ${q.tp} FP ${q.fp} FN ${q.fn}  F1 ${q.f1.toFixed(2)}  ` +
+      `out=${fmt(m.outputTokens)} ch=${fmt(m.rawChars)}`,
+  );
 }
 
-// ---------------------------------------------------------------------------
-// Per-run output
-
-function printOutcome(metrics: RunMetrics, runNumber: number, totalCalls: number): void {
-  const label = metrics.experimental ? 'experimental' : 'baseline';
-  const parseStr = metrics.parseSuccess ? green('ok') : red('FAIL');
-  const contractStr = metrics.contractComplete ? green('ok') : yellow('INCOMPLETE');
-  const conciseStr = metrics.conciseCompliant ? green('yes') : red('NO');
-
-  const parts: string[] = [
-    `[${runNumber}/${totalCalls}] ${rpad(label, 12)} ${lpad(formatDuration(metrics.durationMs), 6)}`,
-    `parse:${parseStr}`,
-    `contract:${contractStr}`,
-    `findings:${metrics.retainedFindings}/${metrics.generatedFindings}`,
-    `score:${metrics.score}`,
-    `concise:${conciseStr}`,
-    `out=${fmt(metrics.outputTokens)}`,
-    `tot=${fmt(metrics.totalTokens)}`,
-  ];
-
-  if (metrics.finishReason && metrics.finishReason !== 'stop') {
-    parts.push(`(finish:${metrics.finishReason})`);
-  }
-  if (metrics.zeroFindingsKind) {
-    parts.push(`zero:${metrics.zeroFindingsKind}`);
-  }
-
-  console.log(parts.join(' '));
-}
-
-// ---------------------------------------------------------------------------
-// Aggregate output
-
-function printVariantAggregate(a: VariantAggregate): void {
-  const title = a.variant === 'baseline' ? 'Baseline' : 'Experimental';
-  console.log(`=== ${title} (n=${a.runs}) ===`);
-  console.log(`  success      ${pct(a.successRate)}`);
-  console.log(`  parse        ${pct(a.parseRate)}`);
-  console.log(`  contract     ${pct(a.contractRate)}`);
-  console.log(`  concise      ${pct(a.conciseComplianceRate)}`);
+function printPairProgress(info: {
+  pairNumber: number;
+  totalPairs: number;
+  pairId: string;
+  caseId: string;
+  roundIndex: number;
+  order: readonly string[];
+  completed: number;
+  failed: number;
+  complete: boolean;
+}): void {
+  const order = info.order.join(' → ');
+  const state = info.complete
+    ? green(`complete`)
+    : yellow(`partial (${info.completed} completed, ${info.failed} failed)`);
   console.log(
-    `  duration  mean ${lpad(formatDuration(a.meanDurationMs), 8)}   median ${lpad(formatDuration(a.medianDurationMs), 8)}`,
-  );
-  console.log(
-    `  input     mean ${lpad(fmt(a.meanInputTokens), 8)}   median ${lpad(fmt(a.medianInputTokens), 8)}`,
-  );
-  console.log(
-    `  output    mean ${lpad(fmt(a.meanOutputTokens), 8)}   median ${lpad(fmt(a.medianOutputTokens), 8)}`,
-  );
-  console.log(
-    `  total     mean ${lpad(fmt(a.meanTotalTokens), 8)}   median ${lpad(fmt(a.medianTotalTokens), 8)}`,
-  );
-  console.log(
-    `  findings  mean ${lpad(fmtNum(a.meanFindings), 8)}   median ${lpad(fmtNum(a.medianFindings), 8)}`,
-  );
-  console.log(
-    `  score     mean ${lpad(fmtNum(a.meanScore), 8)}   median ${lpad(fmtNum(a.medianScore), 8)}`,
+    `Pair ${info.pairNumber}/${info.totalPairs} [${info.pairId}] ${order}  ${state}`,
   );
   console.log();
 }
 
-function printAggregates(aggregates: Record<VariantLabel, VariantAggregate>): void {
-  printVariantAggregate(aggregates.baseline);
-  printVariantAggregate(aggregates.experimental);
+// ---------------------------------------------------------------------------
+// Final report blocks
+
+function printExecution(e: ExecutionAggregate): void {
+  console.log(bold('\n=== Execution ==='));
+  console.log(
+    `  planned ${e.planned} · completed ${e.completed} · failed ${e.failed} · completion ${pct(e.completionRate)}`,
+  );
+  console.log(
+    `  baseline ${e.byVariant.baseline.completed}/${e.byVariant.baseline.planned} · ` +
+      `experimental ${e.byVariant.experimental.completed}/${e.byVariant.experimental.planned}`,
+  );
 }
 
-function printDelta(delta: BenchmarkDelta): void {
-  console.log('=== Delta (experimental - baseline) ===');
-  const savings = delta.outputSavingsPct;
-  let savingsLine: string;
-  if (savings === null) {
-    savingsLine = 'n/a';
+function printQuality(quality: Record<VariantLabel, AggregateQualitySummary | null>): void {
+  console.log(bold('\n=== Post-gate quality: baseline vs experimental ==='));
+  for (const variant of ['baseline', 'experimental'] as const) {
+    const q = quality[variant];
+    if (q === null) {
+      console.log(`  ${rpad(variant, 12)} unavailable (no completed runs)`);
+      continue;
+    }
+    console.log(
+      `  ${rpad(variant, 12)} n=${q.runs}  ` +
+        `micro P/R/F1 ${fmtNum(q.micro.precision)}/${fmtNum(q.micro.recall)}/${fmtNum(q.micro.f1)}  ` +
+        `macro F1 ${fmtNum(q.macro.f1)}  ` +
+        `clean FP rate ${pct(q.cleanRate)}  severe FP ${q.severeFalsePositives}  dup ${q.duplicates}  ` +
+        `TP/1k out ${q.tpPer1000Tokens === null ? 'unavailable' : fmtNum(q.tpPer1000Tokens, 2)}`,
+    );
+  }
+}
+
+function printReliability(
+  reliability: Record<VariantLabel, VariantReliabilityAggregate | null>,
+  performance: Record<VariantLabel, VariantPerformanceAggregate | null>,
+): void {
+  console.log(bold('\n=== Reliability / efficiency (completed runs) ==='));
+  for (const variant of ['baseline', 'experimental'] as const) {
+    const rel = reliability[variant];
+    const perf = performance[variant];
+    if (rel === null || perf === null) {
+      console.log(`  ${rpad(variant, 12)} unavailable (no completed runs)`);
+      continue;
+    }
+    console.log(
+      `  ${rpad(variant, 12)} n=${rel.completed}  ` +
+        `parse ${pct(rel.parseRate)}  contract ${pct(rel.contractRate)}  ` +
+        `format-length ${pct(rel.formatLengthComplianceRate)}  ` +
+        `median out ${fmt(perf.medianOutputTokens)} tok  raw ${fmt(perf.medianRawChars)} ch  ` +
+        `${formatDuration(perf.medianDurationMs)}`,
+    );
+  }
+}
+
+function printPairs(pairs: PairsSummary): void {
+  console.log(bold('\n=== Paired deltas (complete pairs only) ==='));
+  if (pairs.completePairs === 0) {
+    console.log(
+      yellow(
+        `  No complete pairs (${pairs.incompletePairs} incomplete) — insufficient data for paired deltas.`,
+      ),
+    );
+    return;
+  }
+  const a = pairs.aggregate!;
+  console.log(`  complete pairs ${pairs.completePairs} · incomplete ${pairs.incompletePairs}`);
+  console.log(`  output savings     ${fmtPctNullable(a.outputSavingsPct.mean)}  (median ${fmtPctNullable(a.outputSavingsPct.median)})`);
+  console.log(`  raw-char savings   ${fmtPctNullable(a.rawCharsSavingsPct.mean)}  (median ${fmtPctNullable(a.rawCharsSavingsPct.median)})`);
+  console.log(
+    `  post-gate Δ (exp − base): F1 ${signedNumber(a.postGateF1Delta.mean)}  ` +
+      `TP ${signedNumber(a.postGateTpDelta.mean)}  FP ${signedNumber(a.postGateFpDelta.mean)}`,
+  );
+}
+
+function printRegressions(regressions: RegressionReport[]): void {
+  console.log(bold('\n=== Regression report ==='));
+  const r = regressions[0];
+  if (!r) {
+    console.log('  unavailable');
+    return;
+  }
+  if (r.status === 'insufficient-data') {
+    console.log(
+      `  runs=${r.runs} < 4 — ${yellow('insufficient data')}. Directional only; ` +
+        `rerun with EVAL_RUNS>=4 (10×4 decision run = 80 calls, needs EVAL_MAX_CALLS=80).`,
+    );
+    return;
+  }
+  const verdict =
+    r.status === 'detected'
+      ? red('LARGE REGRESSION DETECTED')
+      : green('no large regression');
+  console.log(
+    `  ${verdict} (${r.metric}: baseline ${fmtNum(r.baseline ?? 0)} → experimental ${fmtNum(r.experimental ?? 0)}; ` +
+      `thresholds ${r.baselineThreshold} / ${r.experimentalThreshold})`,
+  );
+}
+
+function printHeadline(regressions: RegressionReport[], completePairs: number): void {
+  console.log(bold('\n=== Verdict ==='));
+  if (completePairs === 0) {
+    console.log(yellow('  No complete pairs — no verdict possible.'));
+    return;
+  }
+  const r = regressions[0];
+  if (!r || r.status === 'insufficient-data') {
+    const runs = r?.runs ?? 0;
+    console.log(
+      yellow(`  runs=${runs} < 4 — evidence is directional only. `) +
+        'Do not claim a winner from this run.',
+    );
+    return;
+  }
+  if (r.status === 'detected') {
+    console.log(red(`  ${r.metric}: baseline ${fmtNum(r.baseline ?? 0)} → experimental ${fmtNum(r.experimental ?? 0)}`));
+    console.log(red('  Large regression detected against thresholds.'));
   } else {
-    const sign = savings >= 0 ? '+' : '';
-    const note =
-      savings > 0 ? '(experimental lower)' : savings < 0 ? '(experimental higher)' : '(same)';
-    savingsLine = `${sign}${savings.toFixed(1)}% ${note}`;
+    console.log(
+      `  ${r.metric}: baseline ${fmtNum(r.baseline ?? 0)} → experimental ${fmtNum(r.experimental ?? 0)} — ` +
+        green('no large regression against thresholds.'),
+    );
   }
-  console.log(`  output savings  ${savingsLine}`);
-  console.log(`  duration        ${signedDurationMs(delta.durationDeltaMs)}`);
-  console.log(`  input           ${signedNumber(delta.inputDeltaTokens)} tokens`);
-  console.log(`  output          ${signedNumber(delta.outputDeltaTokens)} tokens`);
-  console.log(`  total           ${signedNumber(delta.totalDeltaTokens)} tokens`);
-  console.log(`  findings        ${signedNumber(delta.findingsDelta)}`);
-  console.log(`  score           ${signedNumber(delta.scoreDelta)}`);
-  console.log(`  concise         ${signedNumber(delta.conciseComplianceDeltaPp)} pp`);
-  console.log();
 }
 
 // ---------------------------------------------------------------------------
-// Artifact + summary
+// Artifact (v2, secret-safe)
 
 function artifactFileName(ts: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
@@ -275,77 +319,11 @@ function artifactFileName(ts: Date): string {
   );
 }
 
-async function writeArtifact(artifact: Parameters<typeof buildArtifact>[0]): Promise<string> {
+async function writeArtifact(artifact: BenchmarkArtifactV2): Promise<string> {
   await mkdir(RESULT_DIR, { recursive: true });
   const file = path.join(RESULT_DIR, artifactFileName(new Date(artifact.timestamp)));
-  await writeFile(file, `${JSON.stringify(buildArtifact(artifact), null, 2)}\n`, 'utf8');
+  await writeFile(file, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
   return file;
-}
-
-function printDryReport(report: PromptReport): void {
-  const label = report.experimental ? 'experimental' : 'baseline';
-  console.log(`Prompts (${label})`);
-  console.log(`  system: ${fmt(report.systemChars)} chars`);
-  console.log(`  user:   ${fmt(report.userChars)} chars`);
-  console.log(`  total:  ${fmt(report.totalChars)} chars  (~${fmt(report.estimatedTokens)} est. tokens)`);
-  console.log(`  Concision Rules: ${report.hasConcisionRules ? 'yes' : 'no'}`);
-  console.log();
-}
-
-function printSummary(
-  runs: number,
-  totalCalls: number,
-  allMetrics: RunMetrics[],
-  aggregates: Record<VariantLabel, VariantAggregate>,
-  delta: BenchmarkDelta,
-  artifactPath: string,
-): void {
-  console.log(`\nArtifact: ${artifactPath}`);
-
-  const baselineRuns = allMetrics.filter((m) => !m.experimental);
-  const experimentalRuns = allMetrics.filter((m) => m.experimental);
-  const baselineSuccess = baselineRuns.filter((m) => m.parseSuccess && m.contractComplete).length;
-  const experimentalSuccess = experimentalRuns.filter((m) => m.parseSuccess && m.contractComplete).length;
-
-  console.log(bold('Summary'));
-  console.log(`- ${runs} A/B pair(s), ${totalCalls} calls.`);
-  console.log(
-    `- Usable reviews: baseline ${pct(baselineRuns.length ? baselineSuccess / baselineRuns.length : 0)} ` +
-      `(${baselineSuccess}/${baselineRuns.length}), experimental ${pct(experimentalRuns.length ? experimentalSuccess / experimentalRuns.length : 0)} ` +
-      `(${experimentalSuccess}/${experimentalRuns.length}).`,
-  );
-
-  const outBase = mean(baselineRuns.map((m) => m.outputTokens));
-  const outExp = mean(experimentalRuns.map((m) => m.outputTokens));
-  const savingsStr = delta.outputSavingsPct === null ? 'n/a' : `${delta.outputSavingsPct >= 0 ? '+' : ''}${delta.outputSavingsPct.toFixed(1)}%`;
-  const savingsNote =
-    delta.outputSavingsPct === null
-      ? ''
-      : delta.outputSavingsPct > 0
-        ? ' (experimental lower)'
-        : delta.outputSavingsPct < 0
-          ? ' (experimental higher)'
-          : '';
-  console.log(
-    `- Output tokens: baseline mean ${fmt(outBase)} vs experimental mean ${fmt(outExp)} (savings ${savingsStr}${savingsNote}).`,
-  );
-
-  console.log(
-    `- Strict concision: baseline ${pct(aggregates.baseline.conciseComplianceRate)}, experimental ${pct(aggregates.experimental.conciseComplianceRate)}.`,
-  );
-
-  const scoreDelta = aggregates.experimental.meanScore - aggregates.baseline.meanScore;
-  console.log(
-    `- Experimental mean score ${fmtNum(aggregates.experimental.meanScore)} vs baseline ${fmtNum(aggregates.baseline.meanScore)} ` +
-      `(${scoreDelta >= 0 ? '+' : ''}${fmtNum(scoreDelta)}).`,
-  );
-
-  if (runs <= 1) {
-    console.log(
-      yellow('Note: Only 1 pair was run; differences may be noise. Increase EVAL_RUNS for confidence.'),
-    );
-  }
-  console.log('Done. Unset the key when finished: unset API_KEY');
 }
 
 // ---------------------------------------------------------------------------
@@ -354,67 +332,114 @@ function printSummary(
 export async function main(argv: string[]): Promise<void> {
   const dryRun = argv.includes('--dry-run');
   const cfg = resolveEvalEnv(process.env);
-  const ctx = buildSyntheticContext();
-  const runs = resolveEvalRuns(process.env);
-  const totalCalls = runs * 2;
+  const selection = resolveEvalSelection(process.env);
+  const plan = buildEvalPlan(selection);
+  const cases = selection.cases;
+  const budget = checkCallBudget(plan);
 
-  console.log(header(process.env, cfg, runs, totalCalls, ctx.changedFiles.length));
+  console.log(header(process.env, cfg, selection, plan));
 
   if (dryRun) {
-    console.log(
-      `\nDry run: API key not used, no network calls, no artifact. ` +
-        `Planned live run: ${runs} A/B pair(s), ${totalCalls} calls.\n`,
-    );
+    printDryBudget(budget);
     for (const experimental of [false, true]) {
-      printDryReport(buildPromptReport(evalReviewConfig(cfg, experimental), ctx));
+      printSuitePrompts(experimental, buildSuitePromptMetadata(cases, cfg, experimental));
     }
-    console.log('Dry run complete. Nothing was sent over the network.');
+    console.log(
+      'Dry run: API key not used, no network calls, no artifact written. ' +
+        `Planned live run: ${plan.plannedCalls} calls (${selection.runs} round(s) per case, seed "${selection.seed}").\n`,
+    );
     return;
   }
 
   const apiKey = requireApiKey(cfg);
+
+  // Call budget is enforced here — immediately before any live provider
+  // creation/call — and throws (nonzero exit) when the plan exceeds the guard.
+  assertCallBudget(plan);
+
   console.log(
-    `\nLive run: ${totalCalls} billable LLM calls ` +
-      `(${runs} A/B pair(s); order alternates per pair).\n`,
+    `\nLive run: ${plan.plannedCalls} billable LLM calls ` +
+      `(${selection.runs} round(s) per case, ${selection.caseIds.length} case(s)); ` +
+      `timeout ${formatDuration(DEFAULT_CALL_TIMEOUT_MS)}, retries ${DEFAULT_RETRIES}.\n`,
   );
 
-  const allMetrics: RunMetrics[] = [];
-  const pairOrders: boolean[][] = [];
-  let runNumber = 0;
-
-  for (let pair = 0; pair < runs; pair++) {
-    const order = pairRunOrder(pair);
-    pairOrders.push(order);
-    for (let i = 0; i < order.length; i++) {
-      runNumber += 1;
-      const outcome = await runOnce(cfg, apiKey, ctx, order[i], pair, i);
-      allMetrics.push(outcome.metrics);
-      printOutcome(outcome.metrics, runNumber, totalCalls);
-    }
-    console.log(
-      `Pair ${pair + 1}/${runs} complete  ${order.map((o) => (o ? 'experimental' : 'baseline')).join(' → ')}`,
-    );
-    console.log();
-  }
-
-  const aggregates = aggregateRuns(allMetrics);
-  const delta = computeDelta(aggregates.baseline, aggregates.experimental);
-  printAggregates(aggregates);
-  printDelta(delta);
-
-  const timestamp = new Date().toISOString();
-  const artifactPath = await writeArtifact({
-    timestamp,
-    provider: cfg.provider,
-    model: cfg.model,
-    fixtureName: FIXTURE_NAME,
-    fixtureVersion: FIXTURE_VERSION,
-    changedFileCount: ctx.changedFiles.length,
-    runs,
-    retries: 0,
-    pairOrders,
-    runMetrics: allMetrics,
+  const { attempts } = await executePlan(plan, cases, cfg, {
+    apiKey,
+    onProgress: (line) => console.log(line),
+    onAttempt: (attempt, callNumber, totalCalls) => printAttempt(attempt, callNumber, totalCalls),
+    onPairProgress: (info) => printPairProgress(info),
   });
 
-  printSummary(runs, totalCalls, allMetrics, aggregates, delta, artifactPath);
+  // Aggregate exclusively through the benchmark result model — never ad-hoc
+  // unmatched deltas.
+  const result = buildBenchmarkResult({ plan, cases, attempts });
+  printExecution(result.execution);
+  printQuality(result.quality.postGate);
+  printReliability(result.reliability, result.performance);
+  printPairs(result.pairs);
+  printRegressions(result.regressions);
+  printHeadline(result.regressions, result.pairs.completePairs);
+
+  // Blind human pack (complete pairs only)
+  const completedAttempts = attempts.filter((a): a is CompletedAttempt => a.status === 'completed');
+  const casesById = new Map(cases.map((c) => [c.id, c]));
+  const { pairs: blindPairs, excludedPairIds } = buildBlindPairsFromAttempts({
+    seed: selection.seed,
+    attempts: completedAttempts,
+    casesById,
+  });
+
+  const timestamp = new Date().toISOString();
+  let blindPackPath: string | null = null;
+  let blindKeyPath: string | null = null;
+
+  if (blindPairs.length > 0) {
+    const pack = buildBlindReport({ seed: selection.seed, pairs: blindPairs, excludedPairIds });
+    const key = buildBlindKey(blindPairs, selection.seed, timestamp);
+    const stem = artifactFileName(new Date(timestamp)).replace(/\.json$/, '');
+    blindPackPath = path.join(RESULT_DIR, `${stem}-blind.md`);
+    blindKeyPath = path.join(RESULT_DIR, `${stem}-blind-key.json`);
+    await writeFile(blindPackPath, pack, 'utf8');
+    await writeFile(blindKeyPath, `${JSON.stringify(key, null, 2)}\n`, 'utf8');
+  }
+  const baselinePrompt = buildSuitePromptMetadata(cases, cfg, false);
+  const experimentalPrompt = buildSuitePromptMetadata(cases, cfg, true);
+
+  const artifact = buildBenchmarkArtifact({
+    timestamp,
+    benchmark: { suiteId: SUITE_ID, suiteVersion: SUITE_VERSION },
+    repository: gitRepoMetadata(),
+    provider: cfg.provider,
+    model: cfg.model,
+    prompt: {
+      baseline: baselinePrompt.metadata,
+      experimental: experimentalPrompt.metadata,
+    },
+    retries: DEFAULT_RETRIES,
+    timeoutMs: DEFAULT_CALL_TIMEOUT_MS,
+    plan,
+    cases,
+    attempts,
+  });
+
+  // Prove the artifact is free of the live key + forbidden keys/substrings
+  // before anything touches disk.
+  assertArtifactSafe(artifact, { secret: apiKey });
+
+  const artifactPath = await writeArtifact(artifact);
+  console.log(`\n=== Output files ===`);
+  console.log(`  Artifact: ${artifactPath}`);
+  if (blindPackPath && blindKeyPath) {
+    console.log(`  Blind pack: ${blindPackPath}`);
+    console.log(`  Blind key:  ${blindKeyPath}`);
+    console.log(yellow('  Open the answer key ONLY after scoring the blind pack.'));
+  } else if (excludedPairIds.length > 0) {
+    console.log(
+      yellow(`  No blind pack generated: all ${excludedPairIds.length} pair(s) were incomplete.`),
+    );
+  }
+  console.log(
+    `\nDone. ${attempts.filter((a) => a.status === 'failed').length} failed call(s) recorded in the artifact. ` +
+      `Unset the key when finished: unset API_KEY`,
+  );
 }

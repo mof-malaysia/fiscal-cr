@@ -346,17 +346,24 @@ pnpm build:action
 ## Local LLM evaluation
 
 A local harness exercises the real provider, fast-path, and usage-tracking code
-against a deterministic synthetic PR — no GitHub API, repository, or pull
-request involved.
+against a deterministic 10-case gold benchmark suite — no GitHub API,
+repository, or pull request involved. Each case is a small synthetic PR with
+hand-authored expected issues; every case runs once as **baseline** and once as
+**experimental** per round.
 
 ```bash
-# Keyless, no network: builds both system/user prompts and reports prompt sizes
+# Keyless, no network: prints the plan, budget check, and per-variant suite
+# prompt char/token stats
 make eval-llm-dry
 
-# Live: 2 * EVAL_RUNS billable calls (A/B pairs, order alternates)
+# Live smoke (default): 3 cases x EVAL_RUNS x 2 variants = 6 calls
 read -rsp "API key: " API_KEY; echo
 export API_KEY
 make eval-llm
+
+# Live full suite: 10 cases x EVAL_RUNS x 2 variants = 20 calls at the default
+EVAL_SUITE=full make eval-llm           # or: make eval-llm-full
+EVAL_SUITE=full make eval-llm-dry       # or: make eval-llm-full-dry
 ```
 
 Secure usage:
@@ -368,51 +375,82 @@ Secure usage:
 - A root `.env` is auto-loaded when present, so `make eval-llm` needs no manual
   exports. Already-exported variables win over `.env`. `.env` is gitignored —
   never commit it, and the harness never reads, prints, or logs its values.
-- `make eval-llm` runs an A/B benchmark against the same synthetic PR. It
-  makes **`2 × EVAL_RUNS` billable calls** (2 calls for the default
-  `EVAL_RUNS=1`) and reports per-run
-  duration, token usage (input/output/cached/total), call count, score, finding
-  count, intent, summary, walkthrough, and findings, plus per-variant
-  aggregates (mean/median, success/parse/contract/concise rates) and a compact
-  token/duration delta — `output savings %` is positive when experimental uses
-  fewer output tokens. It prints a heartbeat every 15 seconds and disables
-  retries so provider failures surface after the configured per-call timeout
-  instead of hanging through production retry cycles.
-- `make eval-llm-dry` makes **zero calls** — it builds the prompts and prints
-  character counts, estimated tokens, and whether the Concision Rules block is
-  present, plus the planned pair/call count. It may load `.env` but never prints
-  credentials or endpoint details.
+- Node may print a benign `DEP0205` warning about `--env-file`; it is left
+  as-is (the harness does not suppress warnings or change `NODE_OPTIONS`).
 
-A/B repeats and order:
+Selection, rounds and budget:
 
-- `EVAL_RUNS` (integer, default `1`, range `1`–`10`) sets the number of A/B
-  pairs. Pair 1 runs baseline → experimental; pair 2 runs experimental →
-  baseline; order alternates every pair so drift and ordering effects cancel
-  out. `EVAL_RUNS=3 make eval-llm` makes **6 billable calls**.
-- Each run records raw-response metadata (parse success via the real
-  `parseFastPathResponse`, top-level contract keys, word counts against the
-  concise 40/80/20/80 limits, walkthrough coverage against actual changed file
-  paths, retention rate) and classifies a zero-finding review as `genuine`,
-  `parser-fallback`, or `contract-incomplete` — genuine only when the response
-  parsed, the full contract is present, and the required narrative/walkthrough
-  completeness holds.
-- `success rate` counts only strictly usable reviews (parsed **and**
-  contract-complete); `parse rate` and `contract rate` are reported separately.
-- Concise compliance is strict: a run must parse, carry the full top-level
-  contract, have nonempty intent and summary, cover every changed file in the
-  walkthrough, **and** meet the word limits. `limitsMet` exposes just the
-  40/80/20/80 word-limit check, so a short-but-incomplete response is not
-  mistaken for a compliant one.
+- `EVAL_SUITE` (`smoke` default | `full`) picks the case set: 3 smoke cases
+  (`clean-01`, `local-01`, `security-01`) or all 10.
+- `EVAL_CASES` (exact comma-separated override, e.g. `clean-01, security-01`)
+  beats `EVAL_SUITE` when both are set. Focused runs make `2 × N` calls for N
+  cases. Unknown, empty, or duplicate ids are rejected.
+- `EVAL_RUNS` (positive integer, default `1`) sets A/B rounds **per case**.
+  Planned calls = `cases × runs × 2`. The default smoke run is
+  `3 × 1 × 2 = 6` calls; the full suite at the default runs is
+  `10 × 1 × 2 = 20` calls.
+- `EVAL_SEED` (non-empty string, default `fiscalcr-eval-v2`) deterministically
+  rotates case order per round; variant order per case follows an AB / BA /
+  BA / AB pattern so order bias cancels per case.
+- `EVAL_MAX_CALLS` (default `20`) is a guard enforced **immediately before any
+  live provider call** — a plan exceeding it fails with a nonzero exit and a
+  message showing the exact override. Dry runs show the same guard without
+  failing and never touch the network or write artifacts.
+- The 10-case × 4-round decision run is **80 calls** and requires
+  `EVAL_MAX_CALLS=80` (`EVAL_RUNS=4 EVAL_MAX_CALLS=80 EVAL_SUITE=full make eval-llm`).
 
-Results artifact:
+What a run reports:
 
-- After a successful live run the harness writes a timestamped, secret-safe
-  JSON artifact to `.eval-results/eval-<timestamp>.json` (gitignored).
-- It contains the timestamp, provider, model, fixture name/version, config
-  flags (runs, call order, retries), per-run metrics and final structured
-  `ReviewResult`, per-variant aggregates, and deltas. It never contains the
-  API key, operator base URL, environment dump, raw response content, or
-  request headers.
+- Per completed call: parse success (real `parseFastPathResponse`), contract
+  completeness, format-length compliance, retained vs gold counts, TP/FP/FN/F1
+  against the case gold, output tokens, raw output characters, and duration.
+- Per failed call: a sanitized error code/message only. Individual model-call
+  failures never abort the plan — the harness records a `failed` attempt,
+  prints a compact safe line, and continues. Exit code is nonzero only for
+  config/budget/fatal setup/artifact failures, never for a model-call failure.
+- Final blocks: execution counts (planned/completed/failed/completion rate),
+  post-gate quality (micro P/R/F1, macro F1, clean-FP rate, severe FPs,
+  duplicates, TP per 1k output tokens) per variant, reliability/efficiency
+  diagnostics (parse/contract/format-length rates, median output tokens/raw
+  chars/duration), paired deltas over **complete pairs only** (output savings,
+  raw-char savings, F1/TP/FP deltas), and a large-regression report that only
+  issues a verdict at `EVAL_RUNS >= 4` (below that it is labeled
+  insufficient/directional). Model self-score and finding count are reported
+  as diagnostics, never headlined as quality.
+
+Quality metrics and gold limitations:
+
+- Quality is measured by matching generated findings to the hand-authored gold
+  issues per case (exact path + overlapping line + accepted category, resolved
+  with one-to-one maximum-cardinality matching). Severity is scored as
+  agreement, not detection. `clean` cases are closed-world: any finding on them
+  is a false positive.
+- The gold suite is small and synthetic; scores are a signal for regressions in
+  this harness, not a general model ranking. Vacuous-truth conventions apply
+  when a case has no predictions or no gold (e.g. an empty clean review is
+  perfect precision and recall).
+- Output **tokens** come from the provider's usage report; visible **raw
+  characters** are the actual response text length. They are reported
+  separately because token estimates and character counts differ per model.
+
+Results artifact (v2):
+
+- After a live run (even one where every call failed) the harness writes a
+  timestamped, secret-safe JSON artifact to
+  `.eval-results/eval-<timestamp>.json` (gitignored).
+- It carries the schema id `fiscalcr-eval-v2`, suite metadata, selected case
+  ids + seed, sanitized plan entries, per-attempt outcomes (completed metrics
+  and quality, or sanitized failures), fixture manifests with gold issues,
+  baseline/experimental prompt fingerprints (suite-level sha256 over
+  case id/version + exact prompts, plus total chars), repo commit/dirty flags,
+  config (runs/planned/completed/failed/timeout/max calls), and the aggregate
+  benchmark result. Completed attempts keep the parsed and final review text
+  for the later blind human pack.
+- It never contains the API key, operator base URL, environment dump, request
+  headers, or raw provider response bodies; `assertArtifactSafe` proves the
+  artifact free of forbidden content and the live key before anything is
+  written. Repository metadata is only a commit hash + dirty flag, captured
+  best-effort with fixed git arguments and nulled on failure.
 
 Environment variables:
 
@@ -424,7 +462,11 @@ Environment variables:
 | `KIMI_MODEL`         | `kimi-for-coding`  | Kimi model override, e.g. `kimi-k2.5`             |
 | `BASE_URL`           | provider default   | Falls back to `FISCALCR_BASE_URL`                 |
 | `LLM_USER_AGENT`     | —                  | Optional custom User-Agent for whitelisting       |
-| `EVAL_RUNS`          | `1`                | A/B pairs (1–10); live makes `2 × EVAL_RUNS` calls |
+| `EVAL_SUITE`         | `smoke`            | `smoke` (3 cases) or `full` (10 cases)            |
+| `EVAL_CASES`         | —                  | Exact comma-separated override; beats `EVAL_SUITE` |
+| `EVAL_RUNS`          | `1`                | A/B rounds per case; plan = cases × runs × 2      |
+| `EVAL_SEED`          | `fiscalcr-eval-v2` | Deterministic per-round case rotation             |
+| `EVAL_MAX_CALLS`     | `20`               | Budget guard; full 10×4 decision run needs `80`   |
 
 Examples:
 
@@ -433,11 +475,14 @@ export API_KEY=sk-...
 export MODEL_PROVIDER=openai-compatible
 export MODEL=gpt-4.1-mini
 export BASE_URL=https://api.openai.com/v1
-make eval-llm
+make eval-llm            # smoke, 6 calls
+make eval-llm-full       # full suite, 20 calls
 ```
 
 ```bash
-EVAL_RUNS=3 make eval-llm   # 6 billable calls, alternating A/B order
+EVAL_RUNS=3 make eval-llm          # smoke, 18 calls (3 cases × 3 rounds × 2)
+EVAL_CASES=clean-01,local-01 make eval-llm   # focused, 4 calls
+EVAL_RUNS=4 EVAL_MAX_CALLS=80 EVAL_SUITE=full make eval-llm   # decision run, 80 calls
 ```
 
 Or drop the same variables in a root `.env` (exported env still wins) and run
@@ -446,12 +491,6 @@ bare:
 ```bash
 make eval-llm
 make eval-llm-dry   # still zero calls — the key is read but never sent
-```
-
-```bash
-export MODEL_PROVIDER=kimi
-export MODEL=kimi-for-coding
-make eval-llm-dry   # zero calls — no key required
 ```
 
 ## Severity levels
