@@ -15,6 +15,8 @@ export declare const reviewConfigSchema: z.ZodObject<{
     userAgent: z.ZodOptional<z.ZodString>;
     /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
     temperature: z.ZodOptional<z.ZodNumber>;
+    /** Enables opt-in prompt optimizations that may change between releases. */
+    experimental: z.ZodDefault<z.ZodBoolean>;
     review: z.ZodDefault<z.ZodObject<{
         auto: z.ZodDefault<z.ZodObject<{
             enabled: z.ZodDefault<z.ZodBoolean>;
@@ -231,6 +233,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
     provider: "openai-compatible" | "kimi";
     model: string;
     language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
+    experimental: boolean;
     review: {
         auto: {
             enabled: boolean;
@@ -299,6 +302,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
     baseUrl?: string | undefined;
     userAgent?: string | undefined;
     temperature?: number | undefined;
+    experimental?: boolean | undefined;
     review?: {
         auto?: {
             enabled?: boolean | undefined;

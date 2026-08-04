@@ -4,6 +4,7 @@ export const DEFAULT_CONFIG: ReviewConfig = {
   language: "en",
   provider: "kimi",
   model: "kimi-for-coding",
+  experimental: false,
   review: {
     auto: {
       enabled: true,
