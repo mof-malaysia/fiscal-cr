@@ -15,8 +15,10 @@ else
 ENV_FILE_FLAG :=
 endif
 
-# Live: two billable LLM calls (experimental=false, then experimental=true).
+# Live: 2 * EVAL_RUNS billable LLM calls (EVAL_RUNS default 1, 1..10) as
+# alternating A/B pairs (baseline→experimental, then experimental→baseline).
 # Requires API_KEY (or FISCALCR_API_KEY / KIMI_API_KEY) in .env or the shell.
+# Results land in .eval-results/ (gitignored).
 eval-llm:
 	./node_modules/.bin/tsx $(ENV_FILE_FLAG) scripts/eval-llm.ts
 

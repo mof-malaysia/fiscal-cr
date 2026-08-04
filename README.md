@@ -353,7 +353,7 @@ request involved.
 # Keyless, no network: builds both system/user prompts and reports prompt sizes
 make eval-llm-dry
 
-# Live: two billable LLM calls (experimental=false, then experimental=true)
+# Live: 2 * EVAL_RUNS billable calls (A/B pairs, order alternates)
 read -rsp "API key: " API_KEY; echo
 export API_KEY
 make eval-llm
@@ -368,13 +368,51 @@ Secure usage:
 - A root `.env` is auto-loaded when present, so `make eval-llm` needs no manual
   exports. Already-exported variables win over `.env`. `.env` is gitignored —
   never commit it, and the harness never reads, prints, or logs its values.
-- `make eval-llm` makes exactly **two billable calls** against the same
-  synthetic PR (baseline, then experimental mode) and reports per-run duration,
-  token usage (input/output/cached), call count, score, finding count, intent,
-  summary, walkthrough, and findings, plus a compact token/duration delta.
+- `make eval-llm` runs an A/B benchmark against the same synthetic PR. It
+  makes **`2 × EVAL_RUNS` billable calls** (2 calls for the default
+  `EVAL_RUNS=1`) and reports per-run
+  duration, token usage (input/output/cached/total), call count, score, finding
+  count, intent, summary, walkthrough, and findings, plus per-variant
+  aggregates (mean/median, success/parse/contract/concise rates) and a compact
+  token/duration delta — `output savings %` is positive when experimental uses
+  fewer output tokens. It prints a heartbeat every 15 seconds and disables
+  retries so provider failures surface after the configured per-call timeout
+  instead of hanging through production retry cycles.
 - `make eval-llm-dry` makes **zero calls** — it builds the prompts and prints
   character counts, estimated tokens, and whether the Concision Rules block is
-  present. It may load `.env` but never prints credentials or endpoint details.
+  present, plus the planned pair/call count. It may load `.env` but never prints
+  credentials or endpoint details.
+
+A/B repeats and order:
+
+- `EVAL_RUNS` (integer, default `1`, range `1`–`10`) sets the number of A/B
+  pairs. Pair 1 runs baseline → experimental; pair 2 runs experimental →
+  baseline; order alternates every pair so drift and ordering effects cancel
+  out. `EVAL_RUNS=3 make eval-llm` makes **6 billable calls**.
+- Each run records raw-response metadata (parse success via the real
+  `parseFastPathResponse`, top-level contract keys, word counts against the
+  concise 40/80/20/80 limits, walkthrough coverage against actual changed file
+  paths, retention rate) and classifies a zero-finding review as `genuine`,
+  `parser-fallback`, or `contract-incomplete` — genuine only when the response
+  parsed, the full contract is present, and the required narrative/walkthrough
+  completeness holds.
+- `success rate` counts only strictly usable reviews (parsed **and**
+  contract-complete); `parse rate` and `contract rate` are reported separately.
+- Concise compliance is strict: a run must parse, carry the full top-level
+  contract, have nonempty intent and summary, cover every changed file in the
+  walkthrough, **and** meet the word limits. `limitsMet` exposes just the
+  40/80/20/80 word-limit check, so a short-but-incomplete response is not
+  mistaken for a compliant one.
+
+Results artifact:
+
+- After a successful live run the harness writes a timestamped, secret-safe
+  JSON artifact to `.eval-results/eval-<timestamp>.json` (gitignored).
+- It contains the timestamp, provider, model, fixture name/version, config
+  flags (runs, call order, retries), per-run metrics and final structured
+  `ReviewResult`, per-variant aggregates, and deltas. It never contains the
+  API key, operator base URL, environment dump, raw response content, or
+  request headers.
 
 Environment variables:
 
@@ -386,6 +424,7 @@ Environment variables:
 | `KIMI_MODEL`         | `kimi-for-coding`  | Kimi model override, e.g. `kimi-k2.5`             |
 | `BASE_URL`           | provider default   | Falls back to `FISCALCR_BASE_URL`                 |
 | `LLM_USER_AGENT`     | —                  | Optional custom User-Agent for whitelisting       |
+| `EVAL_RUNS`          | `1`                | A/B pairs (1–10); live makes `2 × EVAL_RUNS` calls |
 
 Examples:
 
@@ -395,6 +434,10 @@ export MODEL_PROVIDER=openai-compatible
 export MODEL=gpt-4.1-mini
 export BASE_URL=https://api.openai.com/v1
 make eval-llm
+```
+
+```bash
+EVAL_RUNS=3 make eval-llm   # 6 billable calls, alternating A/B order
 ```
 
 Or drop the same variables in a root `.env` (exported env still wins) and run
