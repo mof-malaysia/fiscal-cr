@@ -69,6 +69,7 @@ jobs:
 | `fail_on`      | No       | Repo config or built-in default | `critical`, `warning`, or `never`                                 |
 | `config_path`  | No       | `.fiscalcr-review.yml`          | Path to config file relative to repo root                         |
 | `telemetry`    | No       | `false`                         | Emit metrics-only token telemetry to Action logs                  |
+| `experimental` | No       | Repo config or `false`          | Enable experimental prompt optimizations                          |
 
 ### Action outputs
 
@@ -95,6 +96,12 @@ prompts, source code, secrets, repository or pull request identifiers, or file
 paths. Telemetry is disabled by default and is not sent to an external service.
 `calls` counts pipeline-level LLM invocations; transparent provider retries are
 not counted separately.
+
+### Experimental features
+
+Set `experimental: true` in `.fiscalcr-review.yml`, or pass the explicit Action
+input, to enable experimental prompt optimizations. These optimizations may
+change between releases. The default is `false`, preserving stable prompts.
 
 ### Endpoints that whitelist clients
 
@@ -169,6 +176,7 @@ provider: openai-compatible
 model: kimi-for-coding-highspeed
 baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
+experimental: false # opt in to prompt optimizations that may change between releases
 
 review:
   auto:

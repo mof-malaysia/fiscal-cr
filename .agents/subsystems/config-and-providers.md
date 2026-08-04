@@ -6,14 +6,14 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 
 ## Config precedence (highest wins)
 
-1. **Explicit Action inputs** (`action/index.ts`): `model`, `base_url`, `user_agent`, `language`, `fail_on` override the loaded repo config after `loadConfig`.
+1. **Explicit Action inputs** (`action/index.ts`): `model`, `base_url`, `user_agent`, `language`, `fail_on`, `experimental` override the loaded repo config after `loadConfig`.
 2. **App env vars** (webhooks.ts / index.ts): at provider construction, `appCtx.provider ?? config.provider`, `appCtx.model ?? config.model`, `appCtx.userAgent ?? config.userAgent`; `baseUrl` env always wins (no config fallback in App mode).
 3. **Repo config** `.fiscalcr-review.yml` (path overridable via `config_path` input), fetched through the GitHub API.
 4. **Built-in defaults** — `DEFAULT_CONFIG` in `src/config/defaults.ts`, mirrored by zod schema `.default()` values.
 
 ## Schema & defaults
 
-- `src/config/schema.ts` — `reviewConfigSchema` (zod) is the **canonical** config definition. Shape: top-level `language` (en/zh-TW/zh-CN/ja/ko), `provider` (openai-compatible/kimi), `model`, `baseUrl`, `userAgent`, `temperature`; `review.{auto,aspects,minSeverity,maxAnnotations,failOn,incremental,comments}`; `files.{include,exclude,maxFileSize}`; `rules[]` (custom repo rules); `prompt.{systemAppend,reviewFocus}`; `pipeline.{enabled,concurrency,groupTokenBudget,relatedContextBudget,maxGroups,fastPathThreshold,minConfidence,maxRetries,callTimeoutMs,maxOutputTokens}`.
+- `src/config/schema.ts` — `reviewConfigSchema` (zod) is the **canonical** config definition. Shape: top-level `language` (en/zh-TW/zh-CN/ja/ko), `provider` (openai-compatible/kimi), `model`, `baseUrl`, `userAgent`, `temperature`, `experimental`; `review.{auto,aspects,minSeverity,maxAnnotations,failOn,incremental,comments}`; `files.{include,exclude,maxFileSize}`; `rules[]` (custom repo rules); `prompt.{systemAppend,reviewFocus}`; `pipeline.{enabled,concurrency,groupTokenBudget,relatedContextBudget,maxGroups,fastPathThreshold,minConfidence,maxRetries,callTimeoutMs,maxOutputTokens}`.
 - `DEFAULT_EXCLUDE_PATTERNS` is a shared const used both by the schema default and `DEFAULT_CONFIG` specifically so the two cannot drift.
 - `src/config/defaults.ts` — `DEFAULT_CONFIG`, a fully-populated `ReviewConfig` mirroring schema defaults. **Changing one without the other is a bug.**
 

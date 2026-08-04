@@ -49255,6 +49255,17 @@ function buildSynthesisUserPrompt(input) {
 // ---------------------------------------------------------------------------
 // Fast path: single combined call
 function buildFastPathSystemPrompt(config) {
+    const concisionRules = config.experimental
+        ? `
+
+## Concision Rules
+- Return compact JSON only. Do not narrate the schema, response process, validation, or field completeness.
+- Keep intent to at most 40 words.
+- Keep summary to at most 80 words. Lead with the highest-severity issue, or the overall verdict when there are no findings.
+- Keep each walkthrough summary to at most 20 words.
+- Keep each finding body to at most 80 words: state the problem, impact, and concrete fix without repetition or hedging.
+- Preserve JSON keys, code, symbols, paths, line numbers, and suggested fixes exactly. Do not use caveman grammar in user-facing text.`
+        : '';
     return `${sharedReviewerPreamble(config)}
 
 ## Output Format
@@ -49265,7 +49276,7 @@ Respond with a single JSON object:
   "score": "number 0-100 (90-100 excellent, 70-89 good, 50-69 needs improvement, <50 significant issues)",
   "walkthrough": [{ "path": "file path", "summary": "one line: what changed in this file" }],
   "findings": [${FINDING_SCHEMA}]
-}
+}${concisionRules}
 
 ## Line Number Rules
 - Only report findings on lines that are added or modified in the diff.
@@ -55184,6 +55195,8 @@ const reviewConfigSchema = objectType({
     userAgent: stringType().max(200).optional(),
     /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
     temperature: numberType().min(0).max(2).optional(),
+    /** Enables opt-in prompt optimizations that may change between releases. */
+    experimental: booleanType().default(false),
     review: objectType({
         auto: objectType({
             enabled: booleanType().default(true),
@@ -55266,6 +55279,7 @@ const DEFAULT_CONFIG = {
     language: "en",
     provider: "kimi",
     model: "kimi-for-coding",
+    experimental: false,
     review: {
         auto: {
             enabled: true,
@@ -55384,7 +55398,15 @@ function telemetryFromActionInput(core) {
     };
 }
 
+;// CONCATENATED MODULE: ./action/experimental.ts
+function experimentalFromActionInput(core) {
+    if (!core.getInput("experimental"))
+        return undefined;
+    return core.getBooleanInput("experimental");
+}
+
 ;// CONCATENATED MODULE: ./action/index.ts
+
 
 
 
@@ -55405,6 +55427,7 @@ async function run() {
         const baseUrlInput = core.getInput("base_url") || undefined;
         const userAgentInput = core.getInput("user_agent") || undefined;
         const languageInput = core.getInput("language") || undefined;
+        const experimentalInput = experimentalFromActionInput(core);
         const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
         const failOnInput = (core.getInput("fail_on") || undefined);
         const octokit = github.getOctokit(githubToken);
@@ -55440,6 +55463,9 @@ async function run() {
         }
         if (userAgentInput) {
             config.userAgent = userAgentInput;
+        }
+        if (experimentalInput !== undefined) {
+            config.experimental = experimentalInput;
         }
         // Honor auto-review settings (previously App-mode only)
         if (isDraft && !config.review.auto.drafts) {
