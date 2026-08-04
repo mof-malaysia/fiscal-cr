@@ -4,7 +4,7 @@ import {
   getCases,
   getFullCaseIds,
   type BenchmarkCase,
-} from './eval-cases.js';
+} from './cases.js';
 
 /**
  * Pure benchmark planning and config for the FiscalCR eval harness.

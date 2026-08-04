@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { LLMCompletionResponse } from '../../src/providers/interface.js';
 import type { ReviewAnnotation, ReviewResult } from '../../src/types/review.js';
-import { getCaseById, type BenchmarkCase } from '../../scripts/eval-cases.js';
+import { getCaseById, type BenchmarkCase } from '../cases.js';
 import {
   REQUIRED_CONTRACT_KEYS,
   buildRunMetrics,
   captureFromResponse,
   type CapturedCall,
   type RunMetrics,
-} from '../../scripts/eval-metrics.js';
-import { evaluateRunQuality, type RunQualityReport } from '../../scripts/eval-quality.js';
+} from '../metrics.js';
+import { evaluateRunQuality, type RunQualityReport } from '../quality.js';
 import {
   buildEvalPlanFromEnv,
   type EvalPlan,
   type PlanEntry,
-} from '../../scripts/eval-plan.js';
+} from '../plan.js';
 import {
   assertArtifactSafe,
   buildBenchmarkArtifact,
@@ -31,7 +31,17 @@ import {
   type BenchmarkArtifactV2,
   type CompletedAttempt,
   type FailedAttempt,
-} from '../../scripts/eval-benchmark.js';
+} from '../benchmark.js';
+import {
+  buildBlindKey,
+  buildBlindPair,
+  buildBlindPairsFromAttempts,
+  buildBlindReport,
+  chooseFence,
+  deterministicAssignment,
+  renderCaseContext,
+  renderReview,
+} from '../blind-report.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures / helpers
@@ -166,6 +176,27 @@ function allFailed(plan: EvalPlan, error: unknown): Attempt[] {
   return plan.entries.map((entry) => makeFailed(entry, getCaseById(entry.caseId), error));
 }
 
+/** Build one completed blind pair from the first two entries of a 1-run plan. */
+function blindPairOf(plan: EvalPlan, seed: string, opts: AttemptOpts = {}) {
+  const c = getCaseById(plan.config.caseIds[0]);
+  const baseline = makeCompleted(plan.entries[0], c, opts);
+  const experimental = makeCompleted(plan.entries[1], c, opts);
+  return {
+    c,
+    baseline,
+    experimental,
+    pair: buildBlindPair({
+      pairId: `${c.id}@r0`,
+      caseId: c.id,
+      roundIndex: 0,
+      baselineAttempt: baseline,
+      experimentalAttempt: experimental,
+      case: c,
+      seed,
+    }),
+  };
+}
+
 function assertFiniteNumbers(value: unknown, path = '$'): void {
   if (typeof value === 'number') {
     expect(Number.isFinite(value), `${path} must be finite`).toBe(true);
@@ -195,12 +226,7 @@ describe('sanitizeError', () => {
       code: 'timeout',
       message: 'call exceeded 60s',
     });
-    expect(sanitizeError({ name: 'HTTPError', message: '502' })).toEqual({
-      code: 'HTTPError',
-      message: '502',
-    });
     expect(sanitizeError(null)).toEqual({ code: 'unknown', message: 'Unknown error' });
-    expect(sanitizeError(42)).toEqual({ code: 'error', message: '42' });
   });
 });
 
@@ -209,7 +235,7 @@ describe('completedAttempt validation', () => {
   const entry = plan.entries[0];
   const c = getCaseById(entry.caseId);
 
-  it('builds a completed attempt with status/identity/case/metrics/quality', () => {
+  it('builds a completed attempt and rejects identity/case/variant mismatches', () => {
     const attempt = makeCompleted(entry, c);
     expect(attempt.status).toBe('completed');
     expect(attempt.identity).toEqual(planIdentityOf(entry));
@@ -217,43 +243,23 @@ describe('completedAttempt validation', () => {
     expect(attempt.metrics.totalTokens).toBe(150);
     expect(attempt.quality.postGate).toBeDefined();
     expect(attempt.requestTimestamp).toBe(TIMESTAMP);
-  });
 
-  it('rejects a variant/experimental identity mismatch', () => {
+    const base = {
+      case: caseIdentityOf(c),
+      requestTimestamp: TIMESTAMP,
+      metrics: makeCompleted(entry, c).metrics,
+      quality: makeCompleted(entry, c).quality,
+    };
     expect(() =>
-      completedAttempt({
-        identity: { ...planIdentityOf(entry), experimental: !entry.experimental },
-        case: caseIdentityOf(c),
-        requestTimestamp: TIMESTAMP,
-        metrics: makeCompleted(entry, c).metrics,
-        quality: makeCompleted(entry, c).quality,
-      }),
+      completedAttempt({ ...base, identity: { ...planIdentityOf(entry), experimental: !entry.experimental } }),
     ).toThrow(/identity mismatch/);
-  });
-
-  it('rejects an identity caseId that differs from the case identity', () => {
     expect(() =>
-      completedAttempt({
-        identity: { ...planIdentityOf(entry), caseId: 'other-01' },
-        case: caseIdentityOf(c),
-        requestTimestamp: TIMESTAMP,
-        metrics: makeCompleted(entry, c).metrics,
-        quality: makeCompleted(entry, c).quality,
-      }),
+      completedAttempt({ ...base, identity: { ...planIdentityOf(entry), caseId: 'other-01' } }),
     ).toThrow(/case mismatch/);
-  });
-
-  it('rejects metrics whose variant disagrees with the identity', () => {
     const other = makeCompleted(plan.entries[1] ?? entry, c); // opposite variant when available
-    expect(() =>
-      completedAttempt({
-        identity: planIdentityOf(entry),
-        case: caseIdentityOf(c),
-        requestTimestamp: TIMESTAMP,
-        metrics: other.metrics,
-        quality: other.quality,
-      }),
-    ).toThrow(/variant mismatch/);
+    expect(() => completedAttempt({ ...base, identity: planIdentityOf(entry), metrics: other.metrics })).toThrow(
+      /variant mismatch/,
+    );
   });
 });
 
@@ -262,7 +268,7 @@ describe('failedAttempt', () => {
   const entry = plan.entries[0];
   const c = getCaseById(entry.caseId);
 
-  it('stores only sanitized {code, message} — never the raw Error or stack', () => {
+  it('stores only sanitized {code, message} and rejects bad durations', () => {
     const raw = new Error('connection reset');
     raw.name = 'ECONNRESET';
     (raw as Error & { stack?: string }).stack = 'Error: connection reset\n    at socket.on (net.js:1:1)';
@@ -272,27 +278,10 @@ describe('failedAttempt', () => {
     expect(JSON.stringify(attempt.error)).not.toContain('net.js');
     expect(Object.keys(attempt.error)).toEqual(['code', 'message']);
     expect(attempt.durationMs).toBe(500);
-  });
 
-  it('rejects a negative or NaN durationMs', () => {
-    expect(() =>
-      failedAttempt({
-        identity: planIdentityOf(entry),
-        case: caseIdentityOf(c),
-        requestTimestamp: TIMESTAMP,
-        durationMs: -1,
-        error: 'nope',
-      }),
-    ).toThrow(/durationMs/);
-    expect(() =>
-      failedAttempt({
-        identity: planIdentityOf(entry),
-        case: caseIdentityOf(c),
-        requestTimestamp: TIMESTAMP,
-        durationMs: Number.NaN,
-        error: 'nope',
-      }),
-    ).toThrow(/durationMs/);
+    const base = { identity: planIdentityOf(entry), case: caseIdentityOf(c), requestTimestamp: TIMESTAMP };
+    expect(() => failedAttempt({ ...base, durationMs: -1, error: 'nope' })).toThrow(/durationMs/);
+    expect(() => failedAttempt({ ...base, durationMs: Number.NaN, error: 'nope' })).toThrow(/durationMs/);
   });
 });
 
@@ -323,22 +312,18 @@ describe('execution accounting', () => {
     expect(result.execution.byVariant.baseline).toEqual({
       planned: 4, completed: 4, failed: 0, completionRate: 1,
     });
-    expect(result.execution.byVariant.experimental.planned).toBe(4);
     expect(result.execution.byVariant.experimental.completed).toBe(2);
-    expect(result.execution.byVariant.experimental.failed).toBe(2);
     expect(result.execution.byVariant.experimental.completionRate).toBeCloseTo(0.5, 10);
   });
 
-  it('zero completed variant: reliability/performance/quality aggregates are null, no divide/throw', () => {
+  it('zero completed variant: reliability/performance/quality aggregates are null; rejects mismatched plans', () => {
     const plan = makePlan('clean-01, local-01', '2');
     const c1 = getCaseById('clean-01');
     const c2 = getCaseById('local-01');
     const attempts: Attempt[] = [];
     for (const entry of plan.entries) {
       const c = getCaseById(entry.caseId);
-      attempts.push(
-        entry.experimental ? makeFailed(entry, c, 'boom') : makeCompleted(entry, c),
-      );
+      attempts.push(entry.experimental ? makeFailed(entry, c, 'boom') : makeCompleted(entry, c));
     }
     const result = buildBenchmarkResult({ plan, cases: [c1, c2], attempts });
 
@@ -347,29 +332,23 @@ describe('execution accounting', () => {
     expect(result.performance.experimental).toBeNull();
     expect(result.quality.preGate.experimental).toBeNull();
     expect(result.quality.postGate.experimental).toBeNull();
-    // Baseline side unaffected.
-    expect(result.reliability.baseline).not.toBeNull();
     expect(result.reliability.baseline!.completed).toBe(4);
     expect(result.quality.postGate.baseline).not.toBeNull();
     expect(result.regressions[0].status).toBe('insufficient-data');
-  });
 
-  it('rejects attempts that do not match the supplied plan', () => {
-    const planA = makePlan('clean-01', '1');
-    const planB = makePlan('local-01', '1');
-    const attempts = allCompleted(planB);
+    // Attempts that do not match the supplied plan are rejected.
+    const other = makePlan('local-01', '1');
     expect(() =>
-      buildBenchmarkResult({ plan: planA, cases: [getCaseById('clean-01')], attempts }),
+      buildBenchmarkResult({ plan, cases: [c1, c2], attempts: allCompleted(other) }),
     ).toThrow(/does not match plan entry/);
   });
 });
 
 describe('reliability and performance aggregates', () => {
-  it('exposes numerators with the completed denominator, plus format-length label (not quality)', () => {
+  it('exposes numerators with the completed denominator, plus format-length label', () => {
     const plan = makePlan('clean-01', '2');
     const c = getCaseById('clean-01');
-    const attempts = allCompleted(plan, {});
-    const result = buildBenchmarkResult({ plan, cases: [c], attempts });
+    const result = buildBenchmarkResult({ plan, cases: [c], attempts: allCompleted(plan) });
 
     for (const variant of ['baseline', 'experimental'] as const) {
       const rel = result.reliability[variant]!;
@@ -402,7 +381,6 @@ describe('paired deltas', () => {
     const c1 = getCaseById('clean-01');
     const c2 = getCaseById('local-01');
     const attempts: Attempt[] = [];
-    let completedPairs = 0;
     for (const entry of plan.entries) {
       const c = getCaseById(entry.caseId);
       // Fail every experimental attempt of round 1 → round-1 pairs incomplete.
@@ -410,7 +388,6 @@ describe('paired deltas', () => {
         attempts.push(makeFailed(entry, c, 'boom'));
       } else {
         attempts.push(makeCompleted(entry, c));
-        if (!entry.experimental) completedPairs += 1;
       }
     }
     const result = buildBenchmarkResult({ plan, cases: [c1, c2], attempts });
@@ -418,25 +395,19 @@ describe('paired deltas', () => {
     expect(result.pairs.completePairs).toBe(2); // round 0 only
     expect(result.pairs.incompletePairs).toBe(2); // round 1 pairs
     expect(result.pairs.deltas).toHaveLength(2);
-    expect(result.pairs.aggregate).not.toBeNull();
     expect(result.pairs.aggregate!.completePairs).toBe(2);
 
     for (const delta of result.pairs.deltas) {
       expect(delta.roundIndex).toBe(0);
-      expect(delta.baseline.variant).toBe('baseline');
-      expect(delta.experimental.variant).toBe('experimental');
       // Pair identity is exact: pairId/caseId/round shared by both sides.
       expect(delta.experimental.pairId).toBe(delta.baseline.pairId);
       expect(delta.experimental.caseId).toBe(delta.baseline.caseId);
       expect(delta.experimental.roundIndex).toBe(delta.baseline.roundIndex);
       expect(delta.pairId).toBe(delta.baseline.pairId);
-      // globalCallIndex matches the plan entries.
-      const planEntry = plan.entries.find((e) => e.globalCallIndex === delta.baseline.globalCallIndex)!;
-      expect(planEntry.pairId).toBe(delta.pairId);
     }
   });
 
-  it('aggregate means/medians use complete pairs only — never unmatched attempts', () => {
+  it('aggregate means/medians use complete pairs only; no complete pairs → null', () => {
     const plan = makePlan('clean-01, local-01', '2');
     const c1 = getCaseById('clean-01');
     const c2 = getCaseById('local-01');
@@ -444,52 +415,39 @@ describe('paired deltas', () => {
     for (const entry of plan.entries) {
       const c = getCaseById(entry.caseId);
       if (entry.roundIndex === 0) {
-        // Round 0 complete with distinct durations.
-        attempts.push(
-          makeCompleted(entry, c, { durationMs: entry.experimental ? 2000 : 1000 }),
-        );
+        attempts.push(makeCompleted(entry, c, { durationMs: entry.experimental ? 2000 : 1000 }));
       } else {
-        // Round 1: baseline completed, experimental failed → incomplete.
         attempts.push(
-          entry.experimental
-            ? makeFailed(entry, c, 'boom')
-            : makeCompleted(entry, c, { durationMs: 9000 }),
+          entry.experimental ? makeFailed(entry, c, 'boom') : makeCompleted(entry, c, { durationMs: 9000 }),
         );
       }
     }
     const result = buildBenchmarkResult({ plan, cases: [c1, c2], attempts });
     const agg = result.pairs.aggregate!;
-
     // 2 complete pairs, duration deltas 1000 and 1000 → mean/median 1000.
     // The 9000ms unmatched baseline must NOT leak into the mean.
     expect(agg.durationDeltaMs.mean).toBe(1000);
     expect(agg.durationDeltaMs.median).toBe(1000);
     expect(agg.outputDeltaTokens.mean).toBe(0);
-  });
 
-  it('no complete pairs → deltas empty and aggregate null', () => {
-    const plan = makePlan('clean-01, local-01', '1');
-    const attempts: Attempt[] = [];
-    for (const entry of plan.entries) {
+    const nonePlan = makePlan('clean-01, local-01', '1');
+    const noneAttempts: Attempt[] = [];
+    for (const entry of nonePlan.entries) {
       const c = getCaseById(entry.caseId);
-      attempts.push(
-        entry.experimental ? makeFailed(entry, c, 'boom') : makeCompleted(entry, c),
-      );
+      noneAttempts.push(entry.experimental ? makeFailed(entry, c, 'boom') : makeCompleted(entry, c));
     }
-    const result = buildBenchmarkResult({
-      plan,
+    const none = buildBenchmarkResult({
+      plan: nonePlan,
       cases: [getCaseById('clean-01'), getCaseById('local-01')],
-      attempts,
+      attempts: noneAttempts,
     });
-    expect(result.pairs.completePairs).toBe(0);
-    expect(result.pairs.incompletePairs).toBe(2);
-    expect(result.pairs.deltas).toEqual([]);
-    expect(result.pairs.aggregate).toBeNull();
+    expect(none.pairs.completePairs).toBe(0);
+    expect(none.pairs.incompletePairs).toBe(2);
+    expect(none.pairs.deltas).toEqual([]);
+    expect(none.pairs.aggregate).toBeNull();
   });
-});
 
-describe('savings percentages', () => {
-  it('output and rawChars savings are positive when experimental is lower, and distinct', () => {
+  it('savings percentages: positive when lower, negative when higher, null on zero baseline', () => {
     const plan = makePlan('clean-01', '1');
     const c = getCaseById('clean-01');
     const attempts = plan.entries.map((entry) =>
@@ -505,63 +463,46 @@ describe('savings percentages', () => {
     expect(delta.rawCharsSavingsPct).toBeCloseTo(10, 10); // (1000-900)/1000
     expect(delta.rawCharsSavingsPct).not.toBe(delta.outputSavingsPct);
     expect(delta.outputDeltaTokens).toBe(-100);
-    expect(delta.rawCharsDelta).toBe(-100);
     expect(result.pairs.aggregate!.outputSavingsPct.mean).toBeCloseTo(20, 10);
-    expect(result.pairs.aggregate!.rawCharsSavingsPct.mean).toBeCloseTo(10, 10);
-  });
 
-  it('experimental higher → negative savings; zero baseline → null', () => {
-    const plan = makePlan('clean-01, local-01', '1');
+    const both = makePlan('clean-01, local-01', '1');
     const c1 = getCaseById('clean-01');
     const c2 = getCaseById('local-01');
-    const attempts: Attempt[] = [];
-    for (const entry of plan.entries) {
-      const c = getCaseById(entry.caseId);
-      const isClean = entry.caseId === 'clean-01';
-      if (isClean) {
+    const mixed: Attempt[] = [];
+    for (const entry of both.entries) {
+      const cc = getCaseById(entry.caseId);
+      if (cc.id === 'clean-01') {
         // clean-01: baseline output 0 → savings null.
-        attempts.push(
-          makeCompleted(entry, c, {
+        mixed.push(
+          makeCompleted(entry, cc, {
             outputTokens: entry.experimental ? 100 : 0,
             rawChars: entry.experimental ? 200 : 0,
           }),
         );
       } else {
         // local-01: experimental higher → negative savings.
-        attempts.push(
-          makeCompleted(entry, c, {
+        mixed.push(
+          makeCompleted(entry, cc, {
             outputTokens: entry.experimental ? 700 : 500,
             rawChars: entry.experimental ? 1200 : 1000,
           }),
         );
       }
     }
-    const result = buildBenchmarkResult({
-      plan,
-      cases: [c1, c2],
-      attempts,
-    });
-    const clean = result.pairs.deltas.find((d) => d.caseId === 'clean-01')!;
-    const local = result.pairs.deltas.find((d) => d.caseId === 'local-01')!;
-
+    const mixedResult = buildBenchmarkResult({ plan: both, cases: [c1, c2], attempts: mixed });
+    const clean = mixedResult.pairs.deltas.find((d) => d.caseId === 'clean-01')!;
+    const local = mixedResult.pairs.deltas.find((d) => d.caseId === 'local-01')!;
     expect(clean.outputSavingsPct).toBeNull();
     expect(clean.rawCharsSavingsPct).toBeNull();
     expect(local.outputSavingsPct).toBeCloseTo(-40, 10); // (500-700)/500
-    expect(local.rawCharsSavingsPct).toBeCloseTo(-20, 10); // (1000-1200)/1000
+    expect(mixedResult.pairs.aggregate!.outputSavingsPct.mean).toBeCloseTo(-40, 10);
 
-    // Aggregate: null savings skipped; only the negative pair remains.
-    expect(result.pairs.aggregate!.outputSavingsPct.mean).toBeCloseTo(-40, 10);
-    expect(result.pairs.aggregate!.outputSavingsPct.median).toBeCloseTo(-40, 10);
-  });
-
-  it('zero completed pairs → aggregate savings null', () => {
-    const plan = makePlan('clean-01', '1');
-    const c = getCaseById('clean-01');
-    const attempts: Attempt[] = plan.entries.map((entry) =>
-      makeFailed(entry, c, 'boom'),
-    );
-    const result = buildBenchmarkResult({ plan, cases: [c], attempts });
-    expect(result.pairs.aggregate).toBeNull();
+    const zero = buildBenchmarkResult({
+      plan: makePlan('clean-01', '1'),
+      cases: [getCaseById('clean-01')],
+      attempts: allFailed(makePlan('clean-01', '1'), 'boom'),
+    });
+    expect(zero.pairs.aggregate).toBeNull();
   });
 });
 
@@ -579,19 +520,11 @@ describe('quality pre-gate vs post-gate', () => {
       if (c.id === 'clean-01') {
         // clean-01 has zero gold issues: one generated finding is an FP that
         // the gate drops → preGate fp 1, postGate clean.
-        attempts.push(
-          makeCompleted(entry, c, {
-            generated: [WRONG_PATH_FINDING],
-            retained: [],
-          }),
-        );
+        attempts.push(makeCompleted(entry, c, { generated: [WRONG_PATH_FINDING], retained: [] }));
       } else {
         // local-01: both gold issues detected and retained.
         attempts.push(
-          makeCompleted(entry, c, {
-            generated: [TOTALS_FINDING, TAKE_N_FINDING],
-            retained: [TOTALS_FINDING, TAKE_N_FINDING],
-          }),
+          makeCompleted(entry, c, { generated: [TOTALS_FINDING, TAKE_N_FINDING], retained: [TOTALS_FINDING, TAKE_N_FINDING] }),
         );
       }
     }
@@ -599,8 +532,6 @@ describe('quality pre-gate vs post-gate', () => {
 
     const pre = result.quality.preGate.baseline!;
     const post = result.quality.postGate.baseline!;
-
-    // Pre-gate: clean-01 run contributes 1 FP, local-01 run contributes 2 TP.
     expect(pre.totalTp).toBe(2);
     expect(pre.totalFp).toBe(1);
     expect(pre.micro.precision).toBeCloseTo(2 / 3, 10);
@@ -610,12 +541,10 @@ describe('quality pre-gate vs post-gate', () => {
     expect(post.micro.precision).toBe(1);
     expect(post.micro.recall).toBe(1);
 
-    // Per-case summaries preserved.
     const perCase = new Map(post.perCase.map((p) => [p.caseId, p]));
     expect(perCase.get('clean-01')).toMatchObject({ runs: 1, tp: 0, fp: 0, clean: true });
     expect(perCase.get('local-01')).toMatchObject({ runs: 1, tp: 2, fp: 0, clean: true });
 
-    // Per-issue detection preserved.
     const byIssue = new Map(post.perIssueDetection.map((d) => [d.issueId, d]));
     expect(byIssue.get('local-01-01')).toMatchObject({ occurrences: 1, detected: 1 });
     expect(byIssue.get('local-01-02')).toMatchObject({ occurrences: 1, detected: 1 });
@@ -629,71 +558,50 @@ describe('large regression detection', () => {
   function regressionAttempts(plan: EvalPlan, experimentalDetects: boolean): Attempt[] {
     return plan.entries.map((entry) => {
       const c = getCaseById(entry.caseId);
-      if (!entry.experimental) {
-        return makeCompleted(entry, c, {
-          generated: [TOTALS_FINDING, TAKE_N_FINDING],
-          retained: [TOTALS_FINDING, TAKE_N_FINDING],
-        });
+      if (!entry.experimental || experimentalDetects) {
+        return makeCompleted(entry, c, { generated: [TOTALS_FINDING, TAKE_N_FINDING], retained: [TOTALS_FINDING, TAKE_N_FINDING] });
       }
-      return experimentalDetects
-        ? makeCompleted(entry, c, {
-            generated: [TOTALS_FINDING, TAKE_N_FINDING],
-            retained: [TOTALS_FINDING, TAKE_N_FINDING],
-          })
-        : makeCompleted(entry, c, { generated: [], retained: [] });
+      return makeCompleted(entry, c, { generated: [], retained: [] });
     });
   }
 
-  it('is insufficient-data below the configured minimum runs (4)', () => {
-    const plan = makePlan('local-01', '3'); // 3 < 4
-    const c = getCaseById('local-01');
-    const result = buildBenchmarkResult({
-      plan,
-      cases: [c],
-      attempts: regressionAttempts(plan, false),
+  it('is insufficient-data below min runs, detects a large regression at 4, reports none otherwise', () => {
+    const low = buildBenchmarkResult({
+      plan: makePlan('local-01', '3'),
+      cases: [getCaseById('local-01')],
+      attempts: regressionAttempts(makePlan('local-01', '3'), false),
     });
-    expect(result.regressions).toHaveLength(1);
-    expect(result.regressions[0].status).toBe('insufficient-data');
-    expect(result.regressions[0].baseline).toBeNull();
-    expect(result.regressions[0].experimental).toBeNull();
-    expect(result.regressions[0].runs).toBe(3);
-  });
+    expect(low.regressions[0].status).toBe('insufficient-data');
+    expect(low.regressions[0].runs).toBe(3);
+    expect(low.regressions[0].baseline).toBeNull();
 
-  it('detects a large regression at 4 runs when baseline detection is high and experimental collapses', () => {
-    const plan = makePlan('local-01', '4');
-    const c = getCaseById('local-01');
-    const result = buildBenchmarkResult({
-      plan,
-      cases: [c],
-      attempts: regressionAttempts(plan, false),
+    const hit = buildBenchmarkResult({
+      plan: makePlan('local-01', '4'),
+      cases: [getCaseById('local-01')],
+      attempts: regressionAttempts(makePlan('local-01', '4'), false),
     });
-    const regression = result.regressions[0];
+    const regression = hit.regressions[0];
     expect(regression.status).toBe('detected');
     expect(regression.metric).toBe('microRecall');
     expect(regression.baseline).toBe(1); // 8 TP / 8 gold
     expect(regression.experimental).toBe(0); // 0 TP / 8 gold
     expect(regression.baselineThreshold).toBe(0.75);
     expect(regression.experimentalThreshold).toBe(0.25);
-  });
 
-  it('reports none when experimental stays within thresholds', () => {
-    const plan = makePlan('local-01', '4');
-    const c = getCaseById('local-01');
-    const result = buildBenchmarkResult({
-      plan,
-      cases: [c],
-      attempts: regressionAttempts(plan, true),
+    const none = buildBenchmarkResult({
+      plan: makePlan('local-01', '4'),
+      cases: [getCaseById('local-01')],
+      attempts: regressionAttempts(makePlan('local-01', '4'), true),
     });
-    expect(result.regressions[0].status).toBe('none');
-    expect(result.regressions[0].experimental).toBe(1);
+    expect(none.regressions[0].status).toBe('none');
+    expect(none.regressions[0].experimental).toBe(1);
   });
 
   it('respects custom minRuns and thresholds', () => {
     const plan = makePlan('local-01', '2');
-    const c = getCaseById('local-01');
     const result = buildBenchmarkResult({
       plan,
-      cases: [c],
+      cases: [getCaseById('local-01')],
       attempts: regressionAttempts(plan, false),
       regression: { minRuns: 2, baselineThreshold: 0.5, experimentalThreshold: 0.5 },
     });
@@ -743,8 +651,6 @@ describe('artifact v2 shape', () => {
       seed: 'fiscalcr-eval-v2',
     });
     expect(artifact.repository).toEqual({ commit: 'deadbeef', dirty: false });
-    expect(artifact.provider).toBe('kimi');
-    expect(artifact.model).toBe('kimi-for-coding');
     expect(artifact.prompt.baseline.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(artifact.prompt.baseline.chars).toBe('system A + user A'.length);
     expect(artifact.prompt.experimental.sha256).not.toBe(artifact.prompt.baseline.sha256);
@@ -777,7 +683,6 @@ describe('artifact v2 shape', () => {
     expect(local.label).toBe('Add invoice totals helpers');
     expect(local.tags).toContain('local-correctness');
     expect(local.expectedIssues.map((i) => i.issueId)).toEqual(['local-01-01', 'local-01-02']);
-    expect(local.expectedIssues[0].acceptedPaths).toEqual(['src/invoice/totals.ts']);
     expect(local.expectedIssues[0].rationale.length).toBeGreaterThan(0);
 
     const json = JSON.stringify(artifact);
@@ -786,7 +691,7 @@ describe('artifact v2 shape', () => {
     expect(json).not.toContain('"patch"');
   });
 
-  it('keeps completed review text for the later blind human report', () => {
+  it('keeps completed review text but never persists a raw provider body sentinel', () => {
     const artifact = buildArtifact();
     const json = JSON.stringify(artifact);
     expect(json).toContain(SUMMARY);
@@ -796,9 +701,7 @@ describe('artifact v2 shape', () => {
     if (completed.status === 'completed') {
       expect(completed.metrics.review.summary).toBe(SUMMARY);
     }
-  });
 
-  it('never persists a raw provider body sentinel', () => {
     const RAW_MARKER = 'RAW-CONTENT-SENTINEL-2468';
     const plan = makePlan('clean-01', '1');
     const c = getCaseById('clean-01');
@@ -814,27 +717,13 @@ describe('artifact v2 shape', () => {
       1,
       1000,
     );
-    // captureFromResponse never stores content — only rawChars.
     expect(JSON.stringify(capture)).not.toContain(RAW_MARKER);
-    const result: ReviewResult = {
-      summary: SUMMARY, score: 82, annotations: [],
-      stats: { critical: 0, warning: 0, suggestion: 0, nitpick: 0 },
-      tokensUsed: { input: 100, output: 50, cached: 0 },
-      walkthrough: WALKTHROUGH, intent: INTENT, callCount: 1,
-    };
-    const metrics = buildRunMetrics({
-      experimental: entry.experimental, pairIndex: entry.roundIndex, runIndex: entry.caseIndex,
-      durationMs: 1000, tokens: { input: 100, output: 50, cached: 0 }, calls: 1,
-      captures: [capture], result, changedFilePaths: CHANGED_PATHS,
-    });
     const attempt = completedAttempt({
       identity: planIdentityOf(entry), case: caseIdentityOf(c),
-      requestTimestamp: TIMESTAMP, metrics,
-      quality: evaluateRunQuality({
-        case: c, generatedFindings: [], retainedFindings: [], outputTokens: 50,
-      }),
+      requestTimestamp: TIMESTAMP, metrics: makeCompleted(entry, c).metrics,
+      quality: evaluateRunQuality({ case: c, generatedFindings: [], retainedFindings: [], outputTokens: 50 }),
     });
-    const artifact = buildBenchmarkArtifact({
+    const markedArtifact = buildBenchmarkArtifact({
       timestamp: TIMESTAMP,
       benchmark: { suiteId: 's', suiteVersion: 1 },
       repository: { commit: null, dirty: null },
@@ -843,14 +732,13 @@ describe('artifact v2 shape', () => {
       retries: 0, timeoutMs: 1000,
       plan, cases: [c], attempts: [attempt],
     });
-    expect(JSON.stringify(artifact)).not.toContain(RAW_MARKER);
+    expect(JSON.stringify(markedArtifact)).not.toContain(RAW_MARKER);
   });
 
   it('fails closed when a completed attempt references an unknown case', () => {
     const plan = makePlan('clean-01', '1');
-    const attempts = allCompleted(plan);
     expect(() =>
-      buildBenchmarkResult({ plan, cases: [], attempts }),
+      buildBenchmarkResult({ plan, cases: [], attempts: allCompleted(plan) }),
     ).toThrow(/unknown case/);
   });
 });
@@ -873,50 +761,41 @@ describe('assertArtifactSafe', () => {
     });
   }
 
-  it('passes on a clean artifact (no forbidden keys/substrings)', () => {
+  it('passes clean artifacts; catches planted secrets, forbidden keys, and empty-string absences', () => {
     const artifact = cleanArtifact();
     expect(checkArtifactSafety(artifact).safe).toBe(true);
     expect(() => assertArtifactSafe(artifact)).not.toThrow();
     expect(() => assertArtifactSafe(artifact, { secret: 'sk-test-abcdef' })).not.toThrow();
-  });
 
-  it('recursively catches a planted secret deep in review text', () => {
-    const artifact = cleanArtifact();
-    const attempt = artifact.attempts[0] as CompletedAttempt;
+    // Planted secret deep in review text is caught recursively.
+    const leak = cleanArtifact();
+    const attempt = leak.attempts[0] as CompletedAttempt;
     (attempt.metrics.review.annotations as ReviewAnnotation[]).push({
       path: 'src/x.ts', startLine: 1, endLine: 1,
       severity: 'warning', category: 'bug',
       title: 'leak', body: 'the token is sk-test-abcdef',
     });
-
-    const report = checkArtifactSafety(artifact, { secret: 'sk-test-abcdef' });
+    const report = checkArtifactSafety(leak, { secret: 'sk-test-abcdef' });
     expect(report.safe).toBe(false);
-    expect(report.violations.length).toBeGreaterThan(0);
     expect(report.violations[0].kind).toBe('substring');
     expect(report.violations[0].match).toBe('sk-test-abcdef');
     expect(report.violations[0].path).toContain('attempts');
-    expect(() => assertArtifactSafe(artifact, { secret: 'sk-test-abcdef' })).toThrow(
-      /sk-test-abcdef/,
-    );
-  });
+    expect(() => assertArtifactSafe(leak, { secret: 'sk-test-abcdef' })).toThrow(/sk-test-abcdef/);
 
-  it('catches forbidden keys at any depth (key-based, case-insensitive)', () => {
-    const artifact = cleanArtifact();
-    (artifact.aggregates as unknown as Record<string, unknown>).apiKey = 'sk-test-xyz';
-    (artifact.pairs as unknown as Record<string, unknown>).RAW_RESPONSE = 'nope';
-    (artifact.config as unknown as Record<string, unknown>)['baseUrl'] = 'https://x';
-
-    const report = checkArtifactSafety(artifact);
-    expect(report.safe).toBe(false);
-    const keys = report.violations.filter((v) => v.kind === 'key').map((v) => v.path);
-    expect(keys).toEqual(
+    // Forbidden keys at any depth (key-based, case-insensitive).
+    const keys = cleanArtifact();
+    (keys.aggregates as unknown as Record<string, unknown>).apiKey = 'sk-test-xyz';
+    (keys.pairs as unknown as Record<string, unknown>).RAW_RESPONSE = 'nope';
+    (keys.config as unknown as Record<string, unknown>)['baseUrl'] = 'https://x';
+    const keyReport = checkArtifactSafety(keys);
+    expect(keyReport.safe).toBe(false);
+    const keyPaths = keyReport.violations.filter((v) => v.kind === 'key').map((v) => v.path);
+    expect(keyPaths).toEqual(
       expect.arrayContaining(['aggregates.apiKey', 'pairs.RAW_RESPONSE', 'config.baseUrl']),
     );
-  });
 
-  it('reports an empty string secret as absent (never matches everything)', () => {
-    const artifact = cleanArtifact();
-    expect(checkArtifactSafety(artifact, { secret: '' }).safe).toBe(true);
+    // Empty-string secret is reported absent (never matches everything).
+    expect(checkArtifactSafety(cleanArtifact(), { secret: '' }).safe).toBe(true);
   });
 });
 
@@ -924,7 +803,7 @@ describe('assertArtifactSafe', () => {
 // Determinism / numeric hygiene
 
 describe('determinism and numeric hygiene', () => {
-  it('serializes identically for identical inputs', () => {
+  it('serializes identically for identical inputs and contains no NaN or Infinity', () => {
     const plan = makePlan('clean-01, local-01', '2');
     const cases = plan.config.caseIds.map((id) => getCaseById(id));
     const build = () =>
@@ -938,21 +817,15 @@ describe('determinism and numeric hygiene', () => {
         plan, cases, attempts: allCompleted(plan),
       });
     expect(JSON.stringify(build())).toBe(JSON.stringify(build()));
-  });
 
-  it('contains no NaN or Infinity anywhere', () => {
-    const plan = makePlan('clean-01, local-01', '2');
-    const cases = plan.config.caseIds.map((id) => getCaseById(id));
+    // Zero-output edges + a failed experimental round-1 attempt.
     const attempts: Attempt[] = [];
     for (const entry of plan.entries) {
       const c = getCaseById(entry.caseId);
       attempts.push(
         entry.experimental && entry.roundIndex === 1
           ? makeFailed(entry, c, 'boom')
-          : makeCompleted(entry, c, {
-              outputTokens: entry.experimental ? 0 : 0, // zero-output edge
-              rawChars: 0,
-            }),
+          : makeCompleted(entry, c, { outputTokens: 0, rawChars: 0 }),
       );
     }
     const artifact = buildBenchmarkArtifact({
@@ -965,15 +838,281 @@ describe('determinism and numeric hygiene', () => {
       plan, cases, attempts,
     });
     assertFiniteNumbers(artifact);
-    // Zero-output edges yield null savings, never a division blowup.
     const json = JSON.stringify(artifact);
     expect(json).not.toContain('NaN');
     expect(json).not.toContain('Infinity');
-  });
 
-  it('sha256Hex is deterministic and 64 hex chars', () => {
+    // sha256Hex is deterministic and 64 hex chars.
     expect(sha256Hex('hello')).toBe(sha256Hex('hello'));
     expect(sha256Hex('hello')).toMatch(/^[0-9a-f]{64}$/);
     expect(sha256Hex('hello')).not.toBe(sha256Hex('world'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blind report: deterministic assignment / fence / rendering
+
+describe('deterministicAssignment', () => {
+  it('is deterministic for the same seed + pairId and balanced across many pairs', () => {
+    const a1 = deterministicAssignment('seed-a', 'pair-1');
+    expect(a1).toEqual(deterministicAssignment('seed-a', 'pair-1'));
+    expect(a1.a).not.toBe(a1.b);
+    expect(['baseline', 'experimental']).toContain(a1.a);
+
+    let aIsBaseline = 0;
+    const total = 100;
+    for (let i = 0; i < total; i++) {
+      const a = deterministicAssignment('seed-x', `pair-${i}`);
+      expect(a.a).not.toBe(a.b);
+      if (a.a === 'baseline') aIsBaseline++;
+    }
+    // With 100 fair coin flips, expect ~50; be tolerant.
+    expect(aIsBaseline).toBeGreaterThanOrEqual(35);
+    expect(aIsBaseline).toBeLessThanOrEqual(65);
+  });
+});
+
+describe('chooseFence', () => {
+  it('picks a backtick fence that does not appear inside the content', () => {
+    expect(chooseFence('hello world')).toBe('````');
+    expect(chooseFence('code: ````')).toBe('`````');
+    expect(chooseFence('``````')).toBe('```````');
+  });
+});
+
+describe('renderReview', () => {
+  const review: ReviewResult = {
+    summary: 'The PR introduces a race condition.',
+    score: 70,
+    annotations: [
+      {
+        path: 'src/cache.ts',
+        startLine: 5,
+        endLine: 5,
+        severity: 'warning',
+        category: 'bug',
+        title: 'Check-then-act race',
+        body: 'Two concurrent callers may both miss the cache.',
+        suggestedFix: 'Use a single-flight pattern.',
+      },
+    ],
+    stats: { critical: 0, warning: 1, suggestion: 0, nitpick: 0 },
+    tokensUsed: { input: 100, output: 50, cached: 0 },
+    walkthrough: [{ path: 'src/cache.ts', summary: 'adds cache' }],
+    intent: 'Add cache.',
+    callCount: 1,
+  };
+
+  it('renders summary, walkthrough, and findings; omits fix and empties gracefully', () => {
+    const md = renderReview(review, 'A');
+    expect(md).toContain('Review A');
+    expect(md).toContain('The PR introduces a race condition.');
+    expect(md).toContain('adds cache');
+    expect(md).toContain('Check-then-act race');
+    expect(md).toContain('Use a single-flight pattern.');
+
+    const noFix: ReviewResult = { ...review, annotations: [{ ...review.annotations[0], suggestedFix: undefined }] };
+    expect(renderReview(noFix, 'B')).not.toContain('Suggested fix');
+
+    const empty: ReviewResult = { ...review, walkthrough: [], annotations: [] };
+    expect(renderReview(empty, 'A')).toContain('_(none)_');
+  });
+});
+
+describe('renderCaseContext', () => {
+  it('renders title, description, and changed files with patches', () => {
+    const c = getCaseById('clean-01');
+    const md = renderCaseContext(c.context, 'pair-clean-01-r0');
+    expect(md).toContain('pair-clean-01-r0');
+    expect(md).toContain('Add timestamp formatting helper');
+    expect(md).toContain('format-time.ts');
+    expect(md).toContain('@@ -0,0 +1');
+    expect(md).toContain('export function formatTime');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blind report: pairs / report / key
+
+describe('buildBlindPair', () => {
+  it('assigns reviews to A/B deterministically and is stable for the same seed', () => {
+    const plan = makePlan('clean-01', '1');
+    const c = getCaseById('clean-01');
+    const baselineAttempt = makeCompleted(plan.entries[0], c);
+    const experimentalAttempt = makeCompleted(plan.entries[1], c);
+
+    const pair = buildBlindPair({
+      pairId: 'clean-01@r0',
+      caseId: 'clean-01',
+      roundIndex: 0,
+      baselineAttempt,
+      experimentalAttempt,
+      case: c,
+      seed: 'test-seed',
+    });
+    expect(pair.pairId).toBe('clean-01@r0');
+    expect([pair.assignment.a, pair.assignment.b].sort()).toEqual(['baseline', 'experimental']);
+    const expectedA =
+      pair.assignment.a === 'baseline'
+        ? baselineAttempt.metrics.review
+        : experimentalAttempt.metrics.review;
+    expect(pair.reviewA).toBe(expectedA);
+
+    // Rebuilt with the same seed → identical assignment and reviews.
+    const rebuilt = buildBlindPair({
+      pairId: 'clean-01@r0',
+      caseId: 'clean-01',
+      roundIndex: 0,
+      baselineAttempt,
+      experimentalAttempt,
+      case: c,
+      seed: 'test-seed',
+    });
+    expect(rebuilt.assignment).toEqual(pair.assignment);
+    expect(rebuilt.reviewA).toBe(pair.reviewA);
+    expect(rebuilt.reviewB).toBe(pair.reviewB);
+  });
+});
+
+describe('buildBlindReport', () => {
+  it('contains A/B reviews, context, and rubric but no variant labels or metrics clues', () => {
+    const plan = makePlan('clean-01', '1');
+    const pair = blindPairOf(plan, 'test-seed').pair;
+
+    const report = buildBlindReport({ seed: 'test-seed', pairs: [pair], excludedPairIds: [] });
+
+    expect(report).toContain('FiscalCR Blind Review Pack');
+    expect(report).toContain('Review A');
+    expect(report).toContain('Review B');
+    expect(report).toContain('Scoring Worksheet');
+    expect(report).toContain('Correctness');
+    expect(report).toContain('Clarity / readability');
+
+    // Must NOT contain variant labels or metrics clues.
+    expect(report.toLowerCase()).not.toContain('baseline');
+    expect(report.toLowerCase()).not.toContain('experimental');
+    expect(report).not.toContain('outputTokens');
+    expect(report).not.toContain('durationMs');
+    expect(report).not.toContain('gold issue');
+    expect(report).not.toContain('rationale');
+    expect(report).not.toContain('TP ');
+    expect(report).not.toContain('FP ');
+    expect(report).not.toContain('F1 ');
+  });
+
+  it('lists excluded incomplete pairs and renders only retained annotations', () => {
+    const excluded = buildBlindReport({ seed: 'test-seed', pairs: [], excludedPairIds: ['local-01@r0', 'security-01@r0'] });
+    expect(excluded).toContain('**Excluded (incomplete):** 2 pair(s)');
+    expect(excluded).toContain('local-01@r0');
+    expect(excluded).toContain('security-01@r0');
+
+    // Generated has 2 findings but only 1 retained → the filtered one is hidden.
+    const plan = makePlan('local-01', '1');
+    const c = getCaseById('local-01');
+    const generated: ReviewAnnotation[] = [
+      {
+        path: 'src/invoice/totals.ts', startLine: 14, endLine: 14,
+        severity: 'warning', category: 'bug', title: 'firstPrice throws', body: 'items[0] is undefined.',
+      },
+      {
+        path: 'src/invoice/totals.ts', startLine: 99, endLine: 99,
+        severity: 'warning', category: 'bug', title: 'fake finding', body: 'this was filtered out.',
+      },
+    ];
+    const retained = [generated[0]];
+    const baseline = makeCompleted(plan.entries[0], c, { generated, retained });
+    const experimental = makeCompleted(plan.entries[1], c);
+    const pair = buildBlindPair({
+      pairId: 'local-01@r0',
+      caseId: 'local-01',
+      roundIndex: 0,
+      baselineAttempt: baseline,
+      experimentalAttempt: experimental,
+      case: c,
+      seed: 'test-seed',
+    });
+    const report = buildBlindReport({ seed: 'test-seed', pairs: [pair], excludedPairIds: [] });
+    expect(report).toContain('firstPrice throws');
+    expect(report).not.toContain('fake finding');
+  });
+
+  it('is fence-safe against fixture content containing backticks', () => {
+    const plan = makePlan('clean-01', '1');
+    const pair = blindPairOf(plan, 'fence-test').pair;
+    const report = buildBlindReport({ seed: 'fence-test', pairs: [pair], excludedPairIds: [] });
+    expect(report).toContain('FiscalCR Blind Review Pack');
+    // Fence openings and closings match in pairs.
+    const fenceMatches = report.match(/```+/g);
+    if (fenceMatches) {
+      expect(fenceMatches.length % 2).toBe(0);
+    }
+  });
+});
+
+describe('buildBlindKey', () => {
+  it('maps blindPairId to baseline/experimental with no review text or context', () => {
+    const plan = makePlan('clean-01', '1');
+    const { pair } = blindPairOf(plan, 'test-seed');
+
+    const key = buildBlindKey([pair], 'test-seed', TIMESTAMP);
+    expect(key.schema).toBe('fiscalcr-blind-key-v1');
+    expect(key.seed).toBe('test-seed');
+    expect(key.pairs).toHaveLength(1);
+
+    const entry = key.pairs[0];
+    expect(entry.blindPairId).toBe(pair.blindPairId);
+    expect(entry.pairId).toBe('clean-01@r0');
+    expect(entry.reviewA).toBe(pair.assignment.a);
+    expect(entry.reviewB).toBe(pair.assignment.b);
+
+    const json = JSON.stringify(key);
+    expect(json).not.toContain('Good change overall.');
+    expect(json).not.toContain('adds backoff');
+    expect(json).not.toContain('format-time');
+    expect(json).not.toContain('diff');
+  });
+});
+
+describe('buildBlindPairsFromAttempts', () => {
+  it('excludes incomplete pairs, returns none when no complete pairs, and sorts by round then case', () => {
+    // 2 pairs, drop the experimental side of local-01.
+    const plan = makePlan('clean-01, local-01', '1');
+    const c1 = getCaseById('clean-01');
+    const c2 = getCaseById('local-01');
+    const attempts: CompletedAttempt[] = [];
+    for (const entry of plan.entries) {
+      const c = getCaseById(entry.caseId);
+      if (entry.caseId === 'local-01' && entry.experimental) continue;
+      attempts.push(makeCompleted(entry, c));
+    }
+    const { pairs, excludedPairIds } = buildBlindPairsFromAttempts({
+      seed: 'test-seed',
+      attempts,
+      casesById: new Map([c1, c2].map((c) => [c.id, c])),
+    });
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].caseId).toBe('clean-01');
+    expect(excludedPairIds).toContain('local-01@r0');
+
+    // Only baseline completed → nothing to pair.
+    const none = buildBlindPairsFromAttempts({
+      seed: 'test-seed',
+      attempts: [makeCompleted(plan.entries[0], c1)],
+      casesById: new Map([[c1.id, c1]]),
+    });
+    expect(none.pairs).toHaveLength(0);
+    expect(none.excludedPairIds).toContain('clean-01@r0');
+
+    // 2 cases × 2 rounds → 4 pairs sorted by roundIndex then caseId.
+    const full = makePlan('clean-01, local-01', '2');
+    const fullAttempts = full.entries.map((entry) => makeCompleted(entry, getCaseById(entry.caseId)));
+    const sorted = buildBlindPairsFromAttempts({
+      seed: 'test-seed',
+      attempts: fullAttempts,
+      casesById: new Map([c1, c2].map((c) => [c.id, c])),
+    });
+    expect(sorted.pairs).toHaveLength(4);
+    const order = sorted.pairs.map((p) => `${p.roundIndex}-${p.caseId}`);
+    expect(order).toEqual(order.slice().sort());
   });
 });

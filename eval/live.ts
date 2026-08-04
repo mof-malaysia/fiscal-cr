@@ -8,8 +8,8 @@ import {
   type BudgetCheck,
   type EvalPlan,
   type EvalSelection,
-} from './eval-plan.js';
-import { SUITE_ID, SUITE_VERSION } from './eval-cases.js';
+} from './plan.js';
+import { SUITE_ID, SUITE_VERSION } from './cases.js';
 import {
   assertArtifactSafe,
   buildBenchmarkArtifact,
@@ -22,27 +22,25 @@ import {
   type VariantLabel,
   type VariantPerformanceAggregate,
   type VariantReliabilityAggregate,
-} from './eval-benchmark.js';
+} from './benchmark.js';
 import {
   buildSuitePromptMetadata,
   executePlan,
-  gitRepoMetadata,
-  DEFAULT_CALL_TIMEOUT_MS,
-  DEFAULT_RETRIES,
-  type SuitePromptMetadata,
-} from './eval-runtime.js';
-import {
   formatDuration,
+  gitRepoMetadata,
   requireApiKey,
   resolveEvalEnv,
+  DEFAULT_CALL_TIMEOUT_MS,
+  DEFAULT_RETRIES,
   type EvalEnvConfig,
-} from './eval-helpers.js';
-import type { Attempt, CompletedAttempt } from './eval-benchmark.js';
+  type SuitePromptMetadata,
+} from './runtime.js';
+import type { Attempt, CompletedAttempt } from './benchmark.js';
 import {
   buildBlindKey,
   buildBlindPairsFromAttempts,
   buildBlindReport,
-} from './eval-blind-report.js';
+} from './blind-report.js';
 
 const RESULT_DIR = '.eval-results';
 

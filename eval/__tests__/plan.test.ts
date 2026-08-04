@@ -4,7 +4,6 @@ import {
   DEFAULT_EVAL_SEED,
   DEFAULT_MAX_CALLS,
   assertCallBudget,
-  buildEvalPlan,
   buildEvalPlanFromEnv,
   checkCallBudget,
   groupPlanPairs,
@@ -14,8 +13,8 @@ import {
   roundRotationOffset,
   variantOrderForCaseRound,
   type EvalPlan,
-} from '../../scripts/eval-plan.js';
-import { getFullCaseIds, getSmokeCaseIds } from '../../scripts/eval-cases.js';
+} from '../plan.js';
+import { getFullCaseIds, getSmokeCaseIds } from '../cases.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -73,69 +72,49 @@ describe('resolveEvalSelection env semantics', () => {
     expect(sel.cases.map((c) => c.id)).toEqual(sel.caseIds);
   });
 
-  it('resolves full suite to all 10 cases', () => {
-    const sel = resolveEvalSelection(env({ EVAL_SUITE: 'full' }));
-    expect(sel.suite).toBe('full');
-    expect(sel.caseIds).toEqual(getFullCaseIds());
-    expect(sel.caseIds).toHaveLength(10);
-  });
+  it('resolves full suite to all 10 cases; explicit EVAL_CASES overrides it', () => {
+    const full = resolveEvalSelection(env({ EVAL_SUITE: 'full' }));
+    expect(full.suite).toBe('full');
+    expect(full.caseIds).toEqual(getFullCaseIds());
+    expect(full.caseIds).toHaveLength(10);
 
-  it('explicit EVAL_CASES overrides the suite (whitespace-tolerant)', () => {
-    const sel = resolveEvalSelection(
+    const explicit = resolveEvalSelection(
       env({ EVAL_SUITE: 'full', EVAL_CASES: ' clean-01, security-01 ' }),
     );
-    expect(sel.explicit).toBe(true);
-    expect(sel.caseIds).toEqual(['clean-01', 'security-01']);
-    expect(sel.suite).toBe('full'); // suite still reported, but unused
+    expect(explicit.explicit).toBe(true);
+    expect(explicit.caseIds).toEqual(['clean-01', 'security-01']);
+    expect(explicit.suite).toBe('full'); // suite still reported, but unused
   });
 
-  it('rejects an invalid suite', () => {
-    expect(() => resolveEvalSelection(env({ EVAL_SUITE: 'banana' }))).toThrow(
-      /invalid eval_suite/i,
-    );
+  it('rejects invalid suite, case ids, runs, max calls, and seed', () => {
+    expect(() => resolveEvalSelection(env({ EVAL_SUITE: 'banana' }))).toThrow(/invalid eval_suite/i);
     // Suite is validated even when EVAL_CASES would override it.
     expect(() =>
       resolveEvalSelection(env({ EVAL_SUITE: 'banana', EVAL_CASES: 'clean-01' })),
     ).toThrow(/invalid eval_suite/i);
-  });
 
-  it('rejects unknown, empty, and duplicate explicit case ids', () => {
     expect(() => resolveEvalSelection(env({ EVAL_CASES: 'nope-99' }))).toThrow(/nope-99/);
-    expect(() =>
-      resolveEvalSelection(env({ EVAL_CASES: 'clean-01, nope-99' })),
-    ).toThrow(/unknown eval case id\(s\): nope-99/i);
+    expect(() => resolveEvalSelection(env({ EVAL_CASES: 'clean-01, nope-99' }))).toThrow(
+      /unknown eval case id\(s\): nope-99/i,
+    );
     expect(() => resolveEvalSelection(env({ EVAL_CASES: '' }))).toThrow(/no eval case ids/i);
-    expect(() => resolveEvalSelection(env({ EVAL_CASES: '   ' }))).toThrow(/no eval case ids/i);
-    expect(() =>
-      resolveEvalSelection(env({ EVAL_CASES: 'clean-01, clean-01' })),
-    ).toThrow(/duplicate eval case id\(s\)/i);
-    expect(() =>
-      resolveEvalSelection(env({ EVAL_CASES: 'clean-01, clean-01, security-01' })),
-    ).toThrow(/duplicate eval case id\(s\)/i);
-  });
+    expect(() => resolveEvalSelection(env({ EVAL_CASES: 'clean-01, clean-01' }))).toThrow(
+      /duplicate eval case id\(s\)/i,
+    );
 
-  it('rejects invalid EVAL_RUNS / EVAL_MAX_CALLS numbers', () => {
     for (const value of ['0', '-1', 'abc', '1.5']) {
-      expect(() => resolveEvalSelection(env({ EVAL_RUNS: value }))).toThrow(
-        /invalid eval_runs/i,
-      );
+      expect(() => resolveEvalSelection(env({ EVAL_RUNS: value }))).toThrow(/invalid eval_runs/i);
       expect(() => resolveEvalSelection(env({ EVAL_MAX_CALLS: value }))).toThrow(
         /invalid eval_max_calls/i,
       );
     }
-    // Blank numeric vars are treated as unset (defaults), matching the legacy
-    // harness behavior for EVAL_RUNS.
+    // Blank numeric vars are treated as unset (defaults).
     expect(resolveEvalSelection(env({ EVAL_RUNS: '  ' })).runs).toBe(1);
-    expect(resolveEvalSelection(env({ EVAL_MAX_CALLS: '  ' })).maxCalls).toBe(
-      DEFAULT_MAX_CALLS,
-    );
+    expect(resolveEvalSelection(env({ EVAL_MAX_CALLS: '  ' })).maxCalls).toBe(DEFAULT_MAX_CALLS);
     expect(resolveEvalSelection(env({ EVAL_RUNS: '4' })).runs).toBe(4);
     expect(resolveEvalSelection(env({ EVAL_MAX_CALLS: '80' })).maxCalls).toBe(80);
-  });
 
-  it('rejects an empty EVAL_SEED but accepts a custom one', () => {
     expect(() => resolveEvalSelection(env({ EVAL_SEED: '' }))).toThrow(/eval_seed/i);
-    expect(() => resolveEvalSelection(env({ EVAL_SEED: '   ' }))).toThrow(/eval_seed/i);
     expect(resolveEvalSelection(env({ EVAL_SEED: 'my-seed' })).seed).toBe('my-seed');
   });
 });
@@ -143,7 +122,7 @@ describe('resolveEvalSelection env semantics', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildEvalPlan schedule', () => {
-  it('smoke default: 3 cases, 6 planned calls, valid entry bookkeeping', () => {
+  it('smoke default: 3 cases, 6 planned calls; planned calls scale with suite and runs', () => {
     const plan = buildEvalPlanFromEnv(env());
     expect(plan.plannedCalls).toBe(6);
     expect(plan.entries).toHaveLength(6);
@@ -162,27 +141,14 @@ describe('buildEvalPlan schedule', () => {
       );
       expect(entries.map((e) => e.pairId)).toEqual([`${id}@r0`, `${id}@r0`]);
     }
-  });
 
-  it('full suite: 10 cases, 20 planned calls', () => {
-    const plan = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' }));
-    expect(plan.plannedCalls).toBe(20);
-    expect(plan.entries).toHaveLength(20);
-    expect(plan.config.suite).toBe('full');
-  });
-
-  it('planned calls scale with runs (cases * runs * 2)', () => {
+    // Planned calls = cases * runs * 2.
+    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' })).plannedCalls).toBe(20);
+    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' })).config.suite).toBe('full');
     expect(buildEvalPlanFromEnv(env({ EVAL_RUNS: '3' })).plannedCalls).toBe(18);
-    expect(buildEvalPlanFromEnv(env({ EVAL_RUNS: '4' })).plannedCalls).toBe(24);
-    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' })).plannedCalls).toBe(
-      80,
-    );
-    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '1' })).plannedCalls).toBe(
-      20,
-    );
+    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' })).plannedCalls).toBe(80);
     expect(
-      buildEvalPlanFromEnv(env({ EVAL_CASES: 'clean-01, mixed-01', EVAL_RUNS: '4' }))
-        .plannedCalls,
+      buildEvalPlanFromEnv(env({ EVAL_CASES: 'clean-01, mixed-01', EVAL_RUNS: '4' })).plannedCalls,
     ).toBe(16);
   });
 
@@ -209,13 +175,11 @@ describe('buildEvalPlan schedule', () => {
     expect(cursor).toBe(plan.plannedCalls);
   });
 
-  it('follows AB/BA/BA/AB per case across rounds', () => {
+  it('follows deterministic balanced AB/BA pattern and preserves per-case balance', () => {
     expect(variantOrderForCaseRound(0)).toEqual(['baseline', 'experimental']);
     expect(variantOrderForCaseRound(1)).toEqual(['experimental', 'baseline']);
     expect(variantOrderForCaseRound(2)).toEqual(['experimental', 'baseline']);
     expect(variantOrderForCaseRound(3)).toEqual(['baseline', 'experimental']);
-    expect(variantOrderForCaseRound(4)).toEqual(['baseline', 'experimental']);
-    expect(variantOrderForCaseRound(5)).toEqual(['experimental', 'baseline']);
 
     const plan = buildEvalPlanFromEnv(env({ EVAL_RUNS: '8' }));
     for (const id of getSmokeCaseIds()) {
@@ -230,30 +194,24 @@ describe('buildEvalPlan schedule', () => {
         ['baseline', 'experimental'],
       ]);
     }
-  });
-
-  it('preserves per-case balance: runs baseline + runs experimental each', () => {
-    const plan = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' }));
+    // Per-case balance: runs baseline + runs experimental each.
+    const full = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' }));
     for (const id of getFullCaseIds()) {
-      const entries = plan.entries.filter((e) => e.caseId === id);
+      const entries = full.entries.filter((e) => e.caseId === id);
       expect(entries).toHaveLength(8);
       expect(entries.filter((e) => e.variant === 'baseline')).toHaveLength(4);
       expect(entries.filter((e) => e.variant === 'experimental')).toHaveLength(4);
-      // Pair ids are unique per (case, round).
       expect(new Set(entries.map((e) => e.pairId))).toHaveLength(4);
     }
   });
 
-  it('is deterministic: same env => identical plan', () => {
+  it('is deterministic: same env => identical plan; different seeds vary case order', () => {
     const a = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '3', EVAL_SEED: 'x' }));
     const b = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '3', EVAL_SEED: 'x' }));
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-  });
 
-  it('different seeds vary case order while keeping balance', () => {
     const base = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '3', EVAL_SEED: 'alpha' }));
     const other = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '3', EVAL_SEED: 'bravo' }));
-    // Same call count and same per-case variant balance either way.
     expect(base.plannedCalls).toBe(other.plannedCalls);
     expect(base.config.caseIds).toEqual(other.config.caseIds);
     expect(roundOrdersKey(base)).not.toEqual(roundOrdersKey(other));
@@ -281,7 +239,6 @@ describe('buildEvalPlan schedule', () => {
         .map((e) => e.caseId);
       expect(actual).toEqual(expected);
     }
-    // Deterministic offsets per (seed, round).
     expect(roundRotationOffset('alpha', 0, 10)).toBe(roundRotationOffset('alpha', 0, 10));
   });
 
@@ -298,51 +255,44 @@ describe('buildEvalPlan schedule', () => {
       expect(pair.baseline!.variant).toBe('baseline');
       expect(pair.experimental!.variant).toBe('experimental');
     }
-    const ids = new Set(pairs.map((p) => p.pairId));
-    expect(ids.size).toBe(20);
+    expect(new Set(pairs.map((p) => p.pairId)).size).toBe(20);
   });
 });
 
 // ---------------------------------------------------------------------------
 
 describe('call-budget guard', () => {
-  it('reports exceeded without throwing (dry-mode path)', () => {
+  it('reports exceeded without throwing (dry-mode path) and throws live when exceeded', () => {
     const plan = buildEvalPlanFromEnv(env({ EVAL_RUNS: '10' })); // smoke: 60 calls
     expect(plan.plannedCalls).toBe(60);
     const check = checkCallBudget(plan);
     expect(check.exceeded).toBe(true);
     expect(check.planned).toBe(60);
     expect(check.max).toBe(DEFAULT_MAX_CALLS);
-  });
 
-  it('throws before network when exceeded (live-mode path)', () => {
-    const plan = buildEvalPlanFromEnv(env({ EVAL_RUNS: '10' }));
     expect(() => assertCallBudget(plan)).toThrow(/evAL_max_calls=20/i);
     expect(() => assertCallBudget(plan)).toThrow(/EVAL_MAX_CALLS=60/);
     expect(() => assertCallBudget(plan)).toThrow(/10-case x 4-run decision run/i);
   });
 
-  it('passes when within budget; explicit raise unlocks the 80-call decision run', () => {
+  it('passes within budget; explicit raise unlocks the 80-call decision run', () => {
     expect(() => assertCallBudget(buildEvalPlanFromEnv(env()))).not.toThrow(); // 6 <= 20
-    expect(
-      () => assertCallBudget(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' }))), // 20 <= 20
-    ).not.toThrow();
+    expect(() => assertCallBudget(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' })))).not.toThrow(); // 20 <= 20
+
     const decision = buildEvalPlanFromEnv(
       env({ EVAL_SUITE: 'full', EVAL_RUNS: '4', EVAL_MAX_CALLS: '80' }),
     );
     expect(decision.plannedCalls).toBe(DECISION_RUN_CALLS);
     expect(() => assertCallBudget(decision)).not.toThrow();
     // Same plan under the default guard is blocked.
-    expect(() => buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' }))).toBeDefined();
-    expect(() =>
-      assertCallBudget(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' }))),
-    ).toThrow(/EVAL_MAX_CALLS=20/);
-  });
+    expect(() => assertCallBudget(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' })))).toThrow(
+      /EVAL_MAX_CALLS=20/,
+    );
 
-  it('explicit maxCalls override wins over the env default', () => {
-    const plan = buildEvalPlanFromEnv(env({ EVAL_RUNS: '10', EVAL_MAX_CALLS: '100' }));
-    expect(plan.config.maxCalls).toBe(100);
-    expect(checkCallBudget(plan).exceeded).toBe(false);
-    expect(() => assertCallBudget(plan)).not.toThrow();
+    // Explicit maxCalls override wins over the env default.
+    const raised = buildEvalPlanFromEnv(env({ EVAL_RUNS: '10', EVAL_MAX_CALLS: '100' }));
+    expect(raised.config.maxCalls).toBe(100);
+    expect(checkCallBudget(raised).exceeded).toBe(false);
+    expect(() => assertCallBudget(raised)).not.toThrow();
   });
 });

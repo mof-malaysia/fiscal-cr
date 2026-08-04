@@ -8,7 +8,7 @@ process.env.LOG_LEVEL = 'fatal';
 // loaded .env sets NODE_ENV=development). The harness does not need it.
 process.env.NODE_ENV = 'production';
 
-const { main } = await import('./eval-live.js');
+const { main } = await import('./live.js');
 
 main(process.argv.slice(2)).catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);

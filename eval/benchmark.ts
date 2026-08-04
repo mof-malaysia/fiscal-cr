@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mean, median } from './eval-metrics.js';
-import type { RunMetrics, VariantLabel } from './eval-metrics.js';
-import { aggregateQuality, detectLargeRegression } from './eval-quality.js';
+import { mean, median } from './metrics.js';
+import type { RunMetrics, VariantLabel } from './metrics.js';
+import { aggregateQuality, detectLargeRegression } from './quality.js';
 import type {
   AggregateQualitySummary,
   AggregateRateMetric,
@@ -11,9 +11,9 @@ import type {
   IssueSeverity,
   LineRange,
   RunQualityReport,
-} from './eval-quality.js';
-import { groupPlanPairs } from './eval-plan.js';
-import type { EvalPlan, PlanEntry } from './eval-plan.js';
+} from './quality.js';
+import { groupPlanPairs } from './plan.js';
+import type { EvalPlan, PlanEntry } from './plan.js';
 
 /**
  * Pure benchmark result/artifact model for the headless A/B eval.
@@ -30,15 +30,15 @@ import type { EvalPlan, PlanEntry } from './eval-plan.js';
  *    forbidden keys/substrings.
  */
 
-export type { RunMetrics, VariantLabel } from './eval-metrics.js';
+export type { RunMetrics, VariantLabel } from './metrics.js';
 export type {
   AggregateQualitySummary,
   BenchmarkCase,
   ExpectedIssue,
   RunQualityReport,
   QualitySummary,
-} from './eval-quality.js';
-export type { EvalPlan, PlanEntry } from './eval-plan.js';
+} from './quality.js';
+export type { EvalPlan, PlanEntry } from './plan.js';
 
 // ---------------------------------------------------------------------------
 // Identities

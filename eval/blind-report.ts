@@ -12,8 +12,8 @@
  */
 
 import type { PullRequestContext, ReviewAnnotation, ReviewResult, WalkthroughEntry } from '../src/types/review.js';
-import type { BenchmarkCase } from './eval-quality.js';
-import type { CompletedAttempt } from './eval-benchmark.js';
+import type { BenchmarkCase } from './quality.js';
+import type { CompletedAttempt } from './benchmark.js';
 
 // ---------------------------------------------------------------------------
 // Types

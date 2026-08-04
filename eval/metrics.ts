@@ -1,15 +1,17 @@
-import type { LLMCompletionResponse, LLMTokenUsage } from '../src/providers/interface.js';
+import type {
+  ChatCompletionParams,
+  LLMCompletionResponse,
+  LLMProvider,
+  LLMTokenUsage,
+} from '../src/providers/interface.js';
 import type { ReviewAnnotation, ReviewResult, WalkthroughEntry } from '../src/types/review.js';
 import { parseFastPathResponse } from '../src/pipeline/schemas.js';
 import { extractJson } from '../src/utils/json.js';
-import type { CapturedCall } from './eval-capture.js';
 
 /**
  * Pure data model + math for the headless A/B eval benchmark. No network, no
  * fs, no secrets — unit-testable in isolation.
  */
-
-export type { CapturedCall } from './eval-capture.js';
 
 export type VariantLabel = 'baseline' | 'experimental';
 
@@ -45,33 +47,56 @@ export function median(nums: number[]): number {
 }
 
 // ---------------------------------------------------------------------------
-// Env / run planning
-
-/** EVAL_RUNS: integer 1..10, default 1. */
-export function resolveEvalRuns(env: NodeJS.ProcessEnv): number {
-  const raw = env.EVAL_RUNS;
-  if (raw === undefined || raw.trim() === '') return 1;
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`Invalid EVAL_RUNS "${raw}": expected an integer between 1 and 10`);
-  }
-  const n = Number(trimmed);
-  if (n < 1 || n > 10) {
-    throw new Error(`Invalid EVAL_RUNS ${n}: must be between 1 and 10`);
-  }
-  return n;
-}
+// Per-call capture
 
 /**
- * A/B order for one pair. Pair 0 (and every even pair) runs baseline →
- * experimental; odd pairs run experimental → baseline, cancelling order bias.
+ * Transparent LLMProvider wrapper used by the eval harness. Records response
+ * metadata (duration, usage, finish reason, content length, parse result) via
+ * onCall without modifying production provider code. The raw response content
+ * is passed to the callback but never persisted or printed by the harness.
  */
-export function pairRunOrder(pairIndex: number): boolean[] {
-  return pairIndex % 2 === 0 ? [false, true] : [true, false];
+export interface CaptureInfo {
+  /** 1-based call order within the run. */
+  order: number;
+  durationMs: number;
+  response: LLMCompletionResponse;
 }
 
-// ---------------------------------------------------------------------------
-// Per-call capture
+export interface CapturedCall {
+  /** 1-based call order within the run. */
+  order: number;
+  durationMs: number;
+  finishReason?: string;
+  /** Raw response character count — content itself is never stored. */
+  rawChars: number;
+  usage: LLMTokenUsage;
+  /** Real parseFastPathResponse success. */
+  parseSuccess: boolean;
+  /** Top-level keys present in the raw JSON object (extractJson). */
+  topLevelKeys: string[];
+  generatedFindings: number;
+  score: number | null;
+  intent: string;
+  summary: string;
+  walkthrough: WalkthroughEntry[];
+  findings: ReviewAnnotation[];
+}
+
+export function wrapCapturingProvider(
+  inner: LLMProvider,
+  onCall: (info: CaptureInfo) => void,
+): LLMProvider {
+  let order = 0;
+  return {
+    async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
+      order += 1;
+      const startedAt = Date.now();
+      const response = await inner.chatCompletion(params);
+      onCall({ order, durationMs: Date.now() - startedAt, response });
+      return response;
+    },
+  };
+}
 
 /** Derive capture metadata from a raw response without persisting its content. */
 export function captureFromResponse(
@@ -355,62 +380,5 @@ export function computeDelta(
     scoreDelta: experimental.meanScore - baseline.meanScore,
     conciseComplianceDeltaPp:
       (experimental.conciseComplianceRate - baseline.conciseComplianceRate) * 100,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Artifact (secret-safe: provider/model/fixture/config/metrics only)
-
-export interface BenchmarkArtifact {
-  schema: 'fiscalcr-eval-v1';
-  timestamp: string;
-  provider: string;
-  model: string;
-  fixture: { name: string; version: number; changedFiles: number };
-  config: {
-    runs: number;
-    callsPlanned: number;
-    pairOrders: boolean[][];
-    retries: number;
-  };
-  runs: RunMetrics[];
-  aggregates: Record<VariantLabel, VariantAggregate>;
-  deltas: BenchmarkDelta;
-}
-
-export interface BuildArtifactInput {
-  timestamp: string;
-  provider: string;
-  model: string;
-  fixtureName: string;
-  fixtureVersion: number;
-  changedFileCount: number;
-  runs: number;
-  retries: number;
-  pairOrders: boolean[][];
-  runMetrics: RunMetrics[];
-}
-
-export function buildArtifact(input: BuildArtifactInput): BenchmarkArtifact {
-  const aggregates = aggregateRuns(input.runMetrics);
-  return {
-    schema: 'fiscalcr-eval-v1',
-    timestamp: input.timestamp,
-    provider: input.provider,
-    model: input.model,
-    fixture: {
-      name: input.fixtureName,
-      version: input.fixtureVersion,
-      changedFiles: input.changedFileCount,
-    },
-    config: {
-      runs: input.runs,
-      callsPlanned: input.runs * 2,
-      pairOrders: input.pairOrders,
-      retries: input.retries,
-    },
-    runs: input.runMetrics,
-    aggregates,
-    deltas: computeDelta(aggregates.baseline, aggregates.experimental),
   };
 }

@@ -8,7 +8,7 @@ import {
   type IssueCategory,
   type IssueSeverity,
   type LineRange,
-} from './eval-quality.js';
+} from './quality.js';
 
 /**
  * Deterministic gold benchmark suite for the local fast-path eval.
@@ -19,19 +19,19 @@ import {
  * cases. No network, no filesystem, no real secrets.
  *
  * Manifest types (BenchmarkCase, ExpectedIssue, IssueSeverity, IssueCategory,
- * LineRange) are the canonical contract exported by `scripts/eval-quality.ts`
+ * LineRange) are the canonical contract exported by `eval/quality.ts`
  * (the matcher lane). They are re-exported here, so this file holds only
  * fixture data and never duplicates type declarations. The matcher accepts
  * these cases directly (canonical `id`/`label`/`context`/`minSeverity`/
  * `maxSeverity`/`startLine` fields).
  */
 
-export type { BenchmarkCase, ExpectedIssue, IssueCategory, IssueSeverity, LineRange } from './eval-quality.js';
+export type { BenchmarkCase, ExpectedIssue, IssueCategory, IssueSeverity, LineRange } from './quality.js';
 
 /** Severity constants — canonical order from the matcher lane. */
 export const ISSUE_SEVERITIES: readonly IssueSeverity[] = SEVERITY_ORDER;
 
-export { ISSUE_CATEGORIES } from './eval-quality.js';
+export { ISSUE_CATEGORIES } from './quality.js';
 
 export const SUITE_ID = 'fiscalcr-local-fast-path';
 export const SUITE_VERSION = 1;

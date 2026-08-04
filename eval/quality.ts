@@ -6,7 +6,7 @@ import type { AnnotationCategory, PullRequestContext, Severity } from '../src/ty
  *
  * Pure data model + math: no network, no fs, no secrets, no side effects —
  * fully unit-testable in isolation. This module is the stable type contract
- * for the eval case lane (`scripts/eval-cases.ts`); its exported types are
+ * for the eval case lane (`eval/cases.ts`); its exported types are
  * intentionally small and structural so cases stay decoupled from production
  * code.
  *

@@ -14,8 +14,8 @@ import {
   getSmokeCaseIds,
   isCleanCase,
   type BenchmarkCase,
-} from '../../scripts/eval-cases.js';
-import { evaluateRunQuality } from '../../scripts/eval-quality.js';
+} from '../cases.js';
+import { evaluateRunQuality } from '../quality.js';
 import { lineToDiffPosition } from '../../src/review/diff-analyzer.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 
@@ -82,27 +82,26 @@ function allFixtureText(cases: BenchmarkCase[]): string {
 }
 
 describe('eval-cases gold fixture suite', () => {
-  it('exports suite metadata', () => {
+  it('exports suite metadata and contains exactly 10 deterministic cases with 20 unique gold issues', () => {
     expect(SUITE_ID).toBe('fiscalcr-local-fast-path');
     expect(SUITE_VERSION).toBeGreaterThan(0);
-  });
-
-  it('contains exactly 10 deterministic cases with unique ids', () => {
     expect(EVAL_CASES).toHaveLength(10);
     const ids = EVAL_CASES.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ids) {
+    const issueIds = EVAL_CASES.flatMap((c) => c.expectedIssues.map((i) => i.issueId));
+    expect(issueIds).toHaveLength(20);
+    expect(new Set(issueIds).size).toBe(issueIds.length);
+    for (const id of [...ids, ...issueIds]) {
       expect(id).toMatch(/^[a-z0-9][a-z0-9-]*$/);
     }
   });
 
-  it('satisfies the canonical matcher contract (scripts/eval-quality.ts)', () => {
+  it('satisfies the canonical matcher contract (eval/quality.ts)', () => {
     for (const c of EVAL_CASES) {
       expect(c.id.length).toBeGreaterThan(0);
       expect(c.version).toBeGreaterThan(0);
       expect(c.label.length).toBeGreaterThan(0);
       expect(c.context).toBeDefined();
-      // The matcher accepts the canonical case directly (post-gate gold count).
       const report = evaluateRunQuality({
         case: c,
         generatedFindings: [],
@@ -139,18 +138,12 @@ describe('eval-cases gold fixture suite', () => {
     }
   });
 
-  it('has exactly 20 independently identifiable gold issues with unique ids', () => {
-    const allIds = EVAL_CASES.flatMap((c) => c.expectedIssues.map((i) => i.issueId));
-    expect(allIds).toHaveLength(20);
-    expect(new Set(allIds).size).toBe(allIds.length);
-    for (const id of allIds) {
-      expect(id).toMatch(/^[a-z0-9][a-z0-9-]*$/);
-    }
-  });
-
-  it('validates severity/category/range/rationale shape of every expected issue', () => {
+  it('validates issue shape: severity/category/range/rationale, changed-file refs, commentable lines', () => {
     const sevRank = new Map(ISSUE_SEVERITIES.map((s, i) => [s, i]));
     for (const c of EVAL_CASES) {
+      const ctx = c.context;
+      const filenames = new Set(ctx.changedFiles.map((f) => f.filename));
+      const patches = new Map(ctx.changedFiles.map((f) => [f.filename, f.patch ?? '']));
       for (const issue of c.expectedIssues) {
         expect(issue.acceptedPaths.length).toBeGreaterThan(0);
         expect(issue.acceptedCategories.length).toBeGreaterThan(0);
@@ -164,35 +157,13 @@ describe('eval-cases gold fixture suite', () => {
         for (const cat of issue.acceptedCategories) {
           expect(ISSUE_CATEGORIES).toContain(cat);
         }
-        for (const range of issue.acceptedLineRanges) {
-          expect(range.startLine).toBeGreaterThanOrEqual(1);
-          expect(range.endLine).toBeGreaterThanOrEqual(range.startLine);
-        }
-      }
-    }
-  });
-
-  it('only references changed files for every expected issue', () => {
-    for (const c of EVAL_CASES) {
-      const ctx = c.context;
-      const filenames = new Set(ctx.changedFiles.map((f) => f.filename));
-      for (const issue of c.expectedIssues) {
         for (const path of issue.acceptedPaths) {
           expect(filenames.has(path), `${c.id}/${issue.issueId}: ${path}`).toBe(true);
-        }
-      }
-    }
-  });
-
-  it('maps every accepted line to a commentable diff position', () => {
-    for (const c of EVAL_CASES) {
-      const ctx = c.context;
-      const patches = new Map(ctx.changedFiles.map((f) => [f.filename, f.patch ?? '']));
-      for (const issue of c.expectedIssues) {
-        for (const path of issue.acceptedPaths) {
           const patch = patches.get(path);
           expect(patch, `${c.id}/${issue.issueId}: no patch for ${path}`).toBeDefined();
           for (const range of issue.acceptedLineRanges) {
+            expect(range.startLine).toBeGreaterThanOrEqual(1);
+            expect(range.endLine).toBeGreaterThanOrEqual(range.startLine);
             for (let line = range.startLine; line <= range.endLine; line++) {
               const pos = lineToDiffPosition(patch as string, line);
               expect(
@@ -206,16 +177,11 @@ describe('eval-cases gold fixture suite', () => {
     }
   });
 
-  it('keeps every case under the production fast-path threshold', () => {
+  it('keeps every case under the production fast-path threshold with valid changed files', () => {
     const threshold = DEFAULT_CONFIG.pipeline.fastPathThreshold;
     expect(threshold).toBeGreaterThan(0);
     for (const c of EVAL_CASES) {
       expect(estimateContextTokens(c.context), `${c.id} token estimate`).toBeLessThan(threshold);
-    }
-  });
-
-  it('varies changed-file counts between 1 and 5 with valid statuses', () => {
-    for (const c of EVAL_CASES) {
       const ctx = c.context;
       expect(ctx.changedFiles.length).toBeGreaterThanOrEqual(1);
       expect(ctx.changedFiles.length).toBeLessThanOrEqual(5);
@@ -245,7 +211,8 @@ describe('eval-cases gold fixture suite', () => {
     }
   });
 
-  it('uses neutral PR labels and non-empty bodies that do not reveal defects', () => {
+  it('uses neutral PR labels and contains no credential-like content', () => {
+    const text = allFixtureText(EVAL_CASES);
     for (const c of EVAL_CASES) {
       const label = c.label.toLowerCase();
       for (const word of REVEALING_TITLE_WORDS) {
@@ -254,10 +221,6 @@ describe('eval-cases gold fixture suite', () => {
       expect(c.label.length).toBeGreaterThan(0);
       expect(c.context.body.length).toBeGreaterThan(0);
     }
-  });
-
-  it('contains no credential-like content', () => {
-    const text = allFixtureText(EVAL_CASES);
     for (const re of CREDENTIAL_PATTERNS) {
       expect(re.test(text), `credential-like content matched ${re}`).toBe(false);
     }
@@ -282,16 +245,13 @@ describe('eval-cases selection helpers', () => {
     expect(['security', 'mixed', 'cross-file'].some((t) => smokeTags.has(t))).toBe(true);
   });
 
-  it('resolves exact comma-separated selections (whitespace-tolerant)', () => {
+  it('resolves exact comma-separated selections and throws on empty/unknown', () => {
     expect(getCaseIds('clean-01, clean-02')).toEqual(['clean-01', 'clean-02']);
     expect(getCaseIds('mixed-01')).toEqual(['mixed-01']);
     expect(getCases(['clean-01', 'security-01']).map((c) => c.id)).toEqual([
       'clean-01',
       'security-01',
     ]);
-  });
-
-  it('throws clear errors for empty or unknown selections', () => {
     expect(() => getCaseIds('')).toThrow(/no eval case ids/i);
     expect(() => getCaseIds('   ')).toThrow(/no eval case ids/i);
     expect(() => getCaseIds('clean-01, nope-99')).toThrow(/unknown eval case id\(s\): nope-99/i);
