@@ -17,6 +17,8 @@ import {
 } from '../cases.js';
 import { evaluateRunQuality } from '../quality.js';
 import { lineToDiffPosition } from '../../src/review/diff-analyzer.js';
+import { groupFiles } from '../../src/pipeline/grouper.js';
+import { estimateTokens } from '../../src/utils/tokens.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 
 const REQUIRED_TAGS: Record<string, number> = {
@@ -82,14 +84,14 @@ function allFixtureText(cases: BenchmarkCase[]): string {
 }
 
 describe('eval-cases gold fixture suite', () => {
-  it('exports suite metadata and contains exactly 10 deterministic cases with 20 unique gold issues', () => {
-    expect(SUITE_ID).toBe('fiscalcr-local-fast-path');
+  it('exports suite metadata and contains exactly 11 deterministic cases with 24 unique gold issues', () => {
+    expect(SUITE_ID).toBe('fiscalcr-eval-v3-pipeline');
     expect(SUITE_VERSION).toBeGreaterThan(0);
-    expect(EVAL_CASES).toHaveLength(10);
+    expect(EVAL_CASES).toHaveLength(11);
     const ids = EVAL_CASES.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     const issueIds = EVAL_CASES.flatMap((c) => c.expectedIssues.map((i) => i.issueId));
-    expect(issueIds).toHaveLength(20);
+    expect(issueIds).toHaveLength(24);
     expect(new Set(issueIds).size).toBe(issueIds.length);
     for (const id of [...ids, ...issueIds]) {
       expect(id).toMatch(/^[a-z0-9][a-z0-9-]*$/);
@@ -177,10 +179,11 @@ describe('eval-cases gold fixture suite', () => {
     }
   });
 
-  it('keeps every case under the production fast-path threshold with valid changed files', () => {
+  it('keeps every fast-path case under the production fast-path threshold with valid changed files', () => {
     const threshold = DEFAULT_CONFIG.pipeline.fastPathThreshold;
     expect(threshold).toBeGreaterThan(0);
     for (const c of EVAL_CASES) {
+      if (c.id === 'pipeline-01') continue; // multi-pass canary, asserted separately
       expect(estimateContextTokens(c.context), `${c.id} token estimate`).toBeLessThan(threshold);
       const ctx = c.context;
       expect(ctx.changedFiles.length).toBeGreaterThanOrEqual(1);
@@ -190,6 +193,67 @@ describe('eval-cases gold fixture suite', () => {
         expect(f.additions).toBeGreaterThan(0);
         expect(f.deletions).toBeGreaterThanOrEqual(0);
       }
+    }
+  });
+
+  it('pipeline-01 is a full-suite-only multi-pass canary above the fast-path threshold', () => {
+    const c = getCaseById('pipeline-01');
+    const threshold = DEFAULT_CONFIG.pipeline.fastPathThreshold;
+    const maxFileSize = DEFAULT_CONFIG.files.maxFileSize;
+    expect(threshold).toBeGreaterThan(0);
+    expect(maxFileSize).toBeGreaterThan(0);
+    // Not part of the smoke set (full-suite-only).
+    expect(SMOKE_CASE_IDS).not.toContain('pipeline-01');
+    // Combined context must exceed the fast-path threshold (multi-pass).
+    expect(estimateContextTokens(c.context)).toBeGreaterThan(threshold);
+    // Three realistic modified files, each below the configured size limit.
+    expect(c.context.changedFiles).toHaveLength(3);
+    for (const f of c.context.changedFiles) {
+      expect(f.status).toBe('modified');
+      const content = c.context.fileContents.get(f.filename)!;
+      expect(content.length, `${f.filename} size`).toBeLessThan(maxFileSize);
+      // Each file's estimated cost exceeds the grouper's MIN_GROUP_TOKENS (8k).
+      const patchTokens = estimateTokens(f.patch ?? '');
+      const contentTokens = estimateTokens(content);
+      expect(patchTokens + contentTokens, `${f.filename} cost`).toBeGreaterThan(8_000);
+    }
+    // Gold defects span at least two files.
+    const defectFiles = new Set(c.expectedIssues.flatMap((i) => i.acceptedPaths));
+    expect(defectFiles.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('pipeline-01 default grouping yields at least two review groups', () => {
+    const c = getCaseById('pipeline-01');
+    const groups = groupFiles(
+      c.context.changedFiles,
+      c.context.fileContents,
+      null,
+      DEFAULT_CONFIG,
+    );
+    expect(groups.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('pipeline-01 gold locations and descriptions correspond to the planted defect code', () => {
+    const c = getCaseById('pipeline-01');
+    const lineAt = (path: string, line: number): string =>
+      c.context.fileContents.get(path)?.split('\n')[line - 1] ?? '';
+    // Each gold issue's first accepted range must land on the exact code that
+    // carries the defect described in its rationale.
+    const expectedFragment: Record<string, string> = {
+      'pipeline-01-01': 'SELECT * FROM items',
+      'pipeline-01-02': 'i <= entries.length',
+      'pipeline-01-03': 'if (cached)',
+      'pipeline-01-04': 'await computeAsync',
+    };
+    expect(Object.keys(expectedFragment)).toHaveLength(c.expectedIssues.length);
+    for (const issue of c.expectedIssues) {
+      const fragment = expectedFragment[issue.issueId];
+      expect(fragment, `${issue.issueId} has a code-fragment expectation`).toBeDefined();
+      const path = issue.acceptedPaths[0];
+      const range = issue.acceptedLineRanges[0];
+      expect(lineAt(path, range.startLine), `${issue.issueId} line ${range.startLine}`).toContain(
+        fragment,
+      );
     }
   });
 
@@ -232,7 +296,7 @@ describe('eval-cases selection helpers', () => {
     expect(SMOKE_CASE_IDS).toHaveLength(3);
     expect(getSmokeCaseIds()).toEqual(SMOKE_CASE_IDS);
     const full = getFullCaseIds();
-    expect(full).toHaveLength(10);
+    expect(full).toHaveLength(11);
     expect(full).toEqual(EVAL_CASES.map((c) => c.id));
     for (const id of SMOKE_CASE_IDS) {
       expect(full).toContain(id);

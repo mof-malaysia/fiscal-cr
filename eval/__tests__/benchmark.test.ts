@@ -5,7 +5,9 @@ import { getCaseById, type BenchmarkCase } from '../cases.js';
 import {
   REQUIRED_CONTRACT_KEYS,
   buildRunMetrics,
+  captureFromError,
   captureFromResponse,
+  promptCallMetadata,
   type CapturedCall,
   type RunMetrics,
 } from '../metrics.js';
@@ -28,7 +30,7 @@ import {
   sanitizeError,
   sha256Hex,
   type Attempt,
-  type BenchmarkArtifactV2,
+  type BenchmarkArtifactV3,
   type CompletedAttempt,
   type FailedAttempt,
 } from '../benchmark.js';
@@ -110,6 +112,7 @@ function makeCompleted(entry: PlanEntry, c: BenchmarkCase, opts: AttemptOpts = {
     order: 1,
     durationMs,
     finishReason: 'stop',
+    failed: false,
     rawChars: opts.rawChars ?? 600,
     usage: { input: inputTokens, output: outputTokens, cached },
     parseSuccess: true,
@@ -137,9 +140,11 @@ function makeCompleted(entry: PlanEntry, c: BenchmarkCase, opts: AttemptOpts = {
     runIndex: entry.caseIndex,
     durationMs,
     tokens: { input: inputTokens, output: outputTokens, cached },
-    calls: 1,
+    providerCalls: 1,
     captures: [capture],
     result,
+    route: entry.route,
+    stageOutcomes: [],
     changedFilePaths: CHANGED_PATHS,
   });
   const quality: RunQualityReport = evaluateRunQuality({
@@ -163,6 +168,9 @@ function makeFailed(entry: PlanEntry, c: BenchmarkCase, error: unknown, duration
     case: caseIdentityOf(c),
     requestTimestamp: TIMESTAMP,
     durationMs,
+    providerCalls: 1,
+    captures: [],
+    stageOutcomes: [],
     error,
   });
 }
@@ -279,9 +287,60 @@ describe('failedAttempt', () => {
     expect(Object.keys(attempt.error)).toEqual(['code', 'message']);
     expect(attempt.durationMs).toBe(500);
 
-    const base = { identity: planIdentityOf(entry), case: caseIdentityOf(c), requestTimestamp: TIMESTAMP };
+    const base = { identity: planIdentityOf(entry), case: caseIdentityOf(c), requestTimestamp: TIMESTAMP, providerCalls: 1, captures: [], stageOutcomes: [] };
     expect(() => failedAttempt({ ...base, durationMs: -1, error: 'nope' })).toThrow(/durationMs/);
     expect(() => failedAttempt({ ...base, durationMs: Number.NaN, error: 'nope' })).toThrow(/durationMs/);
+    expect(() => failedAttempt({ ...base, durationMs: 100, providerCalls: -1, error: 'nope' })).toThrow(/providerCalls/);
+    expect(() => failedAttempt({ ...base, durationMs: 100, error: 'nope', captures: 'nope' as never })).toThrow(/captures/);
+    expect(() => failedAttempt({ ...base, durationMs: 100, error: 'nope', stageOutcomes: 'nope' as never })).toThrow(/stageOutcomes/);
+  });
+
+  it('preserves safe captured provider calls and stage outcomes on a failed attempt', () => {
+    const plan = makePlan('clean-01', '1');
+    const entry = plan.entries[0];
+    const c = getCaseById('clean-01');
+    const capture = captureFromError(
+      { code: 'ECONNRESET', message: 'connection reset' },
+      1,
+      250,
+      promptCallMetadata([{ role: 'user', content: 'prompt' }]),
+    );
+    const attempt = failedAttempt({
+      identity: planIdentityOf(entry),
+      case: caseIdentityOf(c),
+      requestTimestamp: TIMESTAMP,
+      durationMs: 500,
+      providerCalls: 1,
+      captures: [capture],
+      stageOutcomes: [{ stage: 'intent', status: 'failed' }],
+      error: 'connection reset',
+    });
+    expect(attempt.captures).toHaveLength(1);
+    expect(attempt.captures[0].failed).toBe(true);
+    expect(attempt.captures[0].error).toEqual({ code: 'ECONNRESET', message: 'connection reset' });
+    // Rejected request hashes/counts are preserved; raw content is not.
+    expect(attempt.captures[0].request?.messageCount).toBe(1);
+    expect(attempt.captures[0].request?.messages[0].sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(attempt.captures[0])).not.toContain('prompt');
+    expect(attempt.stageOutcomes).toEqual([{ stage: 'intent', status: 'failed' }]);
+
+    // The artifact carries them and stays secret-safe.
+    const artifact = buildBenchmarkArtifact({
+      timestamp: TIMESTAMP,
+      benchmark: { suiteId: 's', suiteVersion: 1 },
+      repository: { commit: null, dirty: null },
+      provider: 'p', model: 'm',
+      prompt: { baseline: promptMetadata('x'), experimental: promptMetadata('y') },
+      retries: 0, callTimeoutMs: 1000,
+      plan, cases: [c], attempts: [attempt],
+    });
+    const failed = artifact.attempts[0] as FailedAttempt;
+    expect(failed.status).toBe('failed');
+    if (failed.status === 'failed') {
+      expect(failed.captures).toHaveLength(1);
+      expect(failed.stageOutcomes).toEqual([{ stage: 'intent', status: 'failed' }]);
+    }
+    expect(() => assertArtifactSafe(artifact)).not.toThrow();
   });
 });
 
@@ -307,12 +366,16 @@ describe('execution accounting', () => {
     expect(result.execution.planned).toBe(8);
     expect(result.execution.completed).toBe(6);
     expect(result.execution.failed).toBe(2);
+    expect(result.execution.degraded).toBe(0);
     expect(result.execution.completionRate).toBeCloseTo(0.75, 10);
+    // Every attempt issued exactly one provider call (all fast-path cases).
+    expect(result.execution.actualProviderCalls).toBe(8);
 
     expect(result.execution.byVariant.baseline).toEqual({
-      planned: 4, completed: 4, failed: 0, completionRate: 1,
+      planned: 4, completed: 4, failed: 0, degraded: 0, completionRate: 1,
     });
     expect(result.execution.byVariant.experimental.completed).toBe(2);
+    expect(result.execution.byVariant.experimental.failed).toBe(2);
     expect(result.execution.byVariant.experimental.completionRate).toBeCloseTo(0.5, 10);
   });
 
@@ -353,6 +416,10 @@ describe('reliability and performance aggregates', () => {
     for (const variant of ['baseline', 'experimental'] as const) {
       const rel = result.reliability[variant]!;
       expect(rel.completed).toBe(2);
+      expect(rel.fastPath).toBe(2);
+      expect(rel.multiPass).toBe(0);
+      expect(rel.degraded).toBe(0);
+      expect(rel.degradedRate).toBe(0);
       expect(rel.parsed).toBe(2);
       expect(rel.usable).toBe(2);
       expect(rel.formatLengthCompliant).toBe(2);
@@ -611,14 +678,14 @@ describe('large regression detection', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Artifact v2
+// Artifact v3
 
-describe('artifact v2 shape', () => {
+describe('artifact v3 shape', () => {
   function buildArtifact(opts: {
     runs?: string;
     cases?: string;
     attempts?: (plan: EvalPlan) => Attempt[];
-  } = {}): BenchmarkArtifactV2 {
+  } = {}): BenchmarkArtifactV3 {
     const plan = makePlan(opts.cases ?? 'clean-01, local-01', opts.runs ?? '2');
     const cases = plan.config.caseIds.map((id) => getCaseById(id));
     const attempts = (opts.attempts ?? allCompleted)(plan);
@@ -633,17 +700,17 @@ describe('artifact v2 shape', () => {
         experimental: promptMetadata('system B + user B'),
       },
       retries: 1,
-      timeoutMs: 60_000,
+      callTimeoutMs: 60_000,
       plan,
       cases,
       attempts,
     });
   }
 
-  it('exposes v2 metadata, config, plan, fixtures, attempts and aggregates', () => {
+  it('exposes v3 metadata, config, plan, fixtures, attempts and aggregates', () => {
     const artifact = buildArtifact();
 
-    expect(artifact.schema).toBe('fiscalcr-eval-v2');
+    expect(artifact.schema).toBe('fiscalcr-eval-v3');
     expect(artifact.benchmark).toEqual({
       suiteId: 'fiscalcr-local-fast-path',
       suiteVersion: 1,
@@ -657,11 +724,14 @@ describe('artifact v2 shape', () => {
 
     expect(artifact.config).toEqual({
       runs: 2,
-      plannedCalls: 8,
-      completedCalls: 8,
-      failedCalls: 0,
+      plannedAttempts: 8,
+      plannedProviderCallsUpperBound: 8,
+      completedAttempts: 8,
+      failedAttempts: 0,
+      degradedAttempts: 0,
+      actualProviderCalls: 8,
       retries: 1,
-      timeoutMs: 60_000,
+      callTimeoutMs: 60_000,
       maxCalls: 20,
     });
     expect(artifact.plan).toHaveLength(8);
@@ -669,9 +739,11 @@ describe('artifact v2 shape', () => {
       globalCallIndex: 0, roundIndex: 0, caseIndex: 0,
       caseId: 'clean-01', pairId: 'clean-01@r0',
       variant: 'baseline', experimental: false,
+      route: 'fast-path', maxProviderCalls: 1,
     });
     expect(artifact.attempts).toHaveLength(8);
     expect(artifact.aggregates.execution.completed).toBe(8);
+    expect(artifact.aggregates.execution.actualProviderCalls).toBe(8);
     expect(artifact.pairs.completePairs).toBe(4);
     expect(artifact.regressions).toHaveLength(1);
   });
@@ -729,7 +801,7 @@ describe('artifact v2 shape', () => {
       repository: { commit: null, dirty: null },
       provider: 'p', model: 'm',
       prompt: { baseline: promptMetadata('x'), experimental: promptMetadata('y') },
-      retries: 0, timeoutMs: 1000,
+      retries: 0, callTimeoutMs: 1000,
       plan, cases: [c], attempts: [attempt],
     });
     expect(JSON.stringify(markedArtifact)).not.toContain(RAW_MARKER);
@@ -747,7 +819,7 @@ describe('artifact v2 shape', () => {
 // Secret safety
 
 describe('assertArtifactSafe', () => {
-  function cleanArtifact(): BenchmarkArtifactV2 {
+  function cleanArtifact(): BenchmarkArtifactV3 {
     const plan = makePlan('clean-01', '1');
     const cases = [getCaseById('clean-01')];
     return buildBenchmarkArtifact({
@@ -756,7 +828,7 @@ describe('assertArtifactSafe', () => {
       repository: { commit: null, dirty: null },
       provider: 'p', model: 'm',
       prompt: { baseline: promptMetadata('x'), experimental: promptMetadata('y') },
-      retries: 0, timeoutMs: 1000,
+      retries: 0, callTimeoutMs: 1000,
       plan, cases, attempts: allCompleted(plan),
     });
   }
@@ -813,7 +885,7 @@ describe('determinism and numeric hygiene', () => {
         repository: { commit: 'abc', dirty: true },
         provider: 'kimi', model: 'kimi-for-coding',
         prompt: { baseline: promptMetadata('a'), experimental: promptMetadata('b') },
-        retries: 0, timeoutMs: 30_000,
+        retries: 0, callTimeoutMs: 30_000,
         plan, cases, attempts: allCompleted(plan),
       });
     expect(JSON.stringify(build())).toBe(JSON.stringify(build()));
@@ -834,7 +906,7 @@ describe('determinism and numeric hygiene', () => {
       repository: { commit: null, dirty: null },
       provider: 'p', model: 'm',
       prompt: { baseline: promptMetadata(''), experimental: promptMetadata('') },
-      retries: 0, timeoutMs: 1000,
+      retries: 0, callTimeoutMs: 1000,
       plan, cases, attempts,
     });
     assertFiniteNumbers(artifact);

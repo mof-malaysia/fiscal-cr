@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto';
 import { mean, median } from './metrics.js';
-import type { RunMetrics, VariantLabel } from './metrics.js';
+import type {
+  CapturedCall,
+  ReviewRoute,
+  RunMetrics,
+  StageOutcome,
+  VariantLabel,
+} from './metrics.js';
 import { aggregateQuality, detectLargeRegression } from './quality.js';
 import type {
   AggregateQualitySummary,
@@ -56,6 +62,8 @@ export interface PlanIdentity {
   globalCallIndex: number;
   variant: VariantLabel;
   experimental: boolean;
+  /** Route the production runner took for this attempt. */
+  route: ReviewRoute;
 }
 
 /** Case taxonomy carried by every attempt (id/version/tags; never code). */
@@ -82,6 +90,7 @@ export function planIdentityOf(entry: PlanEntry): PlanIdentity {
     globalCallIndex: entry.globalCallIndex,
     variant: entry.variant,
     experimental: entry.experimental,
+    route: entry.route,
   };
 }
 
@@ -101,6 +110,9 @@ function validateIdentity(identity: PlanIdentity): void {
       `Attempt identity mismatch: variant "${identity.variant}" does not match ` +
         `experimental=${identity.experimental}`,
     );
+  }
+  if (identity.route !== 'fast-path' && identity.route !== 'multi-pass') {
+    throw new Error(`Attempt identity route must be "fast-path" or "multi-pass"`);
   }
   for (const [name, value] of [
     ['roundIndex', identity.roundIndex],
@@ -147,6 +159,8 @@ export interface CompletedAttempt {
   requestTimestamp: string;
   metrics: RunMetrics;
   quality: RunQualityReport;
+  /** True when a pipeline stage failed but a review was still produced. */
+  degraded: boolean;
 }
 
 export interface FailedAttempt {
@@ -155,6 +169,16 @@ export interface FailedAttempt {
   case: CaseIdentity;
   requestTimestamp: string;
   durationMs: number;
+  /** Actual provider LLM calls issued before the failure. */
+  providerCalls: number;
+  /**
+   * Safe per-call capture metadata for every provider call attempted before
+   * the failure: prompt hashes/counts (never the prompt), success/rejection
+   * metadata, sanitized errors. Raw content is never stored.
+   */
+  captures: CapturedCall[];
+  /** Stage outcomes from UsageTracker stage events (stage truth). */
+  stageOutcomes: StageOutcome[];
   /** Sanitized {code, message} only. */
   error: SanitizedError;
 }
@@ -187,10 +211,16 @@ export function completedAttempt(input: CompletedAttemptInput): CompletedAttempt
   if (input.metrics.experimental !== input.identity.experimental) {
     throw new Error('Attempt experimental flag mismatch between metrics and identity');
   }
+  if (input.metrics.route !== input.identity.route) {
+    throw new Error(
+      `Attempt route mismatch: metrics.route "${input.metrics.route}" !== ` +
+        `identity.route "${input.identity.route}"`,
+    );
+  }
   if (typeof input.requestTimestamp !== 'string' || input.requestTimestamp.length === 0) {
     throw new Error('Attempt requestTimestamp must be a non-empty string');
   }
-  return { status: 'completed', ...input };
+  return { status: 'completed', ...input, degraded: input.metrics.degraded };
 }
 
 export interface FailedAttemptInput {
@@ -198,6 +228,12 @@ export interface FailedAttemptInput {
   case: CaseIdentity;
   requestTimestamp: string;
   durationMs: number;
+  /** Actual provider LLM calls issued before the failure. */
+  providerCalls: number;
+  /** Safe per-call capture metadata (see FailedAttempt). */
+  captures: CapturedCall[];
+  /** Stage outcomes from UsageTracker stage events (stage truth). */
+  stageOutcomes: StageOutcome[];
   /** Raw failure; only sanitized {code, message} is stored. */
   error: unknown;
 }
@@ -214,6 +250,15 @@ export function failedAttempt(input: FailedAttemptInput): FailedAttempt {
   if (!Number.isFinite(input.durationMs) || input.durationMs < 0) {
     throw new Error('Attempt durationMs must be a finite non-negative number');
   }
+  if (!Number.isInteger(input.providerCalls) || input.providerCalls < 0) {
+    throw new Error('Attempt providerCalls must be a non-negative integer');
+  }
+  if (!Array.isArray(input.captures)) {
+    throw new Error('Attempt captures must be an array');
+  }
+  if (!Array.isArray(input.stageOutcomes)) {
+    throw new Error('Attempt stageOutcomes must be an array');
+  }
   if (typeof input.requestTimestamp !== 'string' || input.requestTimestamp.length === 0) {
     throw new Error('Attempt requestTimestamp must be a non-empty string');
   }
@@ -223,6 +268,9 @@ export function failedAttempt(input: FailedAttemptInput): FailedAttempt {
     case: input.case,
     requestTimestamp: input.requestTimestamp,
     durationMs: input.durationMs,
+    providerCalls: input.providerCalls,
+    captures: input.captures.map((c) => ({ ...c })),
+    stageOutcomes: input.stageOutcomes.map((o) => ({ ...o })),
     error: sanitizeError(input.error),
   };
 }
@@ -234,6 +282,8 @@ export interface ExecutionCounts {
   planned: number;
   completed: number;
   failed: number;
+  /** Completed attempts that degraded (a stage failed but a review was produced). */
+  degraded: number;
   /** completed / planned; 0 when nothing was planned. */
   completionRate: number;
 }
@@ -242,7 +292,10 @@ export interface ExecutionAggregate {
   planned: number;
   completed: number;
   failed: number;
+  degraded: number;
   completionRate: number;
+  /** Total provider LLM calls actually issued (failed attempts included). */
+  actualProviderCalls: number;
   byVariant: Record<VariantLabel, ExecutionCounts>;
 }
 
@@ -255,20 +308,34 @@ function buildExecution(plan: EvalPlan, attempts: Attempt[]): ExecutionAggregate
     const failed = attempts.filter(
       (a) => a.identity.variant === v && a.status === 'failed',
     ).length;
+    const degraded = attempts.filter(
+      (a): a is CompletedAttempt =>
+        a.identity.variant === v && a.status === 'completed' && a.degraded,
+    ).length;
     return {
       planned,
       completed,
       failed,
+      degraded,
       completionRate: planned > 0 ? completed / planned : 0,
     };
   };
   const completed = attempts.filter((a) => a.status === 'completed').length;
   const failed = attempts.filter((a) => a.status === 'failed').length;
+  const degraded = attempts.filter(
+    (a): a is CompletedAttempt => a.status === 'completed' && a.degraded,
+  ).length;
+  const actualProviderCalls = attempts.reduce(
+    (sum, a) => sum + (a.status === 'completed' ? a.metrics.providerCalls : a.providerCalls),
+    0,
+  );
   return {
-    planned: plan.plannedCalls,
+    planned: plan.plannedAttempts,
     completed,
     failed,
-    completionRate: plan.plannedCalls > 0 ? completed / plan.plannedCalls : 0,
+    degraded,
+    completionRate: plan.plannedAttempts > 0 ? completed / plan.plannedAttempts : 0,
+    actualProviderCalls,
     byVariant: {
       baseline: variantCounts('baseline'),
       experimental: variantCounts('experimental'),
@@ -283,9 +350,19 @@ export interface VariantReliabilityAggregate {
   variant: VariantLabel;
   /** Completed runs — the denominator for every rate below. */
   completed: number;
+  /** Completed fast-path runs (parse/contract/format metrics are fast-path-only). */
+  fastPath: number;
+  /** Completed multi-pass runs. */
+  multiPass: number;
+  /** Completed runs where a pipeline stage failed but a review was produced. */
+  degraded: number;
+  /** degraded / completed; 0 when nothing was completed. */
+  degradedRate: number;
+  /** Fast-path runs that parsed (fast-path denominator). */
   parsed: number;
+  /** Fast-path runs with a complete contract (fast-path denominator). */
   contractComplete: number;
-  /** parseSuccess && contractComplete (strict usable review). */
+  /** Fast-path runs that parsed AND have a complete contract (fast-path denominator). */
   usable: number;
   /** Labeled alias of RunMetrics.conciseCompliant — NOT a quality signal. */
   formatLengthCompliant: number;
@@ -293,9 +370,9 @@ export interface VariantReliabilityAggregate {
   contractRate: number;
   successRate: number;
   formatLengthComplianceRate: number;
-  /** zeroFindingsKind distribution (null → 'unknown'), sorted keys. */
+  /** zeroFindingsKind distribution over fast-path runs (null → 'unknown'). */
   zeroFindingsKinds: Record<string, number>;
-  /** finishReason distribution (undefined → 'unknown'), sorted keys. */
+  /** finishReason distribution over fast-path runs (undefined → 'unknown'). */
   finishReasons: Record<string, number>;
 }
 
@@ -327,20 +404,38 @@ function buildReliability(
 ): VariantReliabilityAggregate | null {
   if (runs.length === 0) return null;
   const n = runs.length;
+  const fast = runs.filter((r) => r.metrics.route === 'fast-path');
+  const multi = runs.filter((r) => r.metrics.route === 'multi-pass');
+  const degraded = runs.filter((r) => r.metrics.degraded).length;
   const count = (pred: (r: CompletedAttempt) => boolean): number => runs.filter(pred).length;
+  const fastCount = (pred: (r: CompletedAttempt) => boolean): number => fast.filter(pred).length;
+  const fastN = fast.length;
+  const rateFast = (num: number): number => (fastN > 0 ? num / fastN : 0);
   return {
     variant,
     completed: n,
-    parsed: count((r) => r.metrics.parseSuccess),
-    contractComplete: count((r) => r.metrics.contractComplete),
-    usable: count((r) => r.metrics.parseSuccess && r.metrics.contractComplete),
-    formatLengthCompliant: count((r) => r.metrics.conciseCompliant),
-    parseRate: count((r) => r.metrics.parseSuccess) / n,
-    contractRate: count((r) => r.metrics.contractComplete) / n,
-    successRate: count((r) => r.metrics.parseSuccess && r.metrics.contractComplete) / n,
-    formatLengthComplianceRate: count((r) => r.metrics.conciseCompliant) / n,
-    zeroFindingsKinds: distribution(runs.map((r) => r.metrics.zeroFindingsKind)),
-    finishReasons: distribution(runs.map((r) => r.metrics.finishReason)),
+    fastPath: fastN,
+    multiPass: multi.length,
+    degraded,
+    degradedRate: n > 0 ? degraded / n : 0,
+    parsed: fastCount((r) => r.metrics.parseSuccess === true),
+    contractComplete: fastCount((r) => r.metrics.contractComplete === true),
+    usable: fastCount(
+      (r) => r.metrics.parseSuccess === true && r.metrics.contractComplete === true,
+    ),
+    formatLengthCompliant: fastCount((r) => r.metrics.conciseCompliant === true),
+    parseRate: rateFast(fastCount((r) => r.metrics.parseSuccess === true)),
+    contractRate: rateFast(fastCount((r) => r.metrics.contractComplete === true)),
+    successRate: rateFast(
+      fastCount(
+        (r) => r.metrics.parseSuccess === true && r.metrics.contractComplete === true,
+      ),
+    ),
+    formatLengthComplianceRate: rateFast(
+      fastCount((r) => r.metrics.conciseCompliant === true),
+    ),
+    zeroFindingsKinds: distribution(fast.map((r) => r.metrics.zeroFindingsKind)),
+    finishReasons: distribution(fast.map((r) => r.metrics.finishReason)),
   };
 }
 
@@ -737,7 +832,7 @@ export function buildBenchmarkResult(input: BuildBenchmarkResultInput): Benchmar
 }
 
 // ---------------------------------------------------------------------------
-// Artifact v2
+// Artifact v3
 
 export interface PromptMetadata {
   sha256: string;
@@ -763,6 +858,8 @@ export interface SanitizedPlanEntry {
   pairId: string;
   variant: VariantLabel;
   experimental: boolean;
+  route: ReviewRoute;
+  maxProviderCalls: number;
 }
 
 export function sanitizePlanEntry(entry: PlanEntry): SanitizedPlanEntry {
@@ -774,6 +871,8 @@ export function sanitizePlanEntry(entry: PlanEntry): SanitizedPlanEntry {
     pairId: entry.pairId,
     variant: entry.variant,
     experimental: entry.experimental,
+    route: entry.route,
+    maxProviderCalls: entry.maxProviderCalls,
   };
 }
 
@@ -822,8 +921,8 @@ export function fixtureManifestOf(c: BenchmarkCase): FixtureManifest {
   };
 }
 
-export interface BenchmarkArtifactV2 {
-  schema: 'fiscalcr-eval-v2';
+export interface BenchmarkArtifactV3 {
+  schema: 'fiscalcr-eval-v3';
   timestamp: string;
   benchmark: {
     suiteId: string;
@@ -840,14 +939,34 @@ export interface BenchmarkArtifactV2 {
   prompt: {
     baseline: PromptMetadata;
     experimental: PromptMetadata;
+    /**
+     * Case ids routed multi-pass — excluded from the static prompt preview
+     * (their stage prompts are generated during live execution and
+     * fingerprinted per call in the attempt captures).
+     */
+    dynamicMultiPassCaseIds: string[];
+    /** Number of multi-pass cases excluded from the static prompt preview. */
+    dynamicMultiPassCount: number;
   };
   config: {
     runs: number;
-    plannedCalls: number;
-    completedCalls: number;
-    failedCalls: number;
+    /** Planned review attempts: cases * runs * 2. */
+    plannedAttempts: number;
+    /** Sum of per-attempt provider-call upper bounds (EVAL_MAX_CALLS guard). */
+    plannedProviderCallsUpperBound: number;
+    completedAttempts: number;
+    failedAttempts: number;
+    /** Completed attempts where a pipeline stage failed but a review was produced. */
+    degradedAttempts: number;
+    /** Actual provider LLM calls issued across all attempts. */
+    actualProviderCalls: number;
     retries: number;
-    timeoutMs: number;
+    /**
+     * Per-CALL timeout for the fast-path and group-review provider calls.
+     * NOT an attempt-level deadline: intent/synthesis use fixed internal
+     * timeouts (60s / 90s) and in-flight calls are not cancellable.
+     */
+    callTimeoutMs: number;
     maxCalls: number;
   };
   /** Sanitized plan entries (whitelisted fields only). */
@@ -871,16 +990,23 @@ export interface BuildBenchmarkArtifactInput {
   repository: { commit: string | null; dirty: boolean | null };
   provider: string;
   model: string;
-  prompt: { baseline: PromptMetadata; experimental: PromptMetadata };
+  prompt: {
+    baseline: PromptMetadata;
+    experimental: PromptMetadata;
+    /** Multi-pass cases excluded from the static preview (see BenchmarkArtifactV3). */
+    dynamicMultiPassCaseIds?: string[];
+    dynamicMultiPassCount?: number;
+  };
   retries: number;
-  timeoutMs: number;
+  /** Per-call timeout for fast-path + group-review provider calls. */
+  callTimeoutMs: number;
   plan: EvalPlan;
   cases: BenchmarkCase[];
   attempts: Attempt[];
   regression?: BenchmarkRegressionOptions;
 }
 
-export function buildBenchmarkArtifact(input: BuildBenchmarkArtifactInput): BenchmarkArtifactV2 {
+export function buildBenchmarkArtifact(input: BuildBenchmarkArtifactInput): BenchmarkArtifactV3 {
   const result = buildBenchmarkResult({
     plan: input.plan,
     cases: input.cases,
@@ -889,8 +1015,11 @@ export function buildBenchmarkArtifact(input: BuildBenchmarkArtifactInput): Benc
   });
   const completed = input.attempts.filter((a) => a.status === 'completed').length;
   const failed = input.attempts.filter((a) => a.status === 'failed').length;
+  const degraded = input.attempts.filter(
+    (a): a is CompletedAttempt => a.status === 'completed' && a.degraded,
+  ).length;
   return {
-    schema: 'fiscalcr-eval-v2',
+    schema: 'fiscalcr-eval-v3',
     timestamp: input.timestamp,
     benchmark: {
       suiteId: input.benchmark.suiteId,
@@ -904,14 +1033,19 @@ export function buildBenchmarkArtifact(input: BuildBenchmarkArtifactInput): Benc
     prompt: {
       baseline: { ...input.prompt.baseline },
       experimental: { ...input.prompt.experimental },
+      dynamicMultiPassCaseIds: input.prompt.dynamicMultiPassCaseIds ?? [],
+      dynamicMultiPassCount: input.prompt.dynamicMultiPassCount ?? 0,
     },
     config: {
       runs: input.plan.config.runs,
-      plannedCalls: input.plan.plannedCalls,
-      completedCalls: completed,
-      failedCalls: failed,
+      plannedAttempts: input.plan.plannedAttempts,
+      plannedProviderCallsUpperBound: input.plan.plannedProviderCallsUpperBound,
+      completedAttempts: completed,
+      failedAttempts: failed,
+      degradedAttempts: degraded,
+      actualProviderCalls: result.execution.actualProviderCalls,
       retries: input.retries,
-      timeoutMs: input.timeoutMs,
+      callTimeoutMs: input.callTimeoutMs,
       maxCalls: input.plan.config.maxCalls,
     },
     plan: input.plan.entries.map(sanitizePlanEntry),

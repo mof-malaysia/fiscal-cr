@@ -257,9 +257,11 @@ function buildMetrics(
       output: input.outputTokens ?? 50,
       cached: 0,
     },
-    calls: 1,
+    providerCalls: 1,
     captures: [capture],
     result: { ...GOOD_RESULT, annotations, score: input.score ?? GOOD_RESULT.score },
+    route: 'fast-path',
+    stageOutcomes: [],
     changedFilePaths: CHANGED_PATHS,
   });
 }
@@ -377,7 +379,7 @@ describe('formatDelta', () => {
     input: 1000,
     output: 500,
     cached: 0,
-    calls: 1,
+    providerCalls: 1,
     score: 70,
     findings: 3,
   };
@@ -454,6 +456,9 @@ describe('buildSuitePromptMetadata', () => {
     expect(info.stats.maxChars).toBeLessThanOrEqual(info.stats.totalChars);
     expect(info.stats.totalEstimatedTokens).toBeGreaterThan(0);
     expect(info.metadata.chars).toBe(info.stats.totalChars);
+    // Fast-path selection: nothing excluded from the static preview.
+    expect(info.dynamicMultiPassCaseIds).toEqual([]);
+    expect(info.dynamicMultiPassCount).toBe(0);
 
     // Empty selection must not divide by zero.
     const empty = buildSuitePromptMetadata([], CFG, false);
@@ -464,6 +469,37 @@ describe('buildSuitePromptMetadata', () => {
       totalChars: 0,
       totalEstimatedTokens: 0,
     });
+    expect(empty.dynamicMultiPassCaseIds).toEqual([]);
+    expect(empty.dynamicMultiPassCount).toBe(0);
+  });
+
+  it('excludes multi-pass cases from the static preview hash/stats and reports them', () => {
+    const pipeline = getCaseById('pipeline-01'); // routeReview → multi-pass
+    const mixed = buildSuitePromptMetadata([getCaseById('clean-01'), pipeline], CFG, false);
+    // Only the fast-path case contributes prompt stats/hash content.
+    expect(mixed.stats.cases).toBe(1);
+    expect(mixed.dynamicMultiPassCaseIds).toEqual(['pipeline-01']);
+    expect(mixed.dynamicMultiPassCount).toBe(1);
+    // Multi-pass case ids never leak prompt text into the preview.
+    expect(JSON.stringify(mixed)).not.toContain('<no-static-prompt-preview');
+    expect(mixed.metadata.chars).toBe(mixed.stats.totalChars);
+  });
+
+  it('pipeline-only selection hashes no fabricated fast-path prompt', () => {
+    const pipeline = getCaseById('pipeline-01');
+    const base = buildSuitePromptMetadata([pipeline], CFG, false);
+    const exp = buildSuitePromptMetadata([pipeline], CFG, true);
+    expect(base.stats.cases).toBe(0);
+    expect(base.stats.totalChars).toBe(0);
+    expect(base.stats.totalEstimatedTokens).toBe(0);
+    expect(base.metadata.chars).toBe(0);
+    expect(base.dynamicMultiPassCaseIds).toEqual(['pipeline-01']);
+    expect(base.dynamicMultiPassCount).toBe(1);
+    // No static prompt differs between variants, so the no-preview hash is
+    // stable — it must never fake a fast-path prompt difference.
+    expect(exp.metadata.sha256).toBe(base.metadata.sha256);
+    // Deterministic, and a 64-hex fingerprint of the marker, not a prompt.
+    expect(base.metadata.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
@@ -496,7 +532,7 @@ describe('buildRunMetrics', () => {
     const m = buildMetrics(false);
     expect(m.variant).toBe('baseline');
     expect(m.totalTokens).toBe(150);
-    expect(m.calls).toBe(1);
+    expect(m.providerCalls).toBe(1);
     expect(m.generatedFindings).toBe(1);
     expect(m.retainedFindings).toBe(1);
     expect(m.retentionRate).toBe(1);
@@ -508,9 +544,12 @@ describe('buildRunMetrics', () => {
     const cached = buildRunMetrics({
       experimental: false, pairIndex: 0, runIndex: 0, durationMs: 200,
       tokens: { input: 100, output: 50, cached: 20 },
-      calls: 1,
+      providerCalls: 1,
       captures: [captureFromResponse(response(FULL_JSON, { cached: 20 }), 1, 100)],
-      result: GOOD_RESULT, changedFilePaths: CHANGED_PATHS,
+      result: GOOD_RESULT,
+      route: 'fast-path',
+      stageOutcomes: [],
+      changedFilePaths: CHANGED_PATHS,
     });
     expect(cached.inputTokens).toBe(100);
     expect(cached.cachedTokens).toBe(20);
@@ -760,7 +799,7 @@ describe('executePlan', () => {
         experimental: buildSuitePromptMetadata(cases, CFG, true).metadata,
       },
       retries: 0,
-      timeoutMs: 120_000,
+      callTimeoutMs: 120_000,
       plan,
       cases,
       attempts,
@@ -802,10 +841,12 @@ describe('eval-live main (dry run)', () => {
     const output = log.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(output).toContain('clean-01, local-01, security-01');
     expect(output).toContain('fiscalcr-eval-v2'); // default seed
-    expect(output).toContain('6 calls (3 cases × 1 × 2 variants)');
-    expect(output).toContain('Budget: 6 planned calls');
+    expect(output).toContain('6 attempts (3 cases × 1 × 2 variants)');
+    expect(output).toContain('routes:   6 fast-path · 0 multi-pass attempts');
+    expect(output).toContain('Budget: 6 planned provider calls (upper bound)');
     expect(output).toContain('Prompts (baseline)');
     expect(output).toContain('Prompts (experimental)');
+    expect(output).toContain('dynamic multi-pass: 0 case(s) excluded');
     expect(output).toContain('no network calls, no artifact written');
 
     expect(mockedCreate).not.toHaveBeenCalled();
@@ -822,8 +863,13 @@ describe('eval-live main (dry run)', () => {
     await expect(main(['--dry-run'])).resolves.toBeUndefined();
 
     const output = log.mock.calls.map((c) => c.join(' ')).join('\n');
-    expect(output).toContain('20 calls (10 cases × 1 × 2 variants)');
+    expect(output).toContain('22 attempts (11 cases × 1 × 2 variants)');
+    expect(output).toContain('routes:   20 fast-path · 2 multi-pass attempts');
     expect(output).toContain('EXCEEDS EVAL_MAX_CALLS=4');
+    // Full suite includes the pipeline-01 multi-pass canary: its prompts are
+    // excluded from the static preview and generated during live execution.
+    expect(output).toContain('dynamic multi-pass: 1 case(s) excluded from the static prompt preview (pipeline-01)');
+    expect(output).toContain('stage prompts for the excluded case(s) are generated during live execution');
     expect(mockedCreate).not.toHaveBeenCalled();
     expect(resultFileCount()).toBe(before);
     log.mockRestore();
@@ -832,5 +878,24 @@ describe('eval-live main (dry run)', () => {
     vi.stubEnv('EVAL_SUITE', 'bogus');
     await expect(main(['--dry-run'])).rejects.toThrow(/Invalid EVAL_SUITE/);
     expect(mockedCreate).not.toHaveBeenCalled();
+  });
+
+  it('pipeline-only dry run reports no static prompt preview and live-generated stage prompts', async () => {
+    vi.stubEnv('EVAL_CASES', 'pipeline-01');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const before = resultFileCount();
+
+    await main(['--dry-run']);
+
+    const output = log.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(output).toContain('routes:   0 fast-path · 2 multi-pass attempts');
+    expect(output).toContain('Prompts (baseline) — suite-level across 0 selected case(s)');
+    expect(output).toContain('dynamic multi-pass: 1 case(s) excluded from the static prompt preview (pipeline-01)');
+    expect(output).toContain(
+      'pipeline-only selection — no static fast-path prompt preview; all stage prompts are generated during live execution',
+    );
+    expect(mockedCreate).not.toHaveBeenCalled();
+    expect(resultFileCount()).toBe(before);
+    log.mockRestore();
   });
 });

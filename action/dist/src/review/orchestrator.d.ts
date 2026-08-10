@@ -35,7 +35,6 @@ export declare class ReviewOrchestrator {
      */
     private publishSticky;
     private buildIncrementalBody;
-    private runReview;
 }
 export {};
 //# sourceMappingURL=orchestrator.d.ts.map

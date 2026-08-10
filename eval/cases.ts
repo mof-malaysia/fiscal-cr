@@ -33,7 +33,7 @@ export const ISSUE_SEVERITIES: readonly IssueSeverity[] = SEVERITY_ORDER;
 
 export { ISSUE_CATEGORIES } from './quality.js';
 
-export const SUITE_ID = 'fiscalcr-local-fast-path';
+export const SUITE_ID = 'fiscalcr-eval-v3-pipeline';
 export const SUITE_VERSION = 1;
 /** Per-case manifest version (bump when a case's gold issues change). */
 export const CASE_VERSION = 1;
@@ -871,6 +871,269 @@ const MIXED_01 = buildCase(
 );
 
 // ---------------------------------------------------------------------------
+// Case pipeline-01: multi-pass canary (large files, small patches).
+//
+// Full-suite-only case that must run through the grouped multi-pass pipeline
+// rather than the single-shot fast path. Three realistic ~60-70 KB modified
+// modules, each with a small patch that plants one or more defects. Combined
+// estimated context exceeds DEFAULT_CONFIG.pipeline.fastPathThreshold, and
+// every file's estimated cost exceeds the grouper's MIN_GROUP_TOKENS, so the
+// default grouping yields multiple review groups. Gold defects span all three
+// files. Content is generated (repeated realistic functions) rather than
+// hand-written literals to keep the fixture compact.
+
+/** Deterministically emits `count` realistic functions from a template. */
+function generateFunctions(count: number, make: (i: number) => string): string {
+  const out: string[] = [];
+  for (let i = 0; i < count; i++) out.push(make(i));
+  return out.join('\n\n');
+}
+
+/**
+ * Builds a patch that appends `added` after the last line of `content` and
+ * returns the resulting NEW file content (original + added lines), matching
+ * the modified-file fixture pattern: `content` is the full new file, the
+ * patch shows the unchanged tail as context plus the added lines.
+ */
+function appendPatch(
+  content: string,
+  added: string,
+): { patch: string; additions: number; content: string } {
+  const contentLines = content.replace(/\n$/, '').split('\n');
+  const addedLines = added.replace(/\n$/, '').split('\n');
+  const context = contentLines.slice(-3);
+  const oldStart = contentLines.length - context.length + 1;
+  const newStart = oldStart;
+  const patchLines = [
+    `@@ -${oldStart},${context.length} +${newStart},${context.length + addedLines.length} @@`,
+    ...context.map((l) => ` ${l}`),
+    ...addedLines.map((l) => `+${l}`),
+  ];
+  return {
+    patch: patchLines.join('\n'),
+    additions: addedLines.length,
+    content: `${contentLines.join('\n')}\n${added.replace(/\n$/, '')}\n`,
+  };
+}
+
+/**
+ * New-file line number of the `idx`-th (0-based) line of a function appended
+ * after the (pre-addition) `content`: the added function starts immediately
+ * after the original file's last line.
+ */
+function appendedLine(content: string, idx: number): number {
+  return content.replace(/\n$/, '').split('\n').length + 1 + idx;
+}
+
+// --- processors.ts ----------------------------------------------------------
+
+const PROCESSORS_HEADER = `/** Payment item processors. */
+import { normalizeItem, computeAmount, applyFee, buildRecord, query } from './core.js';
+
+export interface Item {
+  id: string;
+  sku: string;
+  qty: number;
+  unitPrice: number;
+}
+
+export interface ProcessResult {
+  ok: boolean;
+  value?: unknown;
+  error?: string;
+}
+`;
+
+const PROCESSORS_COUNT = 150;
+const PROCESSORS_BASE = `${PROCESSORS_HEADER}\n${generateFunctions(
+  PROCESSORS_COUNT,
+  (i) => `export async function process${i}(item: Item): Promise<ProcessResult> {
+  const normalized = normalizeItem(item);
+  if (!normalized.valid) {
+    return { ok: false, error: 'invalid item' };
+  }
+  const amount = computeAmount(normalized, ${i});
+  if (amount <= 0) {
+    return { ok: false, error: 'non-positive amount' };
+  }
+  const fee = applyFee(amount, ${i});
+  const record = buildRecord({ id: item.id, sku: item.sku, fee, index: ${i} });
+  return { ok: true, value: record };
+}`,
+)}\n`;
+
+const PROCESSORS_ADDED = `export async function searchByRef(ref: string): Promise<ProcessResult> {
+  const sql = \`SELECT * FROM items WHERE ref = '\${ref}'\`;
+  const rows = await query(sql);
+  return { ok: true, value: rows };
+}`;
+const PROCESSORS_PATCH = appendPatch(PROCESSORS_BASE, PROCESSORS_ADDED);
+
+// --- ledger.ts --------------------------------------------------------------
+
+const LEDGER_HEADER = `/** Ledger posting module. */
+import { validateEntry, ensureBalanced, stampTimestamp } from './core.js';
+
+export interface LedgerEntry {
+  id: string;
+  account: string;
+  amount: number;
+}
+`;
+
+const LEDGER_COUNT = 225;
+const LEDGER_BASE = `${LEDGER_HEADER}\n${generateFunctions(
+  LEDGER_COUNT,
+  (i) => `export function postEntry${i}(entry: LedgerEntry): LedgerEntry {
+  const validated = validateEntry(entry);
+  if (!validated.ok) {
+    throw new Error(validated.error);
+  }
+  const balanced = ensureBalanced(validated.value, ${i});
+  const stamped = stampTimestamp(balanced, ${i});
+  return stamped;
+}`,
+)}\n`;
+
+const LEDGER_ADDED = `export function postLastN(entries: LedgerEntry[], n: number): LedgerEntry[] {
+  const out: LedgerEntry[] = [];
+  for (let i = entries.length - n; i <= entries.length; i++) {
+    out.push(entries[i]);
+  }
+  return out;
+}`;
+const LEDGER_PATCH = appendPatch(LEDGER_BASE, LEDGER_ADDED);
+
+// --- reconciliation ---------------------------------------------------------
+
+const RECON_HEADER = `/** Reconciliation module. */
+import { prepareBatch, matchItems, summarize, computeAsync } from './core.js';
+
+export interface Batch {
+  id: string;
+  items: Array<{ ref: string; amount: number }>;
+}
+
+export interface ReconResult {
+  ok: boolean;
+  value?: unknown;
+  error?: string;
+}
+`;
+
+const RECON_COUNT = 200;
+const RECON_BASE = `${RECON_HEADER}\n${generateFunctions(
+  RECON_COUNT,
+  (i) => `export async function reconcile${i}(batch: Batch): Promise<ReconResult> {
+  const prepared = prepareBatch(batch, ${i});
+  if (prepared.items.length === 0) {
+    return { ok: false, error: 'empty batch' };
+  }
+  const matched = await matchItems(prepared, ${i});
+  const summary = summarize(matched, ${i});
+  return { ok: true, value: summary };
+}`,
+)}\n`;
+
+const RECON_ADDED = `const cache = new Map<string, number>();
+
+export async function getRecon(id: string): Promise<number> {
+  const cached = cache.get(id);
+  if (cached) return cached;
+  const value = await computeAsync(id);
+  cache.set(id, value);
+  return value;
+}`;
+const RECON_PATCH = appendPatch(RECON_BASE, RECON_ADDED);
+
+const PIPELINE_01 = buildCase(
+  'pipeline-01',
+  {
+    title: 'Add payment processing modules',
+    body: 'Adds payment processing, ledger, and reconciliation modules for the billing service.',
+    tags: ['multi-pass', 'cross-file', 'security', 'bug', 'large-file'],
+  },
+  [
+    modifiedFile(
+      'src/payments/processors.ts',
+      PROCESSORS_PATCH.content,
+      PROCESSORS_PATCH.patch,
+      PROCESSORS_PATCH.additions,
+      0,
+    ),
+    modifiedFile(
+      'src/payments/ledger.ts',
+      LEDGER_PATCH.content,
+      LEDGER_PATCH.patch,
+      LEDGER_PATCH.additions,
+      0,
+    ),
+    modifiedFile(
+      'src/payments/reconciliation.ts',
+      RECON_PATCH.content,
+      RECON_PATCH.patch,
+      RECON_PATCH.additions,
+      0,
+    ),
+  ],
+  [
+    {
+      issueId: 'pipeline-01-01',
+      acceptedPaths: ['src/payments/processors.ts'],
+      acceptedLineRanges: [
+        { startLine: appendedLine(PROCESSORS_BASE, 1), endLine: appendedLine(PROCESSORS_BASE, 1) },
+      ],
+      acceptedCategories: ['security'],
+      minSeverity: 'critical',
+      maxSeverity: 'critical',
+      rationale:
+        'Raw user input is interpolated into a SQL string; a ref like \' OR \'1\'=\'1 ' +
+        'changes query semantics — classic SQL injection. Use parameterized queries.',
+    },
+    {
+      issueId: 'pipeline-01-02',
+      acceptedPaths: ['src/payments/ledger.ts'],
+      acceptedLineRanges: [
+        { startLine: appendedLine(LEDGER_BASE, 2), endLine: appendedLine(LEDGER_BASE, 2) },
+      ],
+      acceptedCategories: ['bug'],
+      minSeverity: 'warning',
+      maxSeverity: 'warning',
+      rationale:
+        '`i <= entries.length` reads entries[entries.length] (undefined) and, when n exceeds ' +
+        'the array length, `entries.length - n` goes negative — off-by-one bounds error.',
+    },
+    {
+      issueId: 'pipeline-01-03',
+      acceptedPaths: ['src/payments/reconciliation.ts'],
+      acceptedLineRanges: [
+        { startLine: appendedLine(RECON_BASE, 4), endLine: appendedLine(RECON_BASE, 4) },
+      ],
+      acceptedCategories: ['bug'],
+      minSeverity: 'warning',
+      maxSeverity: 'warning',
+      rationale:
+        'Falsy cache check: `if (cached)` treats a valid computed value of 0 as a miss, so ' +
+        'that result is recomputed on every call and never served from the cache. Should ' +
+        'test `cached !== undefined` (or use cache.has).',
+    },
+    {
+      issueId: 'pipeline-01-04',
+      acceptedPaths: ['src/payments/reconciliation.ts'],
+      acceptedLineRanges: [
+        { startLine: appendedLine(RECON_BASE, 5), endLine: appendedLine(RECON_BASE, 5) },
+      ],
+      acceptedCategories: ['bug'],
+      minSeverity: 'warning',
+      maxSeverity: 'warning',
+      rationale:
+        'Check-then-act race: the `await computeAsync(id)` yields between the cache check and ' +
+        'the set, so two concurrent callers both miss and both compute (duplicate side effects).',
+    },
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Suite exports
 
 export const EVAL_CASES: BenchmarkCase[] = [
@@ -884,6 +1147,7 @@ export const EVAL_CASES: BenchmarkCase[] = [
   CONC_01,
   PERF_01,
   MIXED_01,
+  PIPELINE_01,
 ];
 
 /** Exactly the 3 smoke cases (subset of EVAL_CASES). */
