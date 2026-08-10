@@ -345,10 +345,12 @@ pnpm build:action
 
 ## Local LLM evaluation
 
-Run the real provider and fast-path code against a deterministic gold benchmark
-suite — no GitHub API or repository needed. Each case is a synthetic PR with
-hand-authored expected issues; every case runs once as baseline and once as
-experimental per round.
+Run the real production routing and review-pipeline code against a
+deterministic 11-case gold benchmark suite — no GitHub API or repository
+needed, and no GitHub publishing side effects (no check runs, reviews,
+comments, or state markers; the GitHub Action workspace-context path is not
+exercised). Each case is a synthetic PR with hand-authored expected issues;
+every case runs once as baseline and once as experimental per round.
 
 Prerequisite: put your provider API key in a root `.env` (never commit it). The
 harness reads `API_KEY` (falling back to `FISCALCR_API_KEY`, then `KIMI_API_KEY`)
@@ -356,14 +358,20 @@ from the environment only and never logs it.
 
 ```bash
 make eval-llm-dry        # keyless plan preview and prompt stats
-make eval-llm            # smoke: 3 cases × 1 run × 2 variants = 6 calls
-make eval-llm-full       # full: 10 cases × 1 run × 2 variants = 20 calls
-EVAL_CASES=clean-01,local-01 make eval-llm   # focused: 2 cases × 2 variants = 4 calls
+make eval-llm            # smoke: 3 cases × 1 run × 2 variants = 6 attempts (all fast-path)
+make eval-llm-full       # full: 11 cases × 1 run × 2 variants = 22 attempts (up to 40 provider calls)
+make eval-llm-pipeline-dry  # keyless dry run of the pipeline-01 multi-pass canary
+EVAL_CASES=clean-01,local-01 make eval-llm   # focused: 2 cases × 2 variants = 4 attempts
 ```
 
-Calls are billable. Set `EVAL_MAX_CALLS` to raise the budget guard; a 10-case ×
-4-run decision run needs `EVAL_MAX_CALLS=80`. See [docs/llm-evaluation.md](docs/llm-evaluation.md)
-for suite taxonomy, metrics, blind review workflow, and configuration reference.
+Provider calls are billable and an attempt is not a call: fast-path attempts
+cost at most 1 provider call, multi-pass attempts (like `pipeline-01`) up to
+10 (intent + up to 8 group reviews + synthesis). `EVAL_MAX_CALLS` guards the
+provider-call upper bound before any provider is created; the full 11-case ×
+4-round decision run upper bound is `EVAL_MAX_CALLS=160`. See
+[docs/llm-evaluation.md](docs/llm-evaluation.md) for suite taxonomy, metrics,
+blind review workflow, artifact schema (`fiscalcr-eval-v3`), and configuration
+reference.
 
 ## Severity levels
 
