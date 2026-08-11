@@ -3,6 +3,7 @@ import {
   DECISION_RUN_CALLS,
   DEFAULT_EVAL_SEED,
   DEFAULT_MAX_CALLS,
+  FULL_SUITE_MAX_CALLS,
   assertCallBudget,
   buildEvalPlanFromEnv,
   checkCallBudget,
@@ -72,11 +73,13 @@ describe('resolveEvalSelection env semantics', () => {
     expect(sel.cases.map((c) => c.id)).toEqual(sel.caseIds);
   });
 
-  it('resolves full suite to all 10 cases; explicit EVAL_CASES overrides it', () => {
+  it('resolves full suite to all 11 cases; explicit EVAL_CASES overrides it', () => {
     const full = resolveEvalSelection(env({ EVAL_SUITE: 'full' }));
     expect(full.suite).toBe('full');
     expect(full.caseIds).toEqual(getFullCaseIds());
-    expect(full.caseIds).toHaveLength(10);
+    expect(full.caseIds).toHaveLength(11);
+    // Full suite (no EVAL_CASES override) defaults the guard to 40.
+    expect(full.maxCalls).toBe(FULL_SUITE_MAX_CALLS);
 
     const explicit = resolveEvalSelection(
       env({ EVAL_SUITE: 'full', EVAL_CASES: ' clean-01, security-01 ' }),
@@ -84,6 +87,8 @@ describe('resolveEvalSelection env semantics', () => {
     expect(explicit.explicit).toBe(true);
     expect(explicit.caseIds).toEqual(['clean-01', 'security-01']);
     expect(explicit.suite).toBe('full'); // suite still reported, but unused
+    // Focused (explicit EVAL_CASES) keeps the 20 default even under full.
+    expect(explicit.maxCalls).toBe(DEFAULT_MAX_CALLS);
   });
 
   it('rejects invalid suite, case ids, runs, max calls, and seed', () => {
@@ -122,9 +127,9 @@ describe('resolveEvalSelection env semantics', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildEvalPlan schedule', () => {
-  it('smoke default: 3 cases, 6 planned calls; planned calls scale with suite and runs', () => {
+  it('smoke default: 3 cases, 6 planned attempts; attempts scale with suite and runs', () => {
     const plan = buildEvalPlanFromEnv(env());
-    expect(plan.plannedCalls).toBe(6);
+    expect(plan.plannedAttempts).toBe(6);
     expect(plan.entries).toHaveLength(6);
     expect(plan.config.caseIds).toEqual(getSmokeCaseIds());
     expect(plan.config.runs).toBe(1);
@@ -142,14 +147,30 @@ describe('buildEvalPlan schedule', () => {
       expect(entries.map((e) => e.pairId)).toEqual([`${id}@r0`, `${id}@r0`]);
     }
 
-    // Planned calls = cases * runs * 2.
-    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' })).plannedCalls).toBe(20);
+    // Planned attempts = cases * runs * 2.
+    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' })).plannedAttempts).toBe(22);
     expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' })).config.suite).toBe('full');
-    expect(buildEvalPlanFromEnv(env({ EVAL_RUNS: '3' })).plannedCalls).toBe(18);
-    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' })).plannedCalls).toBe(80);
+    expect(buildEvalPlanFromEnv(env({ EVAL_RUNS: '3' })).plannedAttempts).toBe(18);
+    expect(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' })).plannedAttempts).toBe(88);
     expect(
-      buildEvalPlanFromEnv(env({ EVAL_CASES: 'clean-01, mixed-01', EVAL_RUNS: '4' })).plannedCalls,
+      buildEvalPlanFromEnv(env({ EVAL_CASES: 'clean-01, mixed-01', EVAL_RUNS: '4' })).plannedAttempts,
     ).toBe(16);
+  });
+
+  it('routes each attempt and sums the provider-call upper bound', () => {
+    // Smoke cases are all small → fast-path (1 provider call each).
+    const smoke = buildEvalPlanFromEnv(env());
+    expect(smoke.entries.every((e) => e.route === 'fast-path')).toBe(true);
+    expect(smoke.entries.every((e) => e.maxProviderCalls === 1)).toBe(true);
+    expect(smoke.plannedProviderCallsUpperBound).toBe(6);
+
+    // Full suite: pipeline-01 is multi-pass (1 + maxGroups 8 + synthesis 1 = 10).
+    const full = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' }));
+    const multi = full.entries.filter((e) => e.route === 'multi-pass');
+    expect(multi).toHaveLength(2); // 2 variants of pipeline-01
+    expect(multi.every((e) => e.maxProviderCalls === 10)).toBe(true);
+    // 10 fast-path cases × 2 × 1 + pipeline-01 × 2 × 10 = 20 + 20 = 40.
+    expect(full.plannedProviderCallsUpperBound).toBe(40);
   });
 
   it('round-interleaves cases: every case once per round, rounds in call order', () => {
@@ -158,7 +179,7 @@ describe('buildEvalPlan schedule', () => {
     let cursor = 0;
     for (let roundIndex = 0; roundIndex < 3; roundIndex++) {
       const roundEntries = plan.entries.filter((e) => e.roundIndex === roundIndex);
-      expect(roundEntries).toHaveLength(20);
+      expect(roundEntries).toHaveLength(22);
       expect(new Set(roundEntries.map((e) => e.caseId))).toEqual(full);
       // Variants are adjacent: call pairs [2*c, 2*c+1] share a case+pairId.
       for (let i = 0; i < roundEntries.length; i += 2) {
@@ -172,7 +193,7 @@ describe('buildEvalPlan schedule', () => {
         cursor += 1;
       }
     }
-    expect(cursor).toBe(plan.plannedCalls);
+    expect(cursor).toBe(plan.plannedAttempts);
   });
 
   it('follows deterministic balanced AB/BA pattern and preserves per-case balance', () => {
@@ -212,7 +233,7 @@ describe('buildEvalPlan schedule', () => {
 
     const base = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '3', EVAL_SEED: 'alpha' }));
     const other = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '3', EVAL_SEED: 'bravo' }));
-    expect(base.plannedCalls).toBe(other.plannedCalls);
+    expect(base.plannedAttempts).toBe(other.plannedAttempts);
     expect(base.config.caseIds).toEqual(other.config.caseIds);
     expect(roundOrdersKey(base)).not.toEqual(roundOrdersKey(other));
     // Per-case balance preserved under the second seed.
@@ -227,7 +248,7 @@ describe('buildEvalPlan schedule', () => {
     const base = getFullCaseIds();
     expect(rotateCases(base, 0)).toEqual(base);
     expect(rotateCases(base, 1)).toEqual([...base.slice(1), base[0]]);
-    expect(rotateCases(base, 10)).toEqual(base); // full cycle
+    expect(rotateCases(base, 11)).toEqual(base); // full cycle
     expect(rotateCases(['only'], 3)).toEqual(['only']);
 
     const plan = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '2', EVAL_SEED: 'alpha' }));
@@ -239,13 +260,13 @@ describe('buildEvalPlan schedule', () => {
         .map((e) => e.caseId);
       expect(actual).toEqual(expected);
     }
-    expect(roundRotationOffset('alpha', 0, 10)).toBe(roundRotationOffset('alpha', 0, 10));
+    expect(roundRotationOffset('alpha', 0, 11)).toBe(roundRotationOffset('alpha', 0, 11));
   });
 
   it('groupPlanPairs yields complete A/B pairs with stable pair ids', () => {
     const plan = buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '2' }));
     const pairs = groupPlanPairs(plan);
-    expect(pairs).toHaveLength(20); // 10 cases x 2 rounds
+    expect(pairs).toHaveLength(22); // 11 cases x 2 rounds
     for (const pair of pairs) {
       expect(pair.complete).toBe(true);
       expect(pair.baseline).toBeDefined();
@@ -255,7 +276,7 @@ describe('buildEvalPlan schedule', () => {
       expect(pair.baseline!.variant).toBe('baseline');
       expect(pair.experimental!.variant).toBe('experimental');
     }
-    expect(new Set(pairs.map((p) => p.pairId)).size).toBe(20);
+    expect(new Set(pairs.map((p) => p.pairId)).size).toBe(22);
   });
 });
 
@@ -263,30 +284,32 @@ describe('buildEvalPlan schedule', () => {
 
 describe('call-budget guard', () => {
   it('reports exceeded without throwing (dry-mode path) and throws live when exceeded', () => {
-    const plan = buildEvalPlanFromEnv(env({ EVAL_RUNS: '10' })); // smoke: 60 calls
-    expect(plan.plannedCalls).toBe(60);
+    const plan = buildEvalPlanFromEnv(env({ EVAL_RUNS: '10' })); // smoke: 60 attempts (all fast)
+    expect(plan.plannedAttempts).toBe(60);
     const check = checkCallBudget(plan);
     expect(check.exceeded).toBe(true);
-    expect(check.planned).toBe(60);
+    expect(check.plannedProviderCalls).toBe(60);
     expect(check.max).toBe(DEFAULT_MAX_CALLS);
 
     expect(() => assertCallBudget(plan)).toThrow(/evAL_max_calls=20/i);
     expect(() => assertCallBudget(plan)).toThrow(/EVAL_MAX_CALLS=60/);
-    expect(() => assertCallBudget(plan)).toThrow(/10-case x 4-run decision run/i);
+    expect(() => assertCallBudget(plan)).toThrow(/11-case x 4-run decision run/i);
   });
 
-  it('passes within budget; explicit raise unlocks the 80-call decision run', () => {
+  it('passes within budget; explicit raise unlocks the 160-provider-call decision run', () => {
     expect(() => assertCallBudget(buildEvalPlanFromEnv(env()))).not.toThrow(); // 6 <= 20
-    expect(() => assertCallBudget(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full' })))).not.toThrow(); // 20 <= 20
+    // Full suite is now multi-pass-aware: 40 provider calls upper bound.
+    expect(() => assertCallBudget(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_MAX_CALLS: '40' })))).not.toThrow();
 
     const decision = buildEvalPlanFromEnv(
-      env({ EVAL_SUITE: 'full', EVAL_RUNS: '4', EVAL_MAX_CALLS: '80' }),
+      env({ EVAL_SUITE: 'full', EVAL_RUNS: '4', EVAL_MAX_CALLS: '160' }),
     );
-    expect(decision.plannedCalls).toBe(DECISION_RUN_CALLS);
+    expect(decision.plannedAttempts).toBe(88); // 11 cases x 4 runs x 2
+    expect(decision.plannedProviderCallsUpperBound).toBe(DECISION_RUN_CALLS);
     expect(() => assertCallBudget(decision)).not.toThrow();
-    // Same plan under the default guard is blocked.
+    // Same plan under the default guard is blocked (full-suite default is 40).
     expect(() => assertCallBudget(buildEvalPlanFromEnv(env({ EVAL_SUITE: 'full', EVAL_RUNS: '4' })))).toThrow(
-      /EVAL_MAX_CALLS=20/,
+      /EVAL_MAX_CALLS=40/,
     );
 
     // Explicit maxCalls override wins over the env default.

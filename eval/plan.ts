@@ -5,6 +5,8 @@ import {
   getFullCaseIds,
   type BenchmarkCase,
 } from './cases.js';
+import { routeReview, type ReviewRoute } from '../src/pipeline/run-review.js';
+import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 
 /**
  * Pure benchmark planning and config for the FiscalCR eval harness.
@@ -20,12 +22,23 @@ import {
  *   EVAL_SEED      stable non-empty string; default "fiscalcr-eval-v2".
  *                  Same seed => same schedule; different seed varies case
  *                  order while preserving per-case/round balance.
- *   EVAL_MAX_CALLS positive integer budget guard, default 20. Live mode must
- *                  fail before any network call when planned > max; dry mode
- *                  may report the overflow without failing.
+ *   EVAL_MAX_CALLS positive integer budget guard. Default 20 for smoke and
+ *                  focused (explicit EVAL_CASES) plans; the full suite
+ *                  (EVAL_SUITE=full, no EVAL_CASES override) defaults to 40.
+ *                  An explicit EVAL_MAX_CALLS from the shell or .env always
+ *                  wins over either default. Live mode must fail before any
+ *                  network call when the planned provider-call UPPER BOUND
+ *                  exceeds max; dry mode may report the overflow without
+ *                  failing.
  *
- * Planned calls = selectedCases * runs * 2 (one baseline + one experimental
- * call per case per round).
+ * Planned attempts = selectedCases * runs * 2 (one baseline + one experimental
+ * attempt per case per round). Each attempt runs the production review
+ * pipeline (src/pipeline/run-review.ts), so an attempt may issue more than one
+ * provider LLM call: fast-path attempts cost at most 1; multi-pass attempts
+ * cost at most 1 (intent) + maxGroups (group reviews) + 1 (synthesis when more
+ * than one group) using the sound config bound pipeline.maxGroups.
+ * plannedProviderCallsUpperBound is the sum of those per-attempt bounds and is
+ * what EVAL_MAX_CALLS guards against before any provider is created.
  *
  * Schedule: cases are interleaved by round. Within a round, the case order is
  * a deterministic seeded rotation of the selected ids. For every case, the
@@ -37,9 +50,34 @@ export type EvalSuite = 'smoke' | 'full';
 export type EvalVariant = 'baseline' | 'experimental';
 
 export const DEFAULT_EVAL_SEED = 'fiscalcr-eval-v2';
+/**
+ * Default EVAL_MAX_CALLS guard for smoke and focused (explicit EVAL_CASES)
+ * plans. The full suite defaults to FULL_SUITE_MAX_CALLS instead — see
+ * resolveEvalSelection. An explicitly-set EVAL_MAX_CALLS (shell export or
+ * .env, both arrive as ordinary env vars) always wins over either default.
+ */
 export const DEFAULT_MAX_CALLS = 20;
-/** Recommended call budget for the 10-case x 4-run decision run. */
-export const DECISION_RUN_CALLS = 80;
+/**
+ * Suite-aware default for the full suite (11 cases) at EVAL_RUNS=1: the
+ * provider-call upper bound is 40 (10 fast-path cases × 1 + pipeline-01 × 10),
+ * so the guard defaults to 40 when EVAL_MAX_CALLS is absent. Only applies when
+ * EVAL_SUITE=full WITHOUT an explicit EVAL_CASES override (focused runs keep
+ * DEFAULT_MAX_CALLS).
+ */
+export const FULL_SUITE_MAX_CALLS = 40;
+/**
+ * Recommended provider-call budget for the 11-case x 4-run decision run.
+ * 10 fast-path cases × 8 attempts × 1 + pipeline-01 × 8 attempts × 10
+ * (1 + maxGroups 8 + synthesis 1) = 80 + 80 = 160.
+ */
+export const DECISION_RUN_CALLS = 160;
+
+/** Upper bound of provider LLM calls for one review attempt on a route. */
+export function maxProviderCallsForRoute(route: ReviewRoute, maxGroups: number): number {
+  return route === 'fast-path'
+    ? 1
+    : 1 + maxGroups + (maxGroups > 1 ? 1 : 0);
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,13 +115,23 @@ export interface PlanEntry {
   experimental: boolean;
   /** 0-based global position in the whole plan (execution order). */
   globalCallIndex: number;
+  /** Route the production runner will take for this attempt (deterministic). */
+  route: ReviewRoute;
+  /** Upper bound of provider LLM calls for this attempt (route-based). */
+  maxProviderCalls: number;
 }
 
 export interface EvalPlan {
   config: EvalPlanConfig;
   entries: PlanEntry[];
   /** Equal to selectedCases * runs * 2. */
-  plannedCalls: number;
+  plannedAttempts: number;
+  /**
+   * Sum of per-attempt provider-call upper bounds. This is the number
+   * EVAL_MAX_CALLS guards against (not plannedAttempts — multi-pass attempts
+   * can issue several provider calls each).
+   */
+  plannedProviderCallsUpperBound: number;
 }
 
 export interface PlanPair {
@@ -98,7 +146,8 @@ export interface PlanPair {
 }
 
 export interface BudgetCheck {
-  planned: number;
+  /** plannedProviderCallsUpperBound — the number EVAL_MAX_CALLS guards. */
+  plannedProviderCalls: number;
   max: number;
   exceeded: boolean;
 }
@@ -241,11 +290,14 @@ export function resolveEvalSelection(env: NodeJS.ProcessEnv): EvalSelection {
     throw new Error('Invalid EVAL_SEED: expected a non-empty seed string');
   }
 
-  const maxCalls = resolvePositiveInt(
-    env.EVAL_MAX_CALLS,
-    'EVAL_MAX_CALLS',
-    DEFAULT_MAX_CALLS,
-  );
+  const maxCalls =
+    env.EVAL_MAX_CALLS !== undefined && env.EVAL_MAX_CALLS.trim() !== ''
+      ? resolvePositiveInt(env.EVAL_MAX_CALLS, 'EVAL_MAX_CALLS', DEFAULT_MAX_CALLS)
+      : // Suite-aware default when EVAL_MAX_CALLS is absent: full suite (no
+        // explicit EVAL_CASES override) defaults to 40, everything else to 20.
+        suite === 'full' && !explicit
+        ? FULL_SUITE_MAX_CALLS
+        : DEFAULT_MAX_CALLS;
 
   return { suite, caseIds, cases: getCases(caseIds), explicit, runs, seed, maxCalls };
 }
@@ -255,8 +307,13 @@ export function resolveEvalSelection(env: NodeJS.ProcessEnv): EvalSelection {
 
 export function buildEvalPlan(selection: EvalSelection): EvalPlan {
   const { caseIds, runs, seed } = selection;
+  // Eval configs only override provider/model/baseUrl/userAgent/experimental —
+  // pipeline routing settings always come from DEFAULT_CONFIG.
+  const maxGroups = DEFAULT_CONFIG.pipeline.maxGroups;
+  const caseById = new Map(selection.cases.map((c) => [c.id, c]));
   const entries: PlanEntry[] = [];
   let globalCallIndex = 0;
+  let plannedProviderCallsUpperBound = 0;
 
   for (let roundIndex = 0; roundIndex < runs; roundIndex++) {
     const offset = roundRotationOffset(seed, roundIndex, caseIds.length);
@@ -264,6 +321,9 @@ export function buildEvalPlan(selection: EvalSelection): EvalPlan {
     for (let caseIndex = 0; caseIndex < roundOrder.length; caseIndex++) {
       const caseId = roundOrder[caseIndex];
       const pairId = pairIdOf(caseId, roundIndex);
+      const route = routeReview(caseById.get(caseId)!.context, DEFAULT_CONFIG).route;
+      const maxProviderCalls = maxProviderCallsForRoute(route, maxGroups);
+      plannedProviderCallsUpperBound += 2 * maxProviderCalls;
       for (const variant of variantOrderForCaseRound(roundIndex)) {
         entries.push({
           roundIndex,
@@ -273,6 +333,8 @@ export function buildEvalPlan(selection: EvalSelection): EvalPlan {
           variant,
           experimental: variant === 'experimental',
           globalCallIndex,
+          route,
+          maxProviderCalls,
         });
         globalCallIndex += 1;
       }
@@ -289,7 +351,8 @@ export function buildEvalPlan(selection: EvalSelection): EvalPlan {
       explicit: selection.explicit,
     },
     entries,
-    plannedCalls: globalCallIndex,
+    plannedAttempts: globalCallIndex,
+    plannedProviderCallsUpperBound,
   };
 }
 
@@ -331,16 +394,16 @@ export function checkCallBudget(
   maxCalls: number = plan.config.maxCalls,
 ): BudgetCheck {
   return {
-    planned: plan.plannedCalls,
+    plannedProviderCalls: plan.plannedProviderCallsUpperBound,
     max: maxCalls,
-    exceeded: plan.plannedCalls > maxCalls,
+    exceeded: plan.plannedProviderCallsUpperBound > maxCalls,
   };
 }
 
 /**
- * Live-mode guard: throws BEFORE any network call when the plan exceeds the
- * budget, with the exact override instruction. Dry mode should use
- * `checkCallBudget` instead so it can still show the plan.
+ * Live-mode guard: throws BEFORE any network call when the plan's provider-call
+ * upper bound exceeds the budget, with the exact override instruction. Dry mode
+ * should use `checkCallBudget` instead so it can still show the plan.
  */
 export function assertCallBudget(
   plan: EvalPlan,
@@ -349,9 +412,10 @@ export function assertCallBudget(
   const check = checkCallBudget(plan, maxCalls);
   if (check.exceeded) {
     throw new Error(
-      `Planned ${check.planned} LLM calls exceeds EVAL_MAX_CALLS=${check.max}. ` +
-        `Raise the guard for this plan, e.g. EVAL_MAX_CALLS=${check.planned} ` +
-        `(recommended ${DECISION_RUN_CALLS} for the 10-case x 4-run decision run).`,
+      `Planned ${check.plannedProviderCalls} provider LLM calls (upper bound) exceeds ` +
+        `EVAL_MAX_CALLS=${check.max}. ` +
+        `Raise the guard for this plan, e.g. EVAL_MAX_CALLS=${check.plannedProviderCalls} ` +
+        `(recommended ${DECISION_RUN_CALLS} for the 11-case x 4-run decision run).`,
     );
   }
 }

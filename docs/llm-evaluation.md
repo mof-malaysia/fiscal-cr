@@ -1,23 +1,36 @@
 # Local LLM evaluation
 
-A local harness exercises the real provider, fast-path, and usage-tracking code
-against a deterministic 10-case gold benchmark suite — no GitHub API,
-repository, or pull request involved. Each case is a small synthetic PR with
-hand-authored expected issues; every case runs once as **baseline** and once as
-**experimental** per round.
+A local harness exercises the real production routing and review-pipeline
+implementation (`src/pipeline/run-review.ts`) against a deterministic 11-case
+gold benchmark suite — no GitHub API, repository, or pull request involved.
+Each case is a small synthetic PR with hand-authored expected issues; every
+case runs once as **baseline** and once as **experimental** per round.
+
+**Defensible scope.** The harness prepares a `PullRequestContext` (title,
+description, changed-file patches and full content) and then calls the same
+`runReviewPipeline` the production orchestrator uses, so routing
+(fast-path vs multi-pass) and every review stage run the real implementation.
+It deliberately stops there: it performs **no GitHub publishing side effects**
+(no check runs, reviews, comments, or state markers) and does **not** exercise
+the GitHub Action workspace-context path or the full GitHub lifecycle. Results
+are a signal for this pipeline's review behavior, not an end-to-end GitHub
+integration test.
 
 ## Quick start
 
 ```bash
-# Keyless, no network: prints the plan, budget check, and per-variant suite
-# prompt char/token stats
+# Keyless, no network: prints the plan (routes, attempts, provider-call upper
+# bound), budget check, and per-variant suite prompt char/token stats
 make eval-llm-dry
 
-# Live smoke (default): 3 cases × EVAL_RUNS × 2 variants = 6 calls
+# Live smoke (default): 3 fast-path cases × EVAL_RUNS × 2 variants = 6 attempts
 make eval-llm
 
-# Live full suite: 10 cases × EVAL_RUNS × 2 variants = 20 calls
+# Live full suite: 11 cases × EVAL_RUNS × 2 variants = 22 attempts
 make eval-llm-full
+
+# Keyless focused dry run of the pipeline-01 multi-pass canary
+make eval-llm-pipeline-dry
 ```
 
 Secure usage:
@@ -32,41 +45,88 @@ Secure usage:
 - Node may print a benign `DEP0205` warning about `--env-file`; it is left
   as-is (the harness does not suppress warnings or change `NODE_OPTIONS`).
 
+## Attempts vs. provider calls
+
+An **attempt** is one baseline or experimental run of the production review
+pipeline on one case. Planned attempts = `cases × runs × 2`.
+
+A single attempt may issue more than one **provider LLM call**, depending on
+the route the production runner selects:
+
+- **fast-path** attempts cost at most **1** provider call.
+- **multi-pass** attempts cost at most **1 (intent) + maxGroups (group
+  reviews) + 1 (synthesis when more than one group)** — with the default
+  `maxGroups = 8`, at most **10** provider calls.
+
+`EVAL_MAX_CALLS` guards the **provider-call upper bound** (the sum of these
+per-attempt bounds), not the attempt count. The harness also records the
+**actual** provider calls issued per attempt and in aggregate.
+
 ## Suite taxonomy
 
 - `EVAL_SUITE` (`smoke` default | `full`) picks the case set: 3 smoke cases
-  (`clean-01`, `local-01`, `security-01`) or all 10.
+  (`clean-01`, `local-01`, `security-01`) or all 11.
 - `EVAL_CASES` (exact comma-separated override, e.g. `clean-01, security-01`)
-  beats `EVAL_SUITE` when both are set. Focused runs make `2 × N` calls for N
-  cases. Unknown, empty, or duplicate ids are rejected.
+  beats `EVAL_SUITE` when both are set. Focused runs make `2 × N` attempts for
+  N cases. Unknown, empty, or duplicate ids are rejected.
 - `EVAL_RUNS` (positive integer, default `1`) sets A/B rounds **per case**.
-  Planned calls = `cases × runs × 2`. The default smoke run is
-  `3 × 1 × 2 = 6` calls; the full suite at the default runs is
-  `10 × 1 × 2 = 20` calls.
+  Planned attempts = `cases × runs × 2`. The default smoke run is
+  `3 × 1 × 2 = 6` attempts; the full suite at the default runs is
+  `11 × 1 × 2 = 22` attempts.
 - `EVAL_SEED` (non-empty string, default `fiscalcr-eval-v2`) deterministically
   rotates case order per round; variant order per case follows an AB / BA /
-  BA / AB pattern so order bias cancels per case.
-- `EVAL_MAX_CALLS` (default `20`) is a guard enforced **immediately before any
-  live provider call** — a plan exceeding it fails with a nonzero exit and a
-  message showing the exact override. Dry runs show the same guard without
-  failing and never touch the network or write artifacts.
-- The 10-case × 4-round decision run is **80 calls** and requires
-  `EVAL_MAX_CALLS=80` (`EVAL_RUNS=4 EVAL_MAX_CALLS=80 EVAL_SUITE=full make eval-llm`).
+  BA / AB pattern so order bias cancels per case. The seed version is kept for
+  deterministic continuity across runs.
+- `EVAL_MAX_CALLS` (default `20` for smoke/focused runs, `40` for the full
+  suite) is a guard enforced **immediately before any
+  live provider is created or any network call is made** — a plan whose
+  provider-call upper bound exceeds it fails with a nonzero exit and a message
+  showing the exact override. Dry runs show the same guard without failing and
+  never touch the network or write artifacts.
+
+### Provider-call upper bounds
+
+| Suite / run          | Attempts | Provider-call upper bound |
+| -------------------- | -------- | ------------------------- |
+| smoke, `EVAL_RUNS=1` | 6        | 6 (all fast-path)         |
+| full, `EVAL_RUNS=1`  | 22       | 40 (10 fast-path × 1 + pipeline-01 × 10) |
+| full, `EVAL_RUNS=4`  | 88       | **160** (decision run)    |
+
+The 11-case × 4-round decision run upper bound is **160** provider calls
+(`10 fast-path cases × 8 attempts × 1 + pipeline-01 × 8 attempts × 10 =
+80 + 80`) and requires `EVAL_MAX_CALLS=160`
+(`EVAL_RUNS=4 EVAL_MAX_CALLS=160 EVAL_SUITE=full make eval-llm`).
 
 ## Metrics
 
-What a run reports:
+Metrics are reported **per attempt** (one baseline or experimental run of the
+pipeline on one case), with **stage and per-provider-call detail**:
 
-- Per completed call: parse success (real `parseFastPathResponse`), contract
-  completeness, format-length compliance, retained vs gold counts, TP/FP/FN/F1
-  against the case gold, output tokens, raw output characters, and duration.
-- Per failed call: a sanitized error code/message only. Individual model-call
-  failures never abort the plan — the harness records a `failed` attempt,
-  prints a compact safe line, and continues. Exit code is nonzero only for
-  config/budget/fatal setup/artifact failures, never for a model-call failure.
+- Per attempt: the route taken (`fast-path` / `multi-pass`), the actual number
+  of provider LLM calls issued, per-stage outcomes (`intent` / `group-review` /
+  `synthesis` / `fast-path`, each `success` or `failed`), total input/output/
+  cached tokens, raw output characters, duration, retained vs gold counts,
+  TP/FP/FN/F1 against the case gold, and model self-score.
+- Per provider call: prompt hashes/counts (per-message sha256, char counts,
+  estimated tokens — never the prompt), duration, usage, finish reason, and on
+  success the parse/contract metadata; on rejection a sanitized error
+  code/message only.
+- **Fast-path-only fields are nullable on multi-pass.** `parseSuccess`,
+  `contractComplete`, `conciseCompliant`, `zeroFindingsKind`, word-count and
+  walkthrough-coverage metrics describe the single fast-path response's
+  contract compliance and are `null` on the multi-pass route — never false
+  evidence. Multi-pass generated findings are counted only from `group-review`
+  captures (stage truth), never from intent/synthesis responses.
+- **Failed provider calls may still yield a completed attempt.** A stage that
+  fails is recorded as a `failed` stage outcome; if the pipeline still produces
+  a review, the attempt is `completed` with `degraded: true`. Only a fatal
+  failure (e.g. all review groups failed) produces a `failed` attempt. A failed
+  provider call never aborts the plan — the harness records the sanitized
+  failure and continues. Exit code is nonzero only for config/budget/fatal
+  setup/artifact failures, never for a model-call failure.
 - Final blocks: execution counts (planned/completed/failed/completion rate),
-  post-gate quality (micro P/R/F1, macro F1, clean-FP rate, severe FPs,
-  duplicates, TP per 1k output tokens) per variant, reliability/efficiency
+  post-gate quality (micro P/R/F1, macro F1, clean rate [FP-free runs], severe
+  FPs, duplicates, TP per 1k output tokens) per variant, reliability/efficiency
   diagnostics (parse/contract/format-length rates, median output tokens/raw
   chars/duration), paired deltas over **complete pairs only** (output savings,
   raw-char savings, F1/TP/FP deltas), and a large-regression report that only
@@ -109,7 +169,7 @@ which is Review B. It contains no review text, no context, and no secrets.
 pair using the rubric, then open the `-blind-key.json` to unblind. Do not
 open the key before scoring.
 
-A 10-case × 4-round decision run produces 40 pairs. A practical human
+An 11-case × 4-round decision run produces 44 pairs. A practical human
 review samples or stratifies from that pool; 20 well-chosen pairs are
 usually enough to detect meaningful explanation-quality differences.
 
@@ -127,11 +187,11 @@ actionability, and usefulness — which automated metrics do not measure.
 | `KIMI_MODEL`         | `kimi-for-coding`  | Kimi model override, e.g. `kimi-k2.5`             |
 | `BASE_URL`           | provider default   | Falls back to `FISCALCR_BASE_URL`                 |
 | `LLM_USER_AGENT`     | —                  | Optional custom User-Agent for whitelisting       |
-| `EVAL_SUITE`         | `smoke`            | `smoke` (3 cases) or `full` (10 cases)            |
+| `EVAL_SUITE`         | `smoke`            | `smoke` (3 cases) or `full` (11 cases)            |
 | `EVAL_CASES`         | —                  | Exact comma-separated override; beats `EVAL_SUITE` |
-| `EVAL_RUNS`          | `1`                | A/B rounds per case; plan = cases × runs × 2      |
+| `EVAL_RUNS`          | `1`                | A/B rounds per case; attempts = cases × runs × 2  |
 | `EVAL_SEED`          | `fiscalcr-eval-v2` | Deterministic per-round case rotation             |
-| `EVAL_MAX_CALLS`     | `20`               | Budget guard; full 10×4 decision run needs `80`   |
+| `EVAL_MAX_CALLS`     | `20`; full: `40`    | Provider-call upper-bound guard; full 11×4 decision run needs `160` |
 
 Examples:
 
@@ -140,14 +200,14 @@ export API_KEY=sk-...
 export MODEL_PROVIDER=openai-compatible
 export MODEL=gpt-4.1-mini
 export BASE_URL=https://api.openai.com/v1
-make eval-llm            # smoke, 6 calls
-make eval-llm-full       # full suite, 20 calls
+make eval-llm            # smoke, 6 attempts (6 provider calls)
+make eval-llm-full       # full suite, 22 attempts (up to 40 provider calls)
 ```
 
 ```bash
-EVAL_RUNS=3 make eval-llm          # smoke, 18 calls (3 cases × 3 rounds × 2)
-EVAL_CASES=clean-01,local-01 make eval-llm   # focused, 4 calls
-EVAL_RUNS=4 EVAL_MAX_CALLS=80 EVAL_SUITE=full make eval-llm   # decision run, 80 calls
+EVAL_RUNS=3 make eval-llm          # smoke, 18 attempts (3 cases × 3 rounds × 2)
+EVAL_CASES=clean-01,local-01 make eval-llm   # focused, 4 attempts
+EVAL_RUNS=4 EVAL_MAX_CALLS=160 EVAL_SUITE=full make eval-llm   # decision run, 88 attempts (up to 160 calls)
 ```
 
 Or drop the same variables in a root `.env` (exported env still wins) and run
@@ -164,14 +224,33 @@ After a live run (even one where every call failed) the harness writes a
 timestamped, secret-safe JSON artifact to
 `.eval-results/eval-<timestamp>.json` (gitignored).
 
-It carries the schema id `fiscalcr-eval-v2`, suite metadata, selected case
-ids + seed, sanitized plan entries, per-attempt outcomes (completed metrics
-and quality, or sanitized failures), fixture manifests with gold issues,
-baseline/experimental prompt fingerprints (suite-level sha256 over
-case id/version + exact prompts, plus total chars), repo commit/dirty flags,
-config (runs/planned/completed/failed/timeout/max calls), and the aggregate
-benchmark result. Completed attempts keep the parsed and final review text
-for the later blind human pack.
+It carries the schema id **`fiscalcr-eval-v3`** and the suite identity
+`fiscalcr-eval-v3-pipeline`, plus:
+
+- suite metadata (selected case ids, seed) and sanitized plan entries — one
+  per attempt, with the **route** (fast-path / multi-pass) and the per-attempt
+  provider-call upper bound;
+- per-attempt outcomes with a **`completed` | `failed`** status. A completed
+  attempt may carry `degraded: true` (a pipeline stage failed but a review was
+  still produced) and the per-stage outcomes (`intent` / `group-review` /
+  `synthesis` / `fast-path`, each `success` or `failed`);
+- prompt **hashes and counts only** (per-message sha256, char counts,
+  estimated tokens) — never raw prompts or raw responses;
+- the final review text and quality report for completed attempts;
+- **actual provider calls** issued per attempt and in aggregate, plus
+  planned/completed/failed/degraded counts and the provider-call upper bound.
+
+**Prompt-preview vs. actual-call hash evidence.** The artifact's `prompt`
+section is a *static suite-level preview*: it hashes only the statically
+buildable **fast-path** prompts (the ones actually sent on that route). Cases
+routed **multi-pass** are listed in `prompt.dynamicMultiPassCaseIds` /
+`dynamicMultiPassCount` and are **excluded** from the preview — their stage
+prompts are generated during live execution, so no fabricated fast-path prompt
+is ever hashed. The source of truth for live multi-pass prompts is the
+**per-call hashes captured in each attempt's `captures`** (per-message sha256
+of the prompts actually sent). A pipeline-only selection therefore has a
+`prompt` preview hash that represents "no static prompt preview", not a fake
+fast-path prompt.
 
 It never contains the API key, operator base URL, environment dump, request
 headers, or raw provider response bodies; `assertArtifactSafe` proves the
@@ -184,9 +263,9 @@ best-effort with fixed git arguments and nulled on failure.
 - Use automated metrics (TP/FP/FN/F1) to catch **detection regressions**.
 - Use the blind pack to judge **explanation quality** (clarity,
   actionability, usefulness) when comparing baseline and experimental prompts.
-- A decision run (`EVAL_RUNS=4`, 80 calls, 40 pairs) is the recommended
-  minimum for reliable paired comparison; below 4 runs the regression report
-  is labeled directional/insufficient.
+- A decision run (`EVAL_RUNS=4`, 88 attempts, up to 160 provider calls, 44
+  pairs) is the recommended minimum for reliable paired comparison; below 4
+  runs the regression report is labeled directional/insufficient.
 - Model self-score and raw finding count are diagnostics, not quality
   headlines.
 
@@ -194,6 +273,9 @@ best-effort with fixed git arguments and nulled on failure.
 
 - The gold suite is small and synthetic; scores are a signal for regressions
   in this harness, not a general model ranking.
+- The harness runs the production routing/review pipeline but performs no
+  GitHub publishing side effects and does not cover the GitHub Action
+  workspace-context path or the full GitHub lifecycle.
 - Vacuous-truth conventions apply when a case has no predictions or no gold.
 - Blind human review is manual and time-consuming; sample or stratify rather
   than scoring every pair.

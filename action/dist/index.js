@@ -53811,6 +53811,198 @@ function reviewTemperature(config, preferred = 0.3) {
     return preferred;
 }
 
+;// CONCATENATED MODULE: ./src/pipeline/pass3-synthesis.ts
+
+
+
+
+
+const SEVERITY_ORDER = ['critical', 'warning', 'suggestion', 'nitpick'];
+/** Criticals survive the confidence filter down to this floor, flagged as low-confidence. */
+const CRITICAL_CONFIDENCE_FLOOR = 0.4;
+function severityRank(severity) {
+    return SEVERITY_ORDER.indexOf(severity);
+}
+function deterministicScore(stats) {
+    const raw = 100 - 15 * stats.critical - 5 * stats.warning - 1 * stats.suggestion;
+    return Math.max(0, Math.min(100, Math.round(raw)));
+}
+function countBySeverity(annotations) {
+    const stats = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
+    for (const a of annotations)
+        stats[a.severity]++;
+    return stats;
+}
+/**
+ * Deterministic quality gate applied to all findings regardless of path:
+ * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)
+ * 2. drop low-confidence findings (criticals get a lower floor, flagged)
+ * 3. dedupe overlapping same-category findings on the same file
+ * 4. severity floor + rank by severity/confidence + cap
+ */
+function validateAndRankFindings(findings, changedFiles, config) {
+    const patches = new Map(changedFiles.map((f) => [f.filename, f.patch]));
+    // 1. Diff validation
+    const placeable = findings.filter((f) => {
+        const patch = patches.get(f.path);
+        if (!patch)
+            return false;
+        if (!lineToDiffPosition(patch, f.endLine).found) {
+            logger.debug({ path: f.path, line: f.endLine }, 'Dropping finding: line not in diff');
+            return false;
+        }
+        return true;
+    });
+    // 2. Confidence filter
+    const confident = placeable.filter((f) => {
+        const confidence = f.confidence ?? DEFAULT_CONFIDENCE;
+        if (confidence >= config.pipeline.minConfidence)
+            return true;
+        if (f.severity === 'critical' && confidence >= CRITICAL_CONFIDENCE_FLOOR) {
+            f.body = `${f.body}\n\n_(low confidence — please verify)_`;
+            return true;
+        }
+        return false;
+    });
+    // 3. Dedupe: same file + same category + overlapping line ranges.
+    //    Keep the higher-severity (then higher-confidence) finding.
+    const sorted = [...confident].sort((a, b) => severityRank(a.severity) - severityRank(b.severity) ||
+        (b.confidence ?? DEFAULT_CONFIDENCE) - (a.confidence ?? DEFAULT_CONFIDENCE));
+    const deduped = [];
+    for (const finding of sorted) {
+        const duplicate = deduped.some((kept) => kept.path === finding.path &&
+            kept.category === finding.category &&
+            kept.startLine <= finding.endLine &&
+            finding.startLine <= kept.endLine);
+        if (!duplicate)
+            deduped.push(finding);
+    }
+    // 4. Severity floor + cap (list is already ranked best-first)
+    const minIdx = severityRank(config.review.minSeverity);
+    return deduped
+        .filter((f) => severityRank(f.severity) <= minIdx)
+        .slice(0, config.review.maxAnnotations);
+}
+/**
+ * Pass 3: assemble the final ReviewResult. Uses one LLM call to write the
+ * summary and prune near-duplicates/false positives; skipped for single-group
+ * runs, and every LLM decision has a deterministic fallback.
+ */
+async function synthesize(llm, input, config, usage) {
+    const { ctx, intent, outcomes, findings } = input;
+    const failedGroups = outcomes.filter((o) => o.failed);
+    const failedGroupNote = failedGroups.length > 0
+        ? `${failedGroups.flatMap((o) => o.group.files).length} file(s) could not be fully reviewed (LLM call failed).`
+        : undefined;
+    let annotations = findings;
+    let summary = '';
+    let score = null;
+    let walkthrough = intent?.walkthrough ?? [];
+    const shouldCallLLM = outcomes.length > 1;
+    if (shouldCallLLM) {
+        try {
+            const ids = new Map(findings.map((f, i) => [`f${i + 1}`, f]));
+            const messages = [
+                { role: 'system', content: buildSynthesisSystemPrompt(config) },
+                {
+                    role: 'user',
+                    content: buildSynthesisUserPrompt({
+                        ctx,
+                        intent,
+                        groupSummaries: outcomes.map((o) => ({ label: o.group.label, summary: o.summary })),
+                        findings: [...ids.entries()].map(([id, f]) => ({
+                            id,
+                            line: `${id} | ${f.path}:${f.startLine}-${f.endLine} | ${f.severity} | ${(f.confidence ?? DEFAULT_CONFIDENCE).toFixed(2)} | ${f.title}`,
+                        })),
+                        failedGroupNote,
+                    }),
+                },
+            ];
+            const startedAt = Date.now();
+            usage.startCall();
+            const response = await llm.chatCompletion({
+                messages,
+                responseFormat: { type: 'json_object' },
+                maxTokens: 4_096,
+                temperature: reviewTemperature(config),
+                timeoutMs: 90_000,
+            });
+            usage.add(response.usage, {
+                stage: 'synthesis',
+                messages,
+                maxOutputTokens: 4_096,
+                durationMs: Date.now() - startedAt,
+                finishReason: response.finishReason,
+            });
+            const parsed = parseSynthesisResponse(response.content);
+            if (parsed) {
+                summary = parsed.summary;
+                score = parsed.score;
+                if (parsed.walkthrough.length > 0)
+                    walkthrough = parsed.walkthrough;
+                // Apply LLM pruning conservatively: never drop criticals.
+                const toDrop = new Set();
+                for (const dupSet of parsed.nearDuplicates) {
+                    for (const id of dupSet.slice(1)) {
+                        const f = ids.get(id);
+                        if (f && f.severity !== 'critical')
+                            toDrop.add(f);
+                    }
+                }
+                for (const id of parsed.likelyFalsePositives) {
+                    const f = ids.get(id);
+                    if (!f)
+                        continue;
+                    if (f.severity === 'critical') {
+                        logger.info({ title: f.title }, 'Synthesis flagged a critical as false positive — keeping it');
+                        continue;
+                    }
+                    toDrop.add(f);
+                }
+                if (toDrop.size > 0) {
+                    logger.info({ dropped: toDrop.size }, 'Synthesis pruned findings');
+                    annotations = findings.filter((f) => !toDrop.has(f));
+                }
+                usage.emit({
+                    type: 'stage_result',
+                    stage: 'synthesis',
+                    status: 'success',
+                    findingsGenerated: findings.length,
+                    findingsRetained: annotations.length,
+                });
+            }
+            else {
+                usage.emit({ type: 'stage_result', stage: 'synthesis', status: 'failed' });
+            }
+        }
+        catch (err) {
+            usage.emit({ type: 'stage_result', stage: 'synthesis', status: 'failed' });
+            logger.warn({ err }, 'Synthesis pass failed, using deterministic assembly');
+        }
+    }
+    // Deterministic fallbacks
+    if (!summary) {
+        const parts = [
+            intent?.intent ?? '',
+            ...outcomes.map((o) => o.summary).filter(Boolean),
+        ].filter(Boolean);
+        summary = parts.join(' ') || 'Automated review completed.';
+    }
+    if (failedGroupNote)
+        summary += `\n\n> ⚠️ ${failedGroupNote}`;
+    const stats = countBySeverity(annotations);
+    return {
+        summary,
+        score: score ?? deterministicScore(stats),
+        annotations,
+        stats,
+        tokensUsed: usage.total(),
+        walkthrough,
+        intent: intent?.intent,
+        callCount: usage.calls(),
+    };
+}
+
 ;// CONCATENATED MODULE: ./src/pipeline/pass1-intent.ts
 
 
@@ -54221,198 +54413,6 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
     })));
 }
 
-;// CONCATENATED MODULE: ./src/pipeline/pass3-synthesis.ts
-
-
-
-
-
-const SEVERITY_ORDER = ['critical', 'warning', 'suggestion', 'nitpick'];
-/** Criticals survive the confidence filter down to this floor, flagged as low-confidence. */
-const CRITICAL_CONFIDENCE_FLOOR = 0.4;
-function severityRank(severity) {
-    return SEVERITY_ORDER.indexOf(severity);
-}
-function deterministicScore(stats) {
-    const raw = 100 - 15 * stats.critical - 5 * stats.warning - 1 * stats.suggestion;
-    return Math.max(0, Math.min(100, Math.round(raw)));
-}
-function countBySeverity(annotations) {
-    const stats = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
-    for (const a of annotations)
-        stats[a.severity]++;
-    return stats;
-}
-/**
- * Deterministic quality gate applied to all findings regardless of path:
- * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)
- * 2. drop low-confidence findings (criticals get a lower floor, flagged)
- * 3. dedupe overlapping same-category findings on the same file
- * 4. severity floor + rank by severity/confidence + cap
- */
-function validateAndRankFindings(findings, changedFiles, config) {
-    const patches = new Map(changedFiles.map((f) => [f.filename, f.patch]));
-    // 1. Diff validation
-    const placeable = findings.filter((f) => {
-        const patch = patches.get(f.path);
-        if (!patch)
-            return false;
-        if (!lineToDiffPosition(patch, f.endLine).found) {
-            logger.debug({ path: f.path, line: f.endLine }, 'Dropping finding: line not in diff');
-            return false;
-        }
-        return true;
-    });
-    // 2. Confidence filter
-    const confident = placeable.filter((f) => {
-        const confidence = f.confidence ?? DEFAULT_CONFIDENCE;
-        if (confidence >= config.pipeline.minConfidence)
-            return true;
-        if (f.severity === 'critical' && confidence >= CRITICAL_CONFIDENCE_FLOOR) {
-            f.body = `${f.body}\n\n_(low confidence — please verify)_`;
-            return true;
-        }
-        return false;
-    });
-    // 3. Dedupe: same file + same category + overlapping line ranges.
-    //    Keep the higher-severity (then higher-confidence) finding.
-    const sorted = [...confident].sort((a, b) => severityRank(a.severity) - severityRank(b.severity) ||
-        (b.confidence ?? DEFAULT_CONFIDENCE) - (a.confidence ?? DEFAULT_CONFIDENCE));
-    const deduped = [];
-    for (const finding of sorted) {
-        const duplicate = deduped.some((kept) => kept.path === finding.path &&
-            kept.category === finding.category &&
-            kept.startLine <= finding.endLine &&
-            finding.startLine <= kept.endLine);
-        if (!duplicate)
-            deduped.push(finding);
-    }
-    // 4. Severity floor + cap (list is already ranked best-first)
-    const minIdx = severityRank(config.review.minSeverity);
-    return deduped
-        .filter((f) => severityRank(f.severity) <= minIdx)
-        .slice(0, config.review.maxAnnotations);
-}
-/**
- * Pass 3: assemble the final ReviewResult. Uses one LLM call to write the
- * summary and prune near-duplicates/false positives; skipped for single-group
- * runs, and every LLM decision has a deterministic fallback.
- */
-async function synthesize(llm, input, config, usage) {
-    const { ctx, intent, outcomes, findings } = input;
-    const failedGroups = outcomes.filter((o) => o.failed);
-    const failedGroupNote = failedGroups.length > 0
-        ? `${failedGroups.flatMap((o) => o.group.files).length} file(s) could not be fully reviewed (LLM call failed).`
-        : undefined;
-    let annotations = findings;
-    let summary = '';
-    let score = null;
-    let walkthrough = intent?.walkthrough ?? [];
-    const shouldCallLLM = outcomes.length > 1;
-    if (shouldCallLLM) {
-        try {
-            const ids = new Map(findings.map((f, i) => [`f${i + 1}`, f]));
-            const messages = [
-                { role: 'system', content: buildSynthesisSystemPrompt(config) },
-                {
-                    role: 'user',
-                    content: buildSynthesisUserPrompt({
-                        ctx,
-                        intent,
-                        groupSummaries: outcomes.map((o) => ({ label: o.group.label, summary: o.summary })),
-                        findings: [...ids.entries()].map(([id, f]) => ({
-                            id,
-                            line: `${id} | ${f.path}:${f.startLine}-${f.endLine} | ${f.severity} | ${(f.confidence ?? DEFAULT_CONFIDENCE).toFixed(2)} | ${f.title}`,
-                        })),
-                        failedGroupNote,
-                    }),
-                },
-            ];
-            const startedAt = Date.now();
-            usage.startCall();
-            const response = await llm.chatCompletion({
-                messages,
-                responseFormat: { type: 'json_object' },
-                maxTokens: 4_096,
-                temperature: reviewTemperature(config),
-                timeoutMs: 90_000,
-            });
-            usage.add(response.usage, {
-                stage: 'synthesis',
-                messages,
-                maxOutputTokens: 4_096,
-                durationMs: Date.now() - startedAt,
-                finishReason: response.finishReason,
-            });
-            const parsed = parseSynthesisResponse(response.content);
-            if (parsed) {
-                summary = parsed.summary;
-                score = parsed.score;
-                if (parsed.walkthrough.length > 0)
-                    walkthrough = parsed.walkthrough;
-                // Apply LLM pruning conservatively: never drop criticals.
-                const toDrop = new Set();
-                for (const dupSet of parsed.nearDuplicates) {
-                    for (const id of dupSet.slice(1)) {
-                        const f = ids.get(id);
-                        if (f && f.severity !== 'critical')
-                            toDrop.add(f);
-                    }
-                }
-                for (const id of parsed.likelyFalsePositives) {
-                    const f = ids.get(id);
-                    if (!f)
-                        continue;
-                    if (f.severity === 'critical') {
-                        logger.info({ title: f.title }, 'Synthesis flagged a critical as false positive — keeping it');
-                        continue;
-                    }
-                    toDrop.add(f);
-                }
-                if (toDrop.size > 0) {
-                    logger.info({ dropped: toDrop.size }, 'Synthesis pruned findings');
-                    annotations = findings.filter((f) => !toDrop.has(f));
-                }
-                usage.emit({
-                    type: 'stage_result',
-                    stage: 'synthesis',
-                    status: 'success',
-                    findingsGenerated: findings.length,
-                    findingsRetained: annotations.length,
-                });
-            }
-            else {
-                usage.emit({ type: 'stage_result', stage: 'synthesis', status: 'failed' });
-            }
-        }
-        catch (err) {
-            usage.emit({ type: 'stage_result', stage: 'synthesis', status: 'failed' });
-            logger.warn({ err }, 'Synthesis pass failed, using deterministic assembly');
-        }
-    }
-    // Deterministic fallbacks
-    if (!summary) {
-        const parts = [
-            intent?.intent ?? '',
-            ...outcomes.map((o) => o.summary).filter(Boolean),
-        ].filter(Boolean);
-        summary = parts.join(' ') || 'Automated review completed.';
-    }
-    if (failedGroupNote)
-        summary += `\n\n> ⚠️ ${failedGroupNote}`;
-    const stats = countBySeverity(annotations);
-    return {
-        summary,
-        score: score ?? deterministicScore(stats),
-        annotations,
-        stats,
-        tokensUsed: usage.total(),
-        walkthrough,
-        intent: intent?.intent,
-        callCount: usage.calls(),
-    };
-}
-
 ;// CONCATENATED MODULE: ./src/utils/errors.ts
 class LLMApiError extends Error {
     statusCode;
@@ -54519,6 +54519,61 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
     };
 }
 
+;// CONCATENATED MODULE: ./src/pipeline/run-review.ts
+
+
+
+
+
+
+
+
+/** Estimate the prompt tokens a review of this PR would consume (patches + full contents). */
+function estimateReviewTokens(ctx) {
+    return (ctx.changedFiles.reduce((sum, f) => sum + (f.patch ? estimateTokens(f.patch) : 0), 0) +
+        [...ctx.fileContents.values()].reduce((sum, c) => sum + estimateTokens(c), 0));
+}
+/**
+ * Decide fast-path vs multi-pass without running anything. The fast path wins
+ * when the pipeline is disabled or the PR is small enough to fit one call.
+ */
+function routeReview(ctx, config) {
+    const estimatedTokens = estimateReviewTokens(ctx);
+    const pipeline = config.pipeline;
+    const route = !pipeline.enabled || estimatedTokens < pipeline.fastPathThreshold
+        ? 'fast-path'
+        : 'multi-pass';
+    return { route, estimatedTokens };
+}
+/**
+ * Run the full review: fast path (single call) or the multi-pass pipeline
+ * (intent → grouped review → deterministic validation/ranking → synthesis).
+ * Pure computation — no GitHub extraction or publishing happens here.
+ */
+async function runReviewPipeline(llm, ctx, config, usage, options = {}) {
+    const { route, estimatedTokens } = routeReview(ctx, config);
+    if (route === 'fast-path') {
+        logger.info({ estimatedTokens, pipelineEnabled: config.pipeline.enabled }, 'Using fast path (single call)');
+        return runFastPath(llm, ctx, config, usage, options.deltaHint);
+    }
+    logger.info({ estimatedTokens }, 'Using multi-pass pipeline');
+    // Pass 1: intent & walkthrough (non-fatal on failure)
+    const intent = await runIntentPass(llm, ctx, config, usage);
+    // Pass 2: parallel per-group reviews
+    const groups = groupFiles(ctx.changedFiles, ctx.fileContents, intent, config);
+    logger.info({ groups: groups.map((g) => ({ label: g.label, files: g.files.length, diffOnly: g.diffOnly })) }, 'Files grouped for review');
+    const outcomes = await runReviewPass(llm, ctx, groups, intent, config, usage, {
+        workspaceRoot: options.workspaceRoot,
+        deltaHint: options.deltaHint,
+    });
+    if (outcomes.every((o) => o.failed)) {
+        throw new ReviewError('All review groups failed', 'review-pass');
+    }
+    // Pass 3: deterministic validation + LLM synthesis
+    const findings = validateAndRankFindings(outcomes.flatMap((o) => o.findings), ctx.changedFiles, config);
+    return synthesize(llm, { ctx, intent, outcomes, findings }, config, usage);
+}
+
 ;// CONCATENATED MODULE: ./src/pipeline/usage.ts
 
 const SAFE_FINISH_REASONS = new Set([
@@ -54586,9 +54641,6 @@ class UsageTracker {
 }
 
 ;// CONCATENATED MODULE: ./src/review/orchestrator.ts
-
-
-
 
 
 
@@ -54702,7 +54754,11 @@ class ReviewOrchestrator {
             const deltaHint = scope.mode === 'delta' && scope.sinceSha
                 ? `### Incremental Review\nOnly files changed since commit \`${scope.sinceSha.slice(0, 7)}\` are included. Focus on lines changed since that commit; findings on other files are tracked separately.`
                 : undefined;
-            const result = await this.runReview(prContext, deltaHint);
+            const usage = new UsageTracker(this.options.telemetry);
+            const result = await runReviewPipeline(this.llm, prContext, this.config, usage, {
+                workspaceRoot: this.options.workspaceRoot,
+                deltaHint,
+            });
             // Step 6: Publish (sticky lifecycle or legacy stacked review)
             if (!sticky) {
                 return await this.publishLegacy({ checkRunId, prContext, result });
@@ -54935,29 +54991,6 @@ class ReviewOrchestrator {
         lines.push(`\n**${newFindings} new finding(s)** this run · **${openTotal} open** across the PR · score ${result.score}/100`);
         lines.push('\nSee the pinned FiscalCR summary comment for the full walkthrough and open findings.');
         return lines.join('\n');
-    }
-    async runReview(prContext, deltaHint) {
-        const usage = new UsageTracker(this.options.telemetry);
-        const pipeline = this.config.pipeline;
-        const totalTokens = prContext.changedFiles.reduce((sum, f) => sum + (f.patch ? estimateTokens(f.patch) : 0), 0) +
-            [...prContext.fileContents.values()].reduce((sum, c) => sum + estimateTokens(c), 0);
-        if (!pipeline.enabled || totalTokens < pipeline.fastPathThreshold) {
-            logger.info({ totalTokens, pipelineEnabled: pipeline.enabled }, 'Using fast path (single call)');
-            return runFastPath(this.llm, prContext, this.config, usage, deltaHint);
-        }
-        logger.info({ totalTokens }, 'Using multi-pass pipeline');
-        // Pass 1: intent & walkthrough (non-fatal on failure)
-        const intent = await runIntentPass(this.llm, prContext, this.config, usage);
-        // Pass 2: parallel per-group reviews
-        const groups = groupFiles(prContext.changedFiles, prContext.fileContents, intent, this.config);
-        logger.info({ groups: groups.map((g) => ({ label: g.label, files: g.files.length, diffOnly: g.diffOnly })) }, 'Files grouped for review');
-        const outcomes = await runReviewPass(this.llm, prContext, groups, intent, this.config, usage, { workspaceRoot: this.options.workspaceRoot, deltaHint });
-        if (outcomes.every((o) => o.failed)) {
-            throw new ReviewError('All review groups failed', 'review-pass');
-        }
-        // Pass 3: deterministic validation + LLM synthesis
-        const findings = validateAndRankFindings(outcomes.flatMap((o) => o.findings), prContext.changedFiles, this.config);
-        return synthesize(this.llm, { ctx: prContext, intent, outcomes, findings }, this.config, usage);
     }
 }
 

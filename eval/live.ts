@@ -15,7 +15,7 @@ import {
   buildBenchmarkArtifact,
   buildBenchmarkResult,
   type AggregateQualitySummary,
-  type BenchmarkArtifactV2,
+  type BenchmarkArtifactV3,
   type ExecutionAggregate,
   type PairsSummary,
   type RegressionReport,
@@ -23,6 +23,7 @@ import {
   type VariantPerformanceAggregate,
   type VariantReliabilityAggregate,
 } from './benchmark.js';
+import { compareVariants, type VariantWinner } from './quality.js';
 import {
   buildSuitePromptMetadata,
   executePlan,
@@ -87,6 +88,46 @@ function fmtPctNullable(v: number | null): string {
   return v === null ? 'unavailable' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 }
 
+interface IndicatorEntry {
+  label: string;
+  baseline: number | null | undefined;
+  experimental: number | null | undefined;
+  higherIsBetter: boolean;
+  formatDelta?: (delta: number) => string;
+}
+
+function printBetter(title: string, entries: IndicatorEntry[]): void {
+  const counts: Record<VariantWinner, number> = {
+    baseline: 0,
+    experimental: 0,
+    tie: 0,
+  };
+  const parts: string[] = [];
+  for (const entry of entries) {
+    const comparison = compareVariants(
+      entry.baseline,
+      entry.experimental,
+      entry.higherIsBetter,
+    );
+    if (comparison === null) continue;
+    counts[comparison.winner] += 1;
+    if (comparison.winner === 'tie') continue;
+    const delta = entry.formatDelta
+      ? entry.formatDelta(comparison.delta)
+      : signedNumber(comparison.delta);
+    parts.push(
+      `${entry.label} ${green(comparison.winner)} (${delta})`,
+    );
+  }
+  const comparable = counts.baseline + counts.experimental + counts.tie;
+  if (comparable === 0) return;
+  const detail = parts.length > 0 ? ` — ${parts.join(' · ')}` : '';
+  console.log(
+    `  ${bold('better')} (${title}): ` +
+      `experimental ${counts.experimental} · baseline ${counts.baseline} · tie ${counts.tie}${detail}`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Env provenance (which source supplied provider/model — for transparency)
 
@@ -107,58 +148,89 @@ function header(env: NodeJS.ProcessEnv, cfg: EvalEnvConfig, selection: EvalSelec
   const suiteLabel = selection.explicit
     ? `override (EVAL_CASES: ${selection.caseIds.join(', ')})`
     : `${selection.suite} (${selection.caseIds.length} cases)`;
+  let fastPath = 0;
+  let multiPass = 0;
+  for (const entry of plan.entries) {
+    if (entry.route === 'fast-path') fastPath += 1;
+    else multiPass += 1;
+  }
   return [
-    'FiscalCR LLM eval harness (local) — fiscalcr-eval-v2',
+    'FiscalCR LLM eval harness (local) — fiscalcr-eval-v3',
     `  provider: ${cfg.provider} (${sourceOf(env, 'MODEL_PROVIDER')})`,
     `  model:    ${cfg.model} (${modelSource(env)})`,
     `  suite:    ${suiteLabel}`,
     `  cases:    ${selection.caseIds.join(', ')}`,
     `  seed:     ${selection.seed}`,
     `  rounds:   ${selection.runs} round(s) per case`,
-    `  plan:     ${plan.plannedCalls} calls (${selection.caseIds.length} cases × ${selection.runs} × 2 variants)`,
+    `  plan:     ${plan.plannedAttempts} attempts (${selection.caseIds.length} cases × ${selection.runs} × 2 variants)`,
+    `  routes:   ${fastPath} fast-path · ${multiPass} multi-pass attempts`,
+    `  provider calls: up to ${plan.plannedProviderCallsUpperBound} (EVAL_MAX_CALLS guard)`,
   ].join('\n');
 }
 
 function printDryBudget(budget: BudgetCheck): void {
   const status = budget.exceeded
-    ? red(`EXCEEDS EVAL_MAX_CALLS=${budget.max} — live would fail; raise the guard, e.g. EVAL_MAX_CALLS=${budget.planned}`)
+    ? red(`EXCEEDS EVAL_MAX_CALLS=${budget.max} — live would fail; raise the guard, e.g. EVAL_MAX_CALLS=${budget.plannedProviderCalls}`)
     : green(`ok (≤ EVAL_MAX_CALLS=${budget.max})`);
-  console.log(`\nBudget: ${budget.planned} planned calls ${status}`);
+  console.log(`\nBudget: ${budget.plannedProviderCalls} planned provider calls (upper bound) ${status}`);
 }
 
 function printSuitePrompts(experimental: boolean, info: SuitePromptMetadata): void {
   const label = experimental ? 'experimental' : 'baseline';
   const s = info.stats;
+  const multi = info.dynamicMultiPassCount;
   console.log(`Prompts (${label}) — suite-level across ${s.cases} selected case(s)`);
   console.log(`  total:  ${fmt(s.totalChars)} chars  (~${fmt(s.totalEstimatedTokens)} est. tokens)`);
   console.log(`  range:  ${fmt(s.minChars)} – ${fmt(s.maxChars)} chars per case`);
   console.log(`  sha256: ${info.metadata.sha256.slice(0, 16)}… (${info.metadata.sha256.length} hex)`);
+  if (multi > 0) {
+    console.log(
+      `  dynamic multi-pass: ${multi} case(s) excluded from the static prompt preview ` +
+        `(${info.dynamicMultiPassCaseIds.join(', ')})`,
+    );
+    console.log(
+      s.cases === 0
+        ? '  pipeline-only selection — no static fast-path prompt preview; all stage prompts are generated during live execution'
+        : '  stage prompts for the excluded case(s) are generated during live execution',
+    );
+  } else {
+    console.log('  dynamic multi-pass: 0 case(s) excluded');
+  }
   console.log();
 }
 
 // ---------------------------------------------------------------------------
 // Per-attempt console output
 
-function printAttempt(attempt: Attempt, callNumber: number, totalCalls: number): void {
-  const tag = `[${callNumber}/${totalCalls}][${attempt.case.caseId} r${attempt.identity.roundIndex}] ${rpad(attempt.identity.variant, 12)}`;
+function printAttempt(attempt: Attempt, attemptNumber: number, totalAttempts: number): void {
+  const tag = `[${attemptNumber}/${totalAttempts}][${attempt.case.caseId} r${attempt.identity.roundIndex}] ${rpad(attempt.identity.variant, 12)}`;
   if (attempt.status === 'failed') {
     console.log(
-      `${tag} ${red('FAIL')}  (${attempt.error.code}) ${attempt.error.message}  [${formatDuration(attempt.durationMs)}]`,
+      `${tag} ${red('FAIL')}  (${attempt.error.code}) ${attempt.error.message}  ` +
+        `[${formatDuration(attempt.durationMs)}, ${attempt.providerCalls} provider call(s)]`,
     );
     return;
   }
   const m = attempt.metrics;
   const q = attempt.quality.postGate;
-  const parseStr = m.parseSuccess ? green('ok') : red('FAIL');
-  const contractStr = m.contractComplete ? green('ok') : yellow('INCOMPLETE');
-  const fmtStr = m.conciseCompliant ? green('yes') : red('NO');
+  const routeStr = m.route === 'multi-pass' ? yellow('multi-pass') : 'fast-path';
+  const degradedStr = m.degraded ? yellow('degraded') : green('ok');
+  const parseStr = m.parseSuccess === true ? green('ok') : m.parseSuccess === false ? red('FAIL') : '—';
+  const contractStr = m.contractComplete === true ? green('ok') : m.contractComplete === false ? yellow('INCOMPLETE') : '—';
+  const fmtStr = m.conciseCompliant === true ? green('yes') : m.conciseCompliant === false ? red('NO') : '—';
   console.log(
     `${tag} ${lpad(formatDuration(m.durationMs), 6)}  ` +
+      `${routeStr} ${degradedStr}  ` +
       `parse:${parseStr} contract:${contractStr} fmt:${fmtStr}  ` +
+      `${m.providerCalls} call(s)  ` +
       `retained ${m.retainedFindings}/${q.goldIssues} gold  ` +
       `TP ${q.tp} FP ${q.fp} FN ${q.fn}  F1 ${q.f1.toFixed(2)}  ` +
       `out=${fmt(m.outputTokens)} ch=${fmt(m.rawChars)}`,
   );
+}
+
+function routeLabel(route: string): string {
+  return route === 'multi-pass' ? yellow('multi-pass') : 'fast-path';
 }
 
 function printPairProgress(info: {
@@ -188,8 +260,10 @@ function printPairProgress(info: {
 function printExecution(e: ExecutionAggregate): void {
   console.log(bold('\n=== Execution ==='));
   console.log(
-    `  planned ${e.planned} · completed ${e.completed} · failed ${e.failed} · completion ${pct(e.completionRate)}`,
+    `  planned ${e.planned} attempts · completed ${e.completed} · failed ${e.failed} · ` +
+      `degraded ${e.degraded} · completion ${pct(e.completionRate)}`,
   );
+  console.log(`  actual provider calls: ${e.actualProviderCalls}`);
   console.log(
     `  baseline ${e.byVariant.baseline.completed}/${e.byVariant.baseline.planned} · ` +
       `experimental ${e.byVariant.experimental.completed}/${e.byVariant.experimental.planned}`,
@@ -208,9 +282,70 @@ function printQuality(quality: Record<VariantLabel, AggregateQualitySummary | nu
       `  ${rpad(variant, 12)} n=${q.runs}  ` +
         `micro P/R/F1 ${fmtNum(q.micro.precision)}/${fmtNum(q.micro.recall)}/${fmtNum(q.micro.f1)}  ` +
         `macro F1 ${fmtNum(q.macro.f1)}  ` +
-        `clean FP rate ${pct(q.cleanRate)}  severe FP ${q.severeFalsePositives}  dup ${q.duplicates}  ` +
+        `clean rate ${pct(q.cleanRate)}  severe FP ${q.severeFalsePositives}  dup ${q.duplicates}  ` +
         `TP/1k out ${q.tpPer1000Tokens === null ? 'unavailable' : fmtNum(q.tpPer1000Tokens, 2)}`,
     );
+  }
+  const baseline = quality.baseline;
+  const experimental = quality.experimental;
+  if (baseline !== null && experimental !== null) {
+    printBetter('post-gate quality', [
+      {
+        label: 'precision',
+        baseline: baseline.micro.precision,
+        experimental: experimental.micro.precision,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'recall',
+        baseline: baseline.micro.recall,
+        experimental: experimental.micro.recall,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'micro F1',
+        baseline: baseline.micro.f1,
+        experimental: experimental.micro.f1,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'macro F1',
+        baseline: baseline.macro.f1,
+        experimental: experimental.macro.f1,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'clean rate',
+        baseline: baseline.cleanRate,
+        experimental: experimental.cleanRate,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'severe FP',
+        baseline: baseline.severeFalsePositives,
+        experimental: experimental.severeFalsePositives,
+        higherIsBetter: false,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(2)}`,
+      },
+      {
+        label: 'duplicates',
+        baseline: baseline.duplicates,
+        experimental: experimental.duplicates,
+        higherIsBetter: false,
+      },
+      {
+        label: 'TP/1k out',
+        baseline: baseline.tpPer1000Tokens,
+        experimental: experimental.tpPer1000Tokens,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(2)}`,
+      },
+    ]);
   }
 }
 
@@ -218,21 +353,86 @@ function printReliability(
   reliability: Record<VariantLabel, VariantReliabilityAggregate | null>,
   performance: Record<VariantLabel, VariantPerformanceAggregate | null>,
 ): void {
-  console.log(bold('\n=== Reliability / efficiency (completed runs) ==='));
+  console.log(bold('\n=== Reliability / efficiency (completed attempts) ==='));
   for (const variant of ['baseline', 'experimental'] as const) {
     const rel = reliability[variant];
     const perf = performance[variant];
     if (rel === null || perf === null) {
-      console.log(`  ${rpad(variant, 12)} unavailable (no completed runs)`);
+      console.log(`  ${rpad(variant, 12)} unavailable (no completed attempts)`);
       continue;
     }
+    const parseStr = rel.fastPath > 0 ? `fast-path parse ${pct(rel.parseRate)}` : 'parse —';
     console.log(
       `  ${rpad(variant, 12)} n=${rel.completed}  ` +
-        `parse ${pct(rel.parseRate)}  contract ${pct(rel.contractRate)}  ` +
+        `fast-path ${rel.fastPath} · multi-pass ${rel.multiPass} · degraded ${pct(rel.degradedRate)}  ` +
+        `${parseStr}  contract ${pct(rel.contractRate)}  ` +
         `format-length ${pct(rel.formatLengthComplianceRate)}  ` +
         `median out ${fmt(perf.medianOutputTokens)} tok  raw ${fmt(perf.medianRawChars)} ch  ` +
         `${formatDuration(perf.medianDurationMs)}`,
     );
+  }
+  const baselineRel = reliability.baseline;
+  const experimentalRel = reliability.experimental;
+  const baselinePerf = performance.baseline;
+  const experimentalPerf = performance.experimental;
+  if (
+    baselineRel !== null &&
+    experimentalRel !== null &&
+    baselinePerf !== null &&
+    experimentalPerf !== null
+  ) {
+    printBetter('reliability / efficiency', [
+      {
+        label: 'parse',
+        baseline: baselineRel.parseRate,
+        experimental: experimentalRel.parseRate,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'contract',
+        baseline: baselineRel.contractRate,
+        experimental: experimentalRel.contractRate,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'format-length',
+        baseline: baselineRel.formatLengthComplianceRate,
+        experimental: experimentalRel.formatLengthComplianceRate,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'degraded',
+        baseline: baselineRel.degradedRate,
+        experimental: experimentalRel.degradedRate,
+        higherIsBetter: false,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'median out',
+        baseline: baselinePerf.medianOutputTokens,
+        experimental: experimentalPerf.medianOutputTokens,
+        higherIsBetter: false,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${fmt(delta)} tok`,
+      },
+      {
+        label: 'median raw',
+        baseline: baselinePerf.medianRawChars,
+        experimental: experimentalPerf.medianRawChars,
+        higherIsBetter: false,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${fmt(delta)} ch`,
+      },
+      {
+        label: 'median duration',
+        baseline: baselinePerf.medianDurationMs,
+        experimental: experimentalPerf.medianDurationMs,
+        higherIsBetter: false,
+        formatDelta: (delta) =>
+          `${delta > 0 ? '+' : '-'}${formatDuration(Math.abs(delta))}`,
+      },
+    ]);
   }
 }
 
@@ -248,13 +448,57 @@ function printPairs(pairs: PairsSummary): void {
   }
   const a = pairs.aggregate!;
   console.log(`  complete pairs ${pairs.completePairs} · incomplete ${pairs.incompletePairs}`);
-  console.log(`  output savings     ${fmtPctNullable(a.outputSavingsPct.mean)}  (median ${fmtPctNullable(a.outputSavingsPct.median)})`);
-  console.log(`  raw-char savings   ${fmtPctNullable(a.rawCharsSavingsPct.mean)}  (median ${fmtPctNullable(a.rawCharsSavingsPct.median)})`);
+  console.log(
+    `  output savings     ${fmtPctNullable(a.outputSavingsPct.mean)}  ` +
+      `(median ${fmtPctNullable(a.outputSavingsPct.median)})`,
+  );
+  console.log(
+    `  raw-char savings   ${fmtPctNullable(a.rawCharsSavingsPct.mean)}  ` +
+      `(median ${fmtPctNullable(a.rawCharsSavingsPct.median)})`,
+  );
   console.log(
     `  post-gate Δ (exp − base): F1 ${signedNumber(a.postGateF1Delta.mean)}  ` +
       `TP ${signedNumber(a.postGateTpDelta.mean)}  FP ${signedNumber(a.postGateFpDelta.mean)}`,
   );
+  printBetter('paired deltas (exp − base)', [
+    {
+      label: 'output savings',
+      baseline: 0,
+      experimental: a.outputSavingsPct.mean,
+      higherIsBetter: true,
+      formatDelta: fmtPctNullable,
+    },
+    {
+      label: 'raw-char savings',
+      baseline: 0,
+      experimental: a.rawCharsSavingsPct.mean,
+      higherIsBetter: true,
+      formatDelta: fmtPctNullable,
+    },
+    {
+      label: 'F1',
+      baseline: 0,
+      experimental: a.postGateF1Delta.mean,
+      higherIsBetter: true,
+      formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`,
+    },
+    {
+      label: 'TP',
+      baseline: 0,
+      experimental: a.postGateTpDelta.mean,
+      higherIsBetter: true,
+      formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`,
+    },
+    {
+      label: 'FP',
+      baseline: 0,
+      experimental: a.postGateFpDelta.mean,
+      higherIsBetter: false,
+      formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`,
+    },
+  ]);
 }
+
 
 function printRegressions(regressions: RegressionReport[]): void {
   console.log(bold('\n=== Regression report ==='));
@@ -266,7 +510,8 @@ function printRegressions(regressions: RegressionReport[]): void {
   if (r.status === 'insufficient-data') {
     console.log(
       `  runs=${r.runs} < 4 — ${yellow('insufficient data')}. Directional only; ` +
-        `rerun with EVAL_RUNS>=4 (10×4 decision run = 80 calls, needs EVAL_MAX_CALLS=80).`,
+        `rerun with EVAL_RUNS>=4 (11×4 decision run = 88 attempts, up to 160 calls; ` +
+          `needs EVAL_MAX_CALLS=160).`,
     );
     return;
   }
@@ -307,7 +552,7 @@ function printHeadline(regressions: RegressionReport[], completePairs: number): 
 }
 
 // ---------------------------------------------------------------------------
-// Artifact (v2, secret-safe)
+// Artifact (v3, secret-safe)
 
 function artifactFileName(ts: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
@@ -317,7 +562,7 @@ function artifactFileName(ts: Date): string {
   );
 }
 
-async function writeArtifact(artifact: BenchmarkArtifactV2): Promise<string> {
+async function writeArtifact(artifact: BenchmarkArtifactV3): Promise<string> {
   await mkdir(RESULT_DIR, { recursive: true });
   const file = path.join(RESULT_DIR, artifactFileName(new Date(artifact.timestamp)));
   await writeFile(file, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
@@ -344,7 +589,8 @@ export async function main(argv: string[]): Promise<void> {
     }
     console.log(
       'Dry run: API key not used, no network calls, no artifact written. ' +
-        `Planned live run: ${plan.plannedCalls} calls (${selection.runs} round(s) per case, seed "${selection.seed}").\n`,
+        `Planned live run: ${plan.plannedAttempts} attempts (${selection.runs} round(s) per case, ` +
+        `seed "${selection.seed}"), up to ${plan.plannedProviderCallsUpperBound} provider LLM calls.\n`,
     );
     return;
   }
@@ -352,13 +598,16 @@ export async function main(argv: string[]): Promise<void> {
   const apiKey = requireApiKey(cfg);
 
   // Call budget is enforced here — immediately before any live provider
-  // creation/call — and throws (nonzero exit) when the plan exceeds the guard.
+  // creation/call — and throws (nonzero exit) when the plan's provider-call
+  // upper bound exceeds the guard.
   assertCallBudget(plan);
 
   console.log(
-    `\nLive run: ${plan.plannedCalls} billable LLM calls ` +
+    `\nLive run: ${plan.plannedAttempts} review attempts ` +
       `(${selection.runs} round(s) per case, ${selection.caseIds.length} case(s)); ` +
-      `timeout ${formatDuration(DEFAULT_CALL_TIMEOUT_MS)}, retries ${DEFAULT_RETRIES}.\n`,
+      `up to ${plan.plannedProviderCallsUpperBound} provider LLM calls; ` +
+      `call timeout ${formatDuration(DEFAULT_CALL_TIMEOUT_MS)} (fast-path + group-review; ` +
+      `intent/synthesis use fixed 60s/90s), retries ${DEFAULT_RETRIES}.\n`,
   );
 
   const { attempts } = await executePlan(plan, cases, cfg, {
@@ -412,9 +661,11 @@ export async function main(argv: string[]): Promise<void> {
     prompt: {
       baseline: baselinePrompt.metadata,
       experimental: experimentalPrompt.metadata,
+      dynamicMultiPassCaseIds: baselinePrompt.dynamicMultiPassCaseIds,
+      dynamicMultiPassCount: baselinePrompt.dynamicMultiPassCount,
     },
     retries: DEFAULT_RETRIES,
-    timeoutMs: DEFAULT_CALL_TIMEOUT_MS,
+    callTimeoutMs: DEFAULT_CALL_TIMEOUT_MS,
     plan,
     cases,
     attempts,
@@ -437,7 +688,7 @@ export async function main(argv: string[]): Promise<void> {
     );
   }
   console.log(
-    `\nDone. ${attempts.filter((a) => a.status === 'failed').length} failed call(s) recorded in the artifact. ` +
+    `\nDone. ${attempts.filter((a) => a.status === 'failed').length} failed attempt(s) recorded in the artifact. ` +
       `Unset the key when finished: unset API_KEY`,
   );
 }

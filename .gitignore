@@ -18,3 +18,4 @@ coverage/
 
 # Local LLM eval benchmark artifacts
 .eval-results/
+**plans/

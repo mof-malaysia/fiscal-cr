@@ -4,15 +4,25 @@ import type { ReviewConfig } from '../src/config/schema.js';
 import type { PullRequestContext, ReviewResult } from '../src/types/review.js';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 import { createLLMProvider, SUPPORTED_PROVIDERS } from '../src/providers/factory.js';
-import { runFastPath } from '../src/pipeline/fast-path.js';
+import { runReviewPipeline, routeReview } from '../src/pipeline/run-review.js';
+import type { RunReviewOptions } from '../src/pipeline/run-review.js';
 import { UsageTracker } from '../src/pipeline/usage.js';
+import type { TelemetryEvent } from '../src/pipeline/usage.js';
 import {
   buildFastPathSystemPrompt,
   buildFastPathUserPrompt,
 } from '../src/pipeline/prompts.js';
 import { estimateTokens } from '../src/utils/tokens.js';
-import { wrapCapturingProvider, type CapturedCall } from './metrics.js';
-import { buildRunMetrics, captureFromResponse } from './metrics.js';
+import {
+  wrapCapturingProvider,
+  captureFromResponse,
+  captureFromError,
+  associateCallStages,
+  type CapturedCall,
+  type CallStage,
+  type StageOutcome,
+} from './metrics.js';
+import { buildRunMetrics } from './metrics.js';
 import { evaluateRunQuality } from './quality.js';
 import {
   caseIdentityOf,
@@ -157,7 +167,8 @@ export interface RunStats {
   input: number;
   output: number;
   cached: number;
-  calls: number;
+  /** Actual provider LLM calls per attempt. */
+  providerCalls: number;
   score: number;
   findings: number;
 }
@@ -183,7 +194,7 @@ export function formatDelta(base: RunStats, experimental: RunStats): string {
     `  input      ${signedNumber(experimental.input - base.input)} tokens`,
     `  output     ${signedNumber(experimental.output - base.output)} tokens`,
     `  cached     ${signedNumber(experimental.cached - base.cached)} tokens`,
-    `  calls      ${signedNumber(experimental.calls - base.calls)}`,
+    `  provider calls ${signedNumber(experimental.providerCalls - base.providerCalls)}`,
     `  score      ${signedNumber(experimental.score - base.score)}`,
     `  findings   ${signedNumber(experimental.findings - base.findings)}`,
   ].join('\n');
@@ -225,6 +236,7 @@ export function gitRepoMetadata(cwd?: string): RepoMetadata {
 // Suite-level prompt metadata (deterministic, per variant)
 
 export interface SuitePromptStats {
+  /** Number of statically buildable fast-path cases included in the preview. */
   cases: number;
   minChars: number;
   maxChars: number;
@@ -233,29 +245,56 @@ export interface SuitePromptStats {
 }
 
 export interface SuitePromptMetadata {
+  /**
+   * Deterministic suite-level prompt fingerprint for one variant. Only covers
+   * statically buildable FAST-PATH prompts (the ones actually sent on that
+   * route). Multi-pass cases are excluded — their stage prompts are generated
+   * during live execution and fingerprinted per call in the attempt captures.
+   */
   metadata: PromptMetadata;
+  /** Fast-path-only stats (multi-pass cases are excluded). */
   stats: SuitePromptStats;
+  /** Case ids routed multi-pass — no static prompt preview (hashes captured live). */
+  dynamicMultiPassCaseIds: string[];
+  /** Number of multi-pass cases excluded from the static preview. */
+  dynamicMultiPassCount: number;
 }
 
 /**
- * Deterministic suite-level prompt fingerprint for one variant. The hash
- * input concatenates each selected case's `id:version` plus the exact
- * system+user prompt, in the selected (stable) case order; `chars` is the
- * total exact prompt character count across all selected cases. The per-case
- * min/max/total stats feed the dry report (never a single fixture).
+ * Deterministic suite-level prompt fingerprint for one variant, route-aware.
+ *
+ * For each selected case the production `routeReview` decision (with the eval
+ * config) picks the route. Fast-path cases contribute their exact system+user
+ * prompt to the hash and stats. Multi-pass cases contribute NO prompt — their
+ * stage prompts are built during live execution and fingerprinted per call in
+ * the attempt captures (the source of truth for live multi-pass). A
+ * pipeline-only selection therefore hashes only the case id:version plus a
+ * "no static prompt preview" marker — never a fabricated fast-path prompt —
+ * and reports zero fast-path stats.
  */
 export function buildSuitePromptMetadata(
   cases: readonly BenchmarkCase[],
   cfg: EvalEnvConfig,
   experimental: boolean,
 ): SuitePromptMetadata {
+  const config = evalReviewConfig(cfg, experimental);
   const parts: string[] = [];
   let totalChars = 0;
   let totalTokens = 0;
   let minChars = Number.POSITIVE_INFINITY;
   let maxChars = 0;
+  let fastPathCases = 0;
+  const dynamicMultiPassCaseIds: string[] = [];
   for (const c of cases) {
-    const config = evalReviewConfig(cfg, experimental);
+    const route = routeReview(c.context, config).route;
+    if (route !== 'fast-path') {
+      // No statically buildable prompt: record the case identity with an
+      // explicit "no static prompt preview" marker instead of a fabricated
+      // fast-path prompt.
+      dynamicMultiPassCaseIds.push(c.id);
+      parts.push(`${c.id}:${c.version}\n<no-static-prompt-preview:multi-pass>\n`);
+      continue;
+    }
     const system = buildFastPathSystemPrompt(config);
     const user = buildFastPathUserPrompt(c.context, c.context.changedFiles);
     const chars = system.length + user.length;
@@ -264,16 +303,19 @@ export function buildSuitePromptMetadata(
     totalTokens += estimateTokens(system) + estimateTokens(user);
     if (chars < minChars) minChars = chars;
     if (chars > maxChars) maxChars = chars;
+    fastPathCases += 1;
   }
   return {
     metadata: { sha256: sha256Hex(parts.join('')), chars: totalChars },
     stats: {
-      cases: cases.length,
-      minChars: cases.length === 0 ? 0 : minChars,
+      cases: fastPathCases,
+      minChars: fastPathCases === 0 ? 0 : minChars,
       maxChars,
       totalChars,
       totalEstimatedTokens: totalTokens,
     },
+    dynamicMultiPassCaseIds,
+    dynamicMultiPassCount: dynamicMultiPassCaseIds.length,
   };
 }
 
@@ -285,6 +327,7 @@ export type PipelineRunner = (
   ctx: PullRequestContext,
   config: ReviewConfig,
   usage: UsageTracker,
+  options?: RunReviewOptions,
 ) => Promise<ReviewResult>;
 
 export interface PairProgressInfo {
@@ -306,17 +349,23 @@ export interface ExecutePlanOptions {
   apiKey: string;
   /** Injectable provider factory (tests use fakes; default hits the network). */
   providerFactory?: (config: ReviewConfig) => LLMProvider;
-  /** Injectable pipeline runner; defaults to the real runFastPath. */
+  /** Injectable pipeline runner; defaults to the real runReviewPipeline. */
   pipeline?: PipelineRunner;
-  /** Per-call timeout in ms (default 120s). */
-  timeoutMs?: number;
+  /**
+   * Per-CALL timeout in ms (default 120s) applied to the fast-path and
+   * group-review provider calls (they read config.pipeline.callTimeoutMs).
+   * It is NOT an attempt-level deadline: the intent and synthesis stages use
+   * fixed internal timeouts (60s / 90s) that are not configurable from the
+   * harness, and in-flight provider calls are not cancellable.
+   */
+  callTimeoutMs?: number;
   /** Provider retries (default 0 — failures surface immediately). */
   retries?: number;
   /** Heartbeat interval (default 15s). */
   heartbeatMs?: number;
   onProgress?: (line: string) => void;
   /** Called after every attempt with its full outcome (for console output). */
-  onAttempt?: (attempt: Attempt, callNumber: number, totalCalls: number) => void;
+  onAttempt?: (attempt: Attempt, attemptNumber: number, totalAttempts: number) => void;
   /** Called once a pair's second entry completes (complete/partial). */
   onPairProgress?: (info: PairProgressInfo) => void;
 }
@@ -343,11 +392,14 @@ function pairRunIndex(entry: PlanEntry): number {
 }
 
 /**
- * Executes every plan entry in planner order, tolerating per-call failures.
- * Each entry uses its matching case context and the real baseline/experimental
- * prompt config. Heartbeats and the per-call timer are always cleaned up in a
- * `finally`. A failed call is recorded as a sanitized `FailedAttempt` and the
- * plan continues; the caller decides what counts as fatal.
+ * Executes every plan entry in planner order, tolerating per-attempt failures.
+ * Each entry runs the PRODUCTION review pipeline (runReviewPipeline) — the
+ * pipeline itself decides fast-path vs multi-pass via routeReview — with the
+ * matching case context and the real baseline/experimental prompt config.
+ * Heartbeats and the per-attempt timer are always cleaned up in a `finally`.
+ * A failed attempt is recorded as a sanitized `FailedAttempt` (with the actual
+ * provider call count) and the plan continues; the caller decides what counts
+ * as fatal.
  */
 export async function executePlan(
   plan: EvalPlan,
@@ -356,14 +408,14 @@ export async function executePlan(
   options: ExecutePlanOptions,
 ): Promise<ExecutePlanResult> {
   const providerFactory = options.providerFactory ?? defaultProviderFactory(options.apiKey);
-  const pipeline = options.pipeline ?? runFastPath;
-  const timeoutMs = options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  const pipeline = options.pipeline ?? runReviewPipeline;
+  const callTimeoutMs = options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   const retries = options.retries ?? DEFAULT_RETRIES;
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
 
   const caseById = new Map(cases.map((c) => [c.id, c]));
   const attempts: Attempt[] = [];
-  const total = plan.plannedCalls;
+  const total = plan.plannedAttempts;
   const totalPairs = Math.ceil(total / 2);
 
   for (const entry of plan.entries) {
@@ -373,24 +425,49 @@ export async function executePlan(
     }
 
     // Real baseline/experimental prompt config for this entry, with the
-    // harness's fixed timeout/retry overrides.
+    // harness's fixed per-call timeout/retry overrides.
     const config = evalReviewConfig(cfg, entry.experimental);
-    config.pipeline.callTimeoutMs = timeoutMs;
+    config.pipeline.callTimeoutMs = callTimeoutMs;
     config.pipeline.maxRetries = retries;
+
+    // Stage outcomes come from UsageTracker stage events (stage truth), never
+    // inferred from response JSON. llm_call events give each call its stage.
+    const stageOutcomes: StageOutcome[] = [];
+    const callStages: CallStage[] = [];
+    const usage = new UsageTracker((event: TelemetryEvent) => {
+      if (event.type === 'stage_result') {
+        stageOutcomes.push({
+          stage: event.stage,
+          status: event.status,
+          ...(event.groupIndex === undefined ? {} : { groupIndex: event.groupIndex }),
+        });
+      } else if (event.type === 'llm_call') {
+        callStages.push({
+          stage: event.stage,
+          ...(event.groupIndex === undefined ? {} : { groupIndex: event.groupIndex }),
+        });
+      }
+    });
 
     const captures: CapturedCall[] = [];
     const provider = wrapCapturingProvider(providerFactory(config), (info) => {
-      captures.push(captureFromResponse(info.response, info.order, info.durationMs));
+      if (info.error !== undefined) {
+        // Sanitize + redact before the failure metadata is ever stored.
+        const sanitized = sanitizeError(info.error);
+        sanitized.message = redactSecrets(sanitized.message);
+        captures.push(captureFromError(sanitized, info.order, info.durationMs, info.request));
+      } else {
+        captures.push(captureFromResponse(info.response!, info.order, info.durationMs, info.request));
+      }
     });
-    const usage = new UsageTracker();
 
-    const callNumber = entry.globalCallIndex + 1;
-    const tag = `[call ${callNumber}/${total}][${entry.caseId} r${entry.roundIndex}] ${entry.variant}`;
+    const attemptNumber = entry.globalCallIndex + 1;
+    const tag = `[attempt ${attemptNumber}/${total}][${entry.caseId} r${entry.roundIndex}] ${entry.variant}`;
     const requestTimestamp = new Date().toISOString();
     const startedAt = Date.now();
     const progress = (line: string): void => options.onProgress?.(line);
 
-    progress(`${tag}  start  (timeout ${formatDuration(timeoutMs)}, retries ${retries})`);
+    progress(`${tag}  start  (${entry.route}, call timeout ${formatDuration(callTimeoutMs)}, retries ${retries})`);
 
     const heartbeat = setInterval(() => {
       progress(`${tag}  wait   ${formatDuration(Date.now() - startedAt)}`);
@@ -398,17 +475,22 @@ export async function executePlan(
 
     let pairSlotResult: 'completed' | 'failed';
     try {
-      const result = await pipeline(provider, c.context, config, usage);
+      const result = await pipeline(provider, c.context, config, usage, {});
       const durationMs = Date.now() - startedAt;
+      // Associate each capture with its pipeline stage (llm_call stage truth)
+      // so multi-pass generated findings only ever come from group reviews.
+      const stageCaptures = associateCallStages(captures, callStages);
       const metrics = buildRunMetrics({
         experimental: entry.experimental,
         pairIndex: entry.roundIndex,
         runIndex: pairRunIndex(entry),
         durationMs,
         tokens: usage.total(),
-        calls: usage.calls(),
-        captures,
+        providerCalls: usage.calls(),
+        captures: stageCaptures,
         result,
+        route: entry.route,
+        stageOutcomes,
         changedFilePaths: c.context.changedFiles.map((f) => f.filename),
       });
       const quality = evaluateRunQuality({
@@ -426,8 +508,8 @@ export async function executePlan(
       });
       attempts.push(attempt);
       pairSlotResult = 'completed';
-      progress(`${tag}  done   ${formatDuration(durationMs)}`);
-      options.onAttempt?.(attempt, callNumber, total);
+      progress(`${tag}  done   ${formatDuration(durationMs)} (${metrics.providerCalls} provider call(s))`);
+      options.onAttempt?.(attempt, attemptNumber, total);
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const sanitized = sanitizeError(err);
@@ -437,12 +519,15 @@ export async function executePlan(
         case: caseIdentityOf(c),
         requestTimestamp,
         durationMs,
+        providerCalls: usage.calls(),
+        captures: associateCallStages(captures, callStages),
+        stageOutcomes,
         error: sanitized,
       });
       attempts.push(attempt);
       pairSlotResult = 'failed';
       progress(`${tag}  FAIL   (${attempt.error.code}) ${attempt.error.message}  [${formatDuration(durationMs)}]`);
-      options.onAttempt?.(attempt, callNumber, total);
+      options.onAttempt?.(attempt, attemptNumber, total);
     } finally {
       clearInterval(heartbeat);
     }

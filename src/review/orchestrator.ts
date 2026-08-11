@@ -25,19 +25,11 @@ import { decideScope, type ScopeDecision } from './delta.js';
 import { filterFiles } from './file-filter.js';
 import { buildSummary } from './summary-builder.js';
 import { ApiFileSource, LocalFileSource } from './file-source.js';
-import { runIntentPass } from '../pipeline/pass1-intent.js';
-import { groupFiles } from '../pipeline/grouper.js';
-import { runReviewPass } from '../pipeline/pass2-review.js';
-import {
-  countBySeverity,
-  deterministicScore,
-  synthesize,
-  validateAndRankFindings,
-} from '../pipeline/pass3-synthesis.js';
-import { runFastPath } from '../pipeline/fast-path.js';
+import { countBySeverity, deterministicScore } from '../pipeline/pass3-synthesis.js';
+import { runReviewPipeline } from '../pipeline/run-review.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
-import { calculateCost, estimateTokens } from '../utils/tokens.js';
+import { calculateCost } from '../utils/tokens.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -176,7 +168,11 @@ export class ReviewOrchestrator {
         scope.mode === 'delta' && scope.sinceSha
           ? `### Incremental Review\nOnly files changed since commit \`${scope.sinceSha.slice(0, 7)}\` are included. Focus on lines changed since that commit; findings on other files are tracked separately.`
           : undefined;
-      const result = await this.runReview(prContext, deltaHint);
+      const usage = new UsageTracker(this.options.telemetry);
+      const result = await runReviewPipeline(this.llm, prContext, this.config, usage, {
+        workspaceRoot: this.options.workspaceRoot,
+        deltaHint,
+      });
 
       // Step 6: Publish (sticky lifecycle or legacy stacked review)
       if (!sticky) {
@@ -467,63 +463,5 @@ export class ReviewOrchestrator {
     );
     lines.push('\nSee the pinned FiscalCR summary comment for the full walkthrough and open findings.');
     return lines.join('\n');
-  }
-
-  private async runReview(
-    prContext: PullRequestContext,
-    deltaHint?: string,
-  ): Promise<ReviewResult> {
-    const usage = new UsageTracker(this.options.telemetry);
-    const pipeline = this.config.pipeline;
-
-    const totalTokens =
-      prContext.changedFiles.reduce(
-        (sum, f) => sum + (f.patch ? estimateTokens(f.patch) : 0),
-        0,
-      ) +
-      [...prContext.fileContents.values()].reduce((sum, c) => sum + estimateTokens(c), 0);
-
-    if (!pipeline.enabled || totalTokens < pipeline.fastPathThreshold) {
-      logger.info({ totalTokens, pipelineEnabled: pipeline.enabled }, 'Using fast path (single call)');
-      return runFastPath(this.llm, prContext, this.config, usage, deltaHint);
-    }
-
-    logger.info({ totalTokens }, 'Using multi-pass pipeline');
-
-    // Pass 1: intent & walkthrough (non-fatal on failure)
-    const intent = await runIntentPass(this.llm, prContext, this.config, usage);
-
-    // Pass 2: parallel per-group reviews
-    const groups = groupFiles(
-      prContext.changedFiles,
-      prContext.fileContents,
-      intent,
-      this.config,
-    );
-    logger.info(
-      { groups: groups.map((g) => ({ label: g.label, files: g.files.length, diffOnly: g.diffOnly })) },
-      'Files grouped for review',
-    );
-    const outcomes = await runReviewPass(
-      this.llm,
-      prContext,
-      groups,
-      intent,
-      this.config,
-      usage,
-      { workspaceRoot: this.options.workspaceRoot, deltaHint },
-    );
-
-    if (outcomes.every((o) => o.failed)) {
-      throw new ReviewError('All review groups failed', 'review-pass');
-    }
-
-    // Pass 3: deterministic validation + LLM synthesis
-    const findings = validateAndRankFindings(
-      outcomes.flatMap((o) => o.findings),
-      prContext.changedFiles,
-      this.config,
-    );
-    return synthesize(this.llm, { ctx: prContext, intent, outcomes, findings }, this.config, usage);
   }
 }
