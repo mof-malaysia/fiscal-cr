@@ -34,6 +34,20 @@ export const reviewConfigSchema = z.object({
   userAgent: z.string().max(200).optional(),
   /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
   temperature: z.number().min(0).max(2).optional(),
+  /**
+   * Extra OpenAI request fields merged into every LLM call. Typed fields are
+   * validated; all other keys pass through verbatim (future-proof). Pipeline-
+   * managed keys (model/messages/temperature/token caps/response_format/stream)
+   * are stripped by the provider — use `temperature`/`pipeline.maxOutputTokens`
+   * for those instead.
+   */
+  modelParams: z
+    .object({
+      reasoning_effort: z.enum(["minimal", "low", "medium", "high"]).optional(),
+      verbosity: z.enum(["low", "medium", "high"]).optional(),
+    })
+    .passthrough()
+    .optional(),
   /** Enables opt-in prompt optimizations that may change between releases. */
   experimental: z.boolean().default(false),
 

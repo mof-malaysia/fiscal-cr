@@ -24,6 +24,48 @@ export interface OpenAICompatibleProviderConfig {
    * Defaults to "max_tokens".
    */
   completionTokenParam?: 'max_tokens' | 'max_completion_tokens';
+  /**
+   * Operator-supplied passthrough fields (reasoning_effort, verbosity, top_p,
+   * seed, …) merged into every request body. Pipeline-managed keys are stripped
+   * (see RESERVED_MODEL_PARAM_KEYS) so they cannot override the pipeline.
+   */
+  modelParams?: Record<string, unknown>;
+}
+
+/**
+ * Keys the pipeline owns and must not accept from operator-supplied modelParams:
+ * request identity/managed fields, the token caps (either spelling — a stray
+ * one re-triggers the max_tokens 400), and streaming (the parser is non-stream).
+ */
+const RESERVED_MODEL_PARAM_KEYS = new Set([
+  'model',
+  'messages',
+  'temperature',
+  'max_tokens',
+  'max_completion_tokens',
+  'response_format',
+  'stream',
+  'stream_options',
+]);
+
+/** Drop reserved keys from operator-supplied modelParams, warning on any drop. */
+function sanitizeModelParams(
+  params: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!params) return {};
+  const clean: Record<string, unknown> = {};
+  const dropped: string[] = [];
+  for (const [key, value] of Object.entries(params)) {
+    if (RESERVED_MODEL_PARAM_KEYS.has(key)) dropped.push(key);
+    else clean[key] = value;
+  }
+  if (dropped.length > 0) {
+    logger.warn(
+      { dropped },
+      'Ignoring reserved keys in modelParams; use the dedicated config knobs instead',
+    );
+  }
+  return clean;
 }
 
 interface OpenAICompatibleResponse {
@@ -59,6 +101,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly timeout: number;
   private readonly userAgent?: string;
   private readonly completionTokenParam: 'max_tokens' | 'max_completion_tokens';
+  private readonly modelParams: Record<string, unknown>;
 
   constructor(config: OpenAICompatibleProviderConfig) {
     this.apiKey = config.apiKey;
@@ -71,6 +114,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.timeout = config.timeout ?? 300_000;
     this.userAgent = config.userAgent;
     this.completionTokenParam = config.completionTokenParam ?? 'max_tokens';
+    this.modelParams = sanitizeModelParams(config.modelParams);
   }
 
   async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
@@ -90,6 +134,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
   ): Promise<LLMCompletionResponse> {
     const temperature = params.temperature ?? this.temperature;
     const body = {
+      // Operator passthrough is the base layer; managed fields below always win.
+      ...this.modelParams,
       model: this.model,
       messages: params.messages,
       ...(temperature !== undefined && { temperature }),

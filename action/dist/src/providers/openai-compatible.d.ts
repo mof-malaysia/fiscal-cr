@@ -17,6 +17,12 @@ export interface OpenAICompatibleProviderConfig {
      * Defaults to "max_tokens".
      */
     completionTokenParam?: 'max_tokens' | 'max_completion_tokens';
+    /**
+     * Operator-supplied passthrough fields (reasoning_effort, verbosity, top_p,
+     * seed, …) merged into every request body. Pipeline-managed keys are stripped
+     * (see RESERVED_MODEL_PARAM_KEYS) so they cannot override the pipeline.
+     */
+    modelParams?: Record<string, unknown>;
 }
 /**
  * Generic provider for OpenAI-compatible chat completion APIs.
@@ -30,6 +36,7 @@ export declare class OpenAICompatibleProvider implements LLMProvider {
     private readonly timeout;
     private readonly userAgent?;
     private readonly completionTokenParam;
+    private readonly modelParams;
     constructor(config: OpenAICompatibleProviderConfig);
     chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse>;
     private performCompletionRequest;

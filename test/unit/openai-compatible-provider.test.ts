@@ -89,6 +89,64 @@ describe('OpenAICompatibleProvider', () => {
     expect(body.max_completion_tokens).toBeUndefined();
   });
 
+  it('merges operator modelParams into the request body', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      }),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'gpt-5',
+      baseUrl: 'https://api.openai.com/v1',
+      modelParams: { reasoning_effort: 'high', top_p: 0.9, seed: 42 },
+    });
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.reasoning_effort).toBe('high');
+    expect(body.top_p).toBe(0.9);
+    expect(body.seed).toBe(42);
+  });
+
+  it('strips pipeline-managed keys from modelParams (no re-triggering the max_tokens 400)', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      }),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'gpt-5',
+      baseUrl: 'https://api.openai.com/v1',
+      completionTokenParam: 'max_completion_tokens',
+      modelParams: {
+        reasoning_effort: 'low',
+        max_tokens: 123,
+        temperature: 1.5,
+        stream: true,
+        model: 'evil-override',
+      },
+    });
+    await provider.chatCompletion({
+      messages: [{ role: 'user', content: 'hi' }],
+      maxTokens: 4096,
+      temperature: 0.3,
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    // Passthrough survives.
+    expect(body.reasoning_effort).toBe('low');
+    // Reserved keys are dropped / kept under pipeline control.
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.stream).toBeUndefined();
+    expect(body.model).toBe('gpt-5');
+    expect(body.max_completion_tokens).toBe(4096);
+    expect(body.temperature).toBe(0.3);
+  });
+
   it('surfaces finish_reason so truncation is detectable', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(
