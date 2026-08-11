@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getCaseById } from '../cases.js';
 import {
   aggregateQuality,
+  compareVariants,
   computeQualitySummary,
   detectLargeRegression,
   evaluateRunQuality,
@@ -580,5 +581,30 @@ describe('end-to-end run quality flow', () => {
     expect(agg.outputTokensPerTp).toBe(750);
     expect(agg.perIssueDetection.find((d) => d.issueId === 'bug-a')).toMatchObject({ occurrences: 2, detected: 2 });
     expect(agg.perIssueDetection.find((d) => d.issueId === 'sec-b')).toMatchObject({ occurrences: 2, detected: 2 });
+  });
+});
+
+describe('compareVariants', () => {
+  it('selects experimental when higher values are better', () => {
+    expect(compareVariants(0.4, 0.5, true)?.winner).toBe('experimental');
+    expect(compareVariants(0.4, 0.5, true)?.delta).toBeCloseTo(0.1);
+  });
+
+  it('selects baseline when higher values are better', () => {
+    expect(compareVariants(0.5, 0.4, true)?.winner).toBe('baseline');
+    expect(compareVariants(0.5, 0.4, true)?.delta).toBeCloseTo(-0.1);
+  });
+
+  it('reverses direction for lower-is-better metrics', () => {
+    expect(compareVariants(10, 7, false)).toEqual({
+      winner: 'experimental',
+      delta: -3,
+    });
+  });
+
+  it('reports ties and ignores unavailable values', () => {
+    expect(compareVariants(1, 1, true)).toEqual({ winner: 'tie', delta: 0 });
+    expect(compareVariants(null, 1, true)).toBeNull();
+    expect(compareVariants(1, Number.NaN, true)).toBeNull();
   });
 });

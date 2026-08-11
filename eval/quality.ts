@@ -701,3 +701,42 @@ export function detectLargeRegression(
     experimentalThreshold,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Variant comparison (reporting aid)
+
+export type VariantWinner = 'baseline' | 'experimental' | 'tie';
+
+export interface VariantComparison {
+  winner: VariantWinner;
+  /** experimental − baseline. */
+  delta: number;
+}
+
+/**
+ * Direction-aware comparison of one metric across the two variants.
+ * `higherIsBetter=true` for rates/F1/clean-rate/TP-per-1k; false for FP
+ * counts, tokens, chars, duration. Returns null when either side is missing
+ * or non-finite (never a fake tie). `delta` is always experimental −
+ * baseline, so with `higherIsBetter=false` a negative delta means
+ * experimental is better.
+ */
+export function compareVariants(
+  baseline: number | null | undefined,
+  experimental: number | null | undefined,
+  higherIsBetter: boolean,
+): VariantComparison | null {
+  if (
+    baseline === null ||
+    baseline === undefined ||
+    experimental === null ||
+    experimental === undefined ||
+    !Number.isFinite(baseline) ||
+    !Number.isFinite(experimental)
+  ) {
+    return null;
+  }
+  if (baseline === experimental) return { winner: 'tie', delta: 0 };
+  const expBetter = higherIsBetter ? experimental > baseline : experimental < baseline;
+  return { winner: expBetter ? 'experimental' : 'baseline', delta: experimental - baseline };
+}

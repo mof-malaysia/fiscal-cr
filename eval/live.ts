@@ -23,6 +23,7 @@ import {
   type VariantPerformanceAggregate,
   type VariantReliabilityAggregate,
 } from './benchmark.js';
+import { compareVariants, type VariantWinner } from './quality.js';
 import {
   buildSuitePromptMetadata,
   executePlan,
@@ -85,6 +86,46 @@ function signedNumber(n: number): string {
 
 function fmtPctNullable(v: number | null): string {
   return v === null ? 'unavailable' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+}
+
+interface IndicatorEntry {
+  label: string;
+  baseline: number | null | undefined;
+  experimental: number | null | undefined;
+  higherIsBetter: boolean;
+  formatDelta?: (delta: number) => string;
+}
+
+function printBetter(title: string, entries: IndicatorEntry[]): void {
+  const counts: Record<VariantWinner, number> = {
+    baseline: 0,
+    experimental: 0,
+    tie: 0,
+  };
+  const parts: string[] = [];
+  for (const entry of entries) {
+    const comparison = compareVariants(
+      entry.baseline,
+      entry.experimental,
+      entry.higherIsBetter,
+    );
+    if (comparison === null) continue;
+    counts[comparison.winner] += 1;
+    if (comparison.winner === 'tie') continue;
+    const delta = entry.formatDelta
+      ? entry.formatDelta(comparison.delta)
+      : signedNumber(comparison.delta);
+    parts.push(
+      `${entry.label} ${green(comparison.winner)} (${delta})`,
+    );
+  }
+  const comparable = counts.baseline + counts.experimental + counts.tie;
+  if (comparable === 0) return;
+  const detail = parts.length > 0 ? ` — ${parts.join(' · ')}` : '';
+  console.log(
+    `  ${bold('better')} (${title}): ` +
+      `experimental ${counts.experimental} · baseline ${counts.baseline} · tie ${counts.tie}${detail}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -241,9 +282,70 @@ function printQuality(quality: Record<VariantLabel, AggregateQualitySummary | nu
       `  ${rpad(variant, 12)} n=${q.runs}  ` +
         `micro P/R/F1 ${fmtNum(q.micro.precision)}/${fmtNum(q.micro.recall)}/${fmtNum(q.micro.f1)}  ` +
         `macro F1 ${fmtNum(q.macro.f1)}  ` +
-        `clean FP rate ${pct(q.cleanRate)}  severe FP ${q.severeFalsePositives}  dup ${q.duplicates}  ` +
+        `clean rate ${pct(q.cleanRate)}  severe FP ${q.severeFalsePositives}  dup ${q.duplicates}  ` +
         `TP/1k out ${q.tpPer1000Tokens === null ? 'unavailable' : fmtNum(q.tpPer1000Tokens, 2)}`,
     );
+  }
+  const baseline = quality.baseline;
+  const experimental = quality.experimental;
+  if (baseline !== null && experimental !== null) {
+    printBetter('post-gate quality', [
+      {
+        label: 'precision',
+        baseline: baseline.micro.precision,
+        experimental: experimental.micro.precision,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'recall',
+        baseline: baseline.micro.recall,
+        experimental: experimental.micro.recall,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'micro F1',
+        baseline: baseline.micro.f1,
+        experimental: experimental.micro.f1,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'macro F1',
+        baseline: baseline.macro.f1,
+        experimental: experimental.macro.f1,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'clean rate',
+        baseline: baseline.cleanRate,
+        experimental: experimental.cleanRate,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'severe FP',
+        baseline: baseline.severeFalsePositives,
+        experimental: experimental.severeFalsePositives,
+        higherIsBetter: false,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(2)}`,
+      },
+      {
+        label: 'duplicates',
+        baseline: baseline.duplicates,
+        experimental: experimental.duplicates,
+        higherIsBetter: false,
+      },
+      {
+        label: 'TP/1k out',
+        baseline: baseline.tpPer1000Tokens,
+        experimental: experimental.tpPer1000Tokens,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(2)}`,
+      },
+    ]);
   }
 }
 
@@ -269,6 +371,69 @@ function printReliability(
         `${formatDuration(perf.medianDurationMs)}`,
     );
   }
+  const baselineRel = reliability.baseline;
+  const experimentalRel = reliability.experimental;
+  const baselinePerf = performance.baseline;
+  const experimentalPerf = performance.experimental;
+  if (
+    baselineRel !== null &&
+    experimentalRel !== null &&
+    baselinePerf !== null &&
+    experimentalPerf !== null
+  ) {
+    printBetter('reliability / efficiency', [
+      {
+        label: 'parse',
+        baseline: baselineRel.parseRate,
+        experimental: experimentalRel.parseRate,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'contract',
+        baseline: baselineRel.contractRate,
+        experimental: experimentalRel.contractRate,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'format-length',
+        baseline: baselineRel.formatLengthComplianceRate,
+        experimental: experimentalRel.formatLengthComplianceRate,
+        higherIsBetter: true,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'degraded',
+        baseline: baselineRel.degradedRate,
+        experimental: experimentalRel.degradedRate,
+        higherIsBetter: false,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}pp`,
+      },
+      {
+        label: 'median out',
+        baseline: baselinePerf.medianOutputTokens,
+        experimental: experimentalPerf.medianOutputTokens,
+        higherIsBetter: false,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${fmt(delta)} tok`,
+      },
+      {
+        label: 'median raw',
+        baseline: baselinePerf.medianRawChars,
+        experimental: experimentalPerf.medianRawChars,
+        higherIsBetter: false,
+        formatDelta: (delta) => `${delta > 0 ? '+' : ''}${fmt(delta)} ch`,
+      },
+      {
+        label: 'median duration',
+        baseline: baselinePerf.medianDurationMs,
+        experimental: experimentalPerf.medianDurationMs,
+        higherIsBetter: false,
+        formatDelta: (delta) =>
+          `${delta > 0 ? '+' : '-'}${formatDuration(Math.abs(delta))}`,
+      },
+    ]);
+  }
 }
 
 function printPairs(pairs: PairsSummary): void {
@@ -283,13 +448,57 @@ function printPairs(pairs: PairsSummary): void {
   }
   const a = pairs.aggregate!;
   console.log(`  complete pairs ${pairs.completePairs} · incomplete ${pairs.incompletePairs}`);
-  console.log(`  output savings     ${fmtPctNullable(a.outputSavingsPct.mean)}  (median ${fmtPctNullable(a.outputSavingsPct.median)})`);
-  console.log(`  raw-char savings   ${fmtPctNullable(a.rawCharsSavingsPct.mean)}  (median ${fmtPctNullable(a.rawCharsSavingsPct.median)})`);
+  console.log(
+    `  output savings     ${fmtPctNullable(a.outputSavingsPct.mean)}  ` +
+      `(median ${fmtPctNullable(a.outputSavingsPct.median)})`,
+  );
+  console.log(
+    `  raw-char savings   ${fmtPctNullable(a.rawCharsSavingsPct.mean)}  ` +
+      `(median ${fmtPctNullable(a.rawCharsSavingsPct.median)})`,
+  );
   console.log(
     `  post-gate Δ (exp − base): F1 ${signedNumber(a.postGateF1Delta.mean)}  ` +
       `TP ${signedNumber(a.postGateTpDelta.mean)}  FP ${signedNumber(a.postGateFpDelta.mean)}`,
   );
+  printBetter('paired deltas (exp − base)', [
+    {
+      label: 'output savings',
+      baseline: 0,
+      experimental: a.outputSavingsPct.mean,
+      higherIsBetter: true,
+      formatDelta: fmtPctNullable,
+    },
+    {
+      label: 'raw-char savings',
+      baseline: 0,
+      experimental: a.rawCharsSavingsPct.mean,
+      higherIsBetter: true,
+      formatDelta: fmtPctNullable,
+    },
+    {
+      label: 'F1',
+      baseline: 0,
+      experimental: a.postGateF1Delta.mean,
+      higherIsBetter: true,
+      formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`,
+    },
+    {
+      label: 'TP',
+      baseline: 0,
+      experimental: a.postGateTpDelta.mean,
+      higherIsBetter: true,
+      formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`,
+    },
+    {
+      label: 'FP',
+      baseline: 0,
+      experimental: a.postGateFpDelta.mean,
+      higherIsBetter: false,
+      formatDelta: (delta) => `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`,
+    },
+  ]);
 }
+
 
 function printRegressions(regressions: RegressionReport[]): void {
   console.log(bold('\n=== Regression report ==='));

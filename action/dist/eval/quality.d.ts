@@ -276,4 +276,19 @@ export interface RegressionResult {
     experimentalThreshold: number;
 }
 export declare function detectLargeRegression(baseline: number | AggregateQualitySummary, experimental: number | AggregateQualitySummary, options?: RegressionOptions): RegressionResult;
+export type VariantWinner = 'baseline' | 'experimental' | 'tie';
+export interface VariantComparison {
+    winner: VariantWinner;
+    /** experimental − baseline. */
+    delta: number;
+}
+/**
+ * Direction-aware comparison of one metric across the two variants.
+ * `higherIsBetter=true` for rates/F1/clean-rate/TP-per-1k; false for FP
+ * counts, tokens, chars, duration. Returns null when either side is missing
+ * or non-finite (never a fake tie). `delta` is always experimental −
+ * baseline, so with `higherIsBetter=false` a negative delta means
+ * experimental is better.
+ */
+export declare function compareVariants(baseline: number | null | undefined, experimental: number | null | undefined, higherIsBetter: boolean): VariantComparison | null;
 //# sourceMappingURL=quality.d.ts.map

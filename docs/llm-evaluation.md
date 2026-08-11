@@ -125,8 +125,8 @@ pipeline on one case), with **stage and per-provider-call detail**:
   failure and continues. Exit code is nonzero only for config/budget/fatal
   setup/artifact failures, never for a model-call failure.
 - Final blocks: execution counts (planned/completed/failed/completion rate),
-  post-gate quality (micro P/R/F1, macro F1, clean-FP rate, severe FPs,
-  duplicates, TP per 1k output tokens) per variant, reliability/efficiency
+  post-gate quality (micro P/R/F1, macro F1, clean rate [FP-free runs], severe
+  FPs, duplicates, TP per 1k output tokens) per variant, reliability/efficiency
   diagnostics (parse/contract/format-length rates, median output tokens/raw
   chars/duration), paired deltas over **complete pairs only** (output savings,
   raw-char savings, F1/TP/FP deltas), and a large-regression report that only
