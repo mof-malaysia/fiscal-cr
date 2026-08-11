@@ -15,6 +15,23 @@ export declare const reviewConfigSchema: z.ZodObject<{
     userAgent: z.ZodOptional<z.ZodString>;
     /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
     temperature: z.ZodOptional<z.ZodNumber>;
+    /**
+     * Extra OpenAI request fields merged into every LLM call. Typed fields are
+     * validated; all other keys pass through verbatim (future-proof). Pipeline-
+     * managed keys (model/messages/temperature/token caps/response_format/stream)
+     * are stripped by the provider — use `temperature`/`pipeline.maxOutputTokens`
+     * for those instead.
+     */
+    modelParams: z.ZodOptional<z.ZodObject<{
+        reasoning_effort: z.ZodOptional<z.ZodEnum<["minimal", "low", "medium", "high"]>>;
+        verbosity: z.ZodOptional<z.ZodEnum<["low", "medium", "high"]>>;
+    }, "passthrough", z.ZodTypeAny, z.objectOutputType<{
+        reasoning_effort: z.ZodOptional<z.ZodEnum<["minimal", "low", "medium", "high"]>>;
+        verbosity: z.ZodOptional<z.ZodEnum<["low", "medium", "high"]>>;
+    }, z.ZodTypeAny, "passthrough">, z.objectInputType<{
+        reasoning_effort: z.ZodOptional<z.ZodEnum<["minimal", "low", "medium", "high"]>>;
+        verbosity: z.ZodOptional<z.ZodEnum<["low", "medium", "high"]>>;
+    }, z.ZodTypeAny, "passthrough">>>;
     /** Enables opt-in prompt optimizations that may change between releases. */
     experimental: z.ZodDefault<z.ZodBoolean>;
     review: z.ZodDefault<z.ZodObject<{
@@ -295,6 +312,10 @@ export declare const reviewConfigSchema: z.ZodObject<{
     baseUrl?: string | undefined;
     userAgent?: string | undefined;
     temperature?: number | undefined;
+    modelParams?: z.objectOutputType<{
+        reasoning_effort: z.ZodOptional<z.ZodEnum<["minimal", "low", "medium", "high"]>>;
+        verbosity: z.ZodOptional<z.ZodEnum<["low", "medium", "high"]>>;
+    }, z.ZodTypeAny, "passthrough"> | undefined;
 }, {
     provider?: "openai-compatible" | "kimi" | "openai" | undefined;
     model?: string | undefined;
@@ -302,6 +323,10 @@ export declare const reviewConfigSchema: z.ZodObject<{
     baseUrl?: string | undefined;
     userAgent?: string | undefined;
     temperature?: number | undefined;
+    modelParams?: z.objectInputType<{
+        reasoning_effort: z.ZodOptional<z.ZodEnum<["minimal", "low", "medium", "high"]>>;
+        verbosity: z.ZodOptional<z.ZodEnum<["low", "medium", "high"]>>;
+    }, z.ZodTypeAny, "passthrough"> | undefined;
     experimental?: boolean | undefined;
     review?: {
         auto?: {

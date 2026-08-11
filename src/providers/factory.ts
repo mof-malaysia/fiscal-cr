@@ -45,6 +45,8 @@ export function createLLMProvider(config: {
   provider: string;
   /** Custom User-Agent for endpoints that whitelist clients. */
   userAgent?: string;
+  /** Extra OpenAI request fields merged into every call (all providers). */
+  modelParams?: Record<string, unknown>;
   retry?: ResilientProviderOptions;
 }): LLMProvider {
   const provider = parseProvider(config.provider);
@@ -66,6 +68,7 @@ export function createLLMProvider(config: {
     baseUrl,
     userAgent: config.userAgent,
     completionTokenParam: defaults.completionTokenParam,
+    modelParams: config.modelParams,
   });
 
   return new ResilientProvider(inner, config.retry);

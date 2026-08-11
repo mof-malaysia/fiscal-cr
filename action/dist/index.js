@@ -55007,6 +55007,38 @@ class ReviewOrchestrator {
 ;// CONCATENATED MODULE: ./src/providers/openai-compatible.ts
 
 
+/**
+ * Keys the pipeline owns and must not accept from operator-supplied modelParams:
+ * request identity/managed fields, the token caps (either spelling — a stray
+ * one re-triggers the max_tokens 400), and streaming (the parser is non-stream).
+ */
+const RESERVED_MODEL_PARAM_KEYS = new Set([
+    'model',
+    'messages',
+    'temperature',
+    'max_tokens',
+    'max_completion_tokens',
+    'response_format',
+    'stream',
+    'stream_options',
+]);
+/** Drop reserved keys from operator-supplied modelParams, warning on any drop. */
+function sanitizeModelParams(params) {
+    if (!params)
+        return {};
+    const clean = {};
+    const dropped = [];
+    for (const [key, value] of Object.entries(params)) {
+        if (RESERVED_MODEL_PARAM_KEYS.has(key))
+            dropped.push(key);
+        else
+            clean[key] = value;
+    }
+    if (dropped.length > 0) {
+        logger.warn({ dropped }, 'Ignoring reserved keys in modelParams; use the dedicated config knobs instead');
+    }
+    return clean;
+}
 function parseRetryAfter(header) {
     if (!header)
         return undefined;
@@ -55030,6 +55062,7 @@ class OpenAICompatibleProvider {
     timeout;
     userAgent;
     completionTokenParam;
+    modelParams;
     constructor(config) {
         this.apiKey = config.apiKey;
         this.model = config.model;
@@ -55041,6 +55074,7 @@ class OpenAICompatibleProvider {
         this.timeout = config.timeout ?? 300_000;
         this.userAgent = config.userAgent;
         this.completionTokenParam = config.completionTokenParam ?? 'max_tokens';
+        this.modelParams = sanitizeModelParams(config.modelParams);
     }
     async chatCompletion(params) {
         const controller = new AbortController();
@@ -55055,6 +55089,8 @@ class OpenAICompatibleProvider {
     async performCompletionRequest(params, signal) {
         const temperature = params.temperature ?? this.temperature;
         const body = {
+            // Operator passthrough is the base layer; managed fields below always win.
+            ...this.modelParams,
             model: this.model,
             messages: params.messages,
             ...(temperature !== undefined && { temperature }),
@@ -55205,6 +55241,7 @@ function createLLMProvider(config) {
         baseUrl,
         userAgent: config.userAgent,
         completionTokenParam: defaults.completionTokenParam,
+        modelParams: config.modelParams,
     });
     return new ResilientProvider(inner, config.retry);
 }
@@ -55246,6 +55283,19 @@ const reviewConfigSchema = objectType({
     userAgent: stringType().max(200).optional(),
     /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
     temperature: numberType().min(0).max(2).optional(),
+    /**
+     * Extra OpenAI request fields merged into every LLM call. Typed fields are
+     * validated; all other keys pass through verbatim (future-proof). Pipeline-
+     * managed keys (model/messages/temperature/token caps/response_format/stream)
+     * are stripped by the provider — use `temperature`/`pipeline.maxOutputTokens`
+     * for those instead.
+     */
+    modelParams: objectType({
+        reasoning_effort: enumType(["minimal", "low", "medium", "high"]).optional(),
+        verbosity: enumType(["low", "medium", "high"]).optional(),
+    })
+        .passthrough()
+        .optional(),
     /** Enables opt-in prompt optimizations that may change between releases. */
     experimental: booleanType().default(false),
     review: objectType({
@@ -55456,7 +55506,33 @@ function experimentalFromActionInput(core) {
     return core.getBooleanInput("experimental");
 }
 
+;// CONCATENATED MODULE: ./action/model-params.ts
+
+/**
+ * Parse the `model_params` Action input — a JSON object of extra OpenAI request
+ * fields (e.g. `{"reasoning_effort":"high"}`) merged into every model call.
+ * Returns `undefined` when the input is empty (so it won't override repo config),
+ * and throws a ConfigError on invalid JSON or a non-object result.
+ */
+function modelParamsFromActionInput(core) {
+    const raw = core.getInput("model_params").trim();
+    if (!raw)
+        return undefined;
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch (err) {
+        throw new ConfigError(`Invalid model_params input: expected a JSON object, failed to parse (${err.message})`);
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new ConfigError(`Invalid model_params input: expected a JSON object, got ${Array.isArray(parsed) ? "an array" : typeof parsed}`);
+    }
+    return parsed;
+}
+
 ;// CONCATENATED MODULE: ./action/index.ts
+
 
 
 
@@ -55479,6 +55555,7 @@ async function run() {
         const userAgentInput = core.getInput("user_agent") || undefined;
         const languageInput = core.getInput("language") || undefined;
         const experimentalInput = experimentalFromActionInput(core);
+        const modelParamsInput = modelParamsFromActionInput(core);
         const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
         const failOnInput = (core.getInput("fail_on") || undefined);
         const octokit = github.getOctokit(githubToken);
@@ -55518,6 +55595,9 @@ async function run() {
         if (experimentalInput !== undefined) {
             config.experimental = experimentalInput;
         }
+        if (modelParamsInput !== undefined) {
+            config.modelParams = modelParamsInput;
+        }
         // Honor auto-review settings (previously App-mode only)
         if (isDraft && !config.review.auto.drafts) {
             core.info("Skipping draft PR (review.auto.drafts is false).");
@@ -55539,6 +55619,7 @@ async function run() {
             model: config.model,
             baseUrl: config.baseUrl,
             userAgent: config.userAgent,
+            modelParams: config.modelParams,
         });
         // Run review
         const telemetry = telemetryFromActionInput(core);

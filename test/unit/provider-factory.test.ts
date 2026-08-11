@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConfigError } from '../../src/utils/errors.js';
 import { createLLMProvider } from '../../src/providers/factory.js';
 
 describe('provider factory', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('creates provider for openai-compatible', () => {
     const provider = createLLMProvider({
       apiKey: 'test-key',
@@ -42,6 +46,30 @@ describe('provider factory', () => {
 
     expect(provider).toBeTruthy();
     expect(typeof provider.chatCompletion).toBe('function');
+  });
+
+  it('threads modelParams through to the provider for any provider', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+          status: 200,
+        }),
+    );
+
+    for (const provider of ['openai', 'kimi'] as const) {
+      const llm = createLLMProvider({
+        apiKey: 'test-key',
+        provider,
+        model: provider === 'openai' ? 'gpt-5' : 'kimi-for-coding',
+        modelParams: { reasoning_effort: 'high' },
+      });
+      await llm.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+    }
+
+    for (const call of fetchMock.mock.calls) {
+      const body = JSON.parse(String(call[1]?.body));
+      expect(body.reasoning_effort).toBe('high');
+    }
   });
 
   it('throws ConfigError for invalid provider', () => {

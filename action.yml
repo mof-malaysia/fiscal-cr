@@ -26,6 +26,9 @@ inputs:
   user_agent:
     description: 'Custom User-Agent header for endpoints that whitelist clients'
     required: false
+  model_params:
+    description: 'Extra OpenAI request fields as a JSON object (e.g. {"reasoning_effort":"high"}). Merged into every model call.'
+    required: false
   language:
     description: 'Review comment language (overrides repo config when provided)'
     required: false

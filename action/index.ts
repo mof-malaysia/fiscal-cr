@@ -6,6 +6,7 @@ import { loadConfig } from "../src/config/loader.js";
 import { calculateCost } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
+import { modelParamsFromActionInput } from "./model-params.js";
 
 async function run(): Promise<void> {
   try {
@@ -22,6 +23,7 @@ async function run(): Promise<void> {
     const userAgentInput = core.getInput("user_agent") || undefined;
     const languageInput = core.getInput("language") || undefined;
     const experimentalInput = experimentalFromActionInput(core);
+    const modelParamsInput = modelParamsFromActionInput(core);
     const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
     const failOnInput = (core.getInput("fail_on") || undefined) as
       | "critical"
@@ -70,6 +72,9 @@ async function run(): Promise<void> {
     if (experimentalInput !== undefined) {
       config.experimental = experimentalInput;
     }
+    if (modelParamsInput !== undefined) {
+      config.modelParams = modelParamsInput;
+    }
 
     // Honor auto-review settings (previously App-mode only)
     if (isDraft && !config.review.auto.drafts) {
@@ -95,6 +100,7 @@ async function run(): Promise<void> {
       model: config.model,
       baseUrl: config.baseUrl,
       userAgent: config.userAgent,
+      modelParams: config.modelParams,
     });
 
     // Run review

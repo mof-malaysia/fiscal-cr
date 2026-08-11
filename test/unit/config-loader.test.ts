@@ -29,6 +29,46 @@ describe('loadConfig', () => {
     expect(config.experimental).toBe(true);
   });
 
+  it('keeps arbitrary modelParams keys via passthrough and validates typed ones', async () => {
+    const yaml = [
+      'provider: openai',
+      'model: gpt-5',
+      'modelParams:',
+      '  reasoning_effort: high',
+      '  top_p: 0.9',
+      '  seed: 42',
+      '',
+    ].join('\n');
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+
+    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
+
+    expect(config.modelParams).toEqual({
+      reasoning_effort: 'high',
+      top_p: 0.9,
+      seed: 42,
+    });
+  });
+
+  it('rejects an invalid typed modelParams value', async () => {
+    const yaml = 'modelParams:\n  reasoning_effort: turbo\n';
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+
+    await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
+  });
+
   it('falls back to defaults when the config file is missing', async () => {
     const octokit = {
       repos: {

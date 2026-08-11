@@ -56,6 +56,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         model: appCtx.model ?? config.model,
         baseUrl: appCtx.baseUrl,
         userAgent: appCtx.userAgent ?? config.userAgent,
+        modelParams: config.modelParams,
       });
 
       const orchestrator = new ReviewOrchestrator(octokit, llm, config);
@@ -88,6 +89,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         model: appCtx.model ?? config.model,
         baseUrl: appCtx.baseUrl,
         userAgent: appCtx.userAgent ?? config.userAgent,
+        modelParams: config.modelParams,
       });
 
       const { data: pr } = await octokit.pulls.get({
@@ -144,6 +146,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       model: appCtx.model ?? config.model,
       baseUrl: appCtx.baseUrl,
       userAgent: appCtx.userAgent ?? config.userAgent,
+      modelParams: config.modelParams,
     });
 
     const orchestrator = new ReviewOrchestrator(octokit, llm, config);
