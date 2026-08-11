@@ -7,12 +7,30 @@ import {
 import type { LLMProvider } from "./interface.js";
 import { ConfigError } from "../utils/errors.js";
 
-export const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi"] as const;
+export const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi", "openai"] as const;
 const KIMI_API_BASE_URL = "https://api.kimi.com/coding/v1";
+const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
+
+/**
+ * Per-provider construction defaults for the shared OpenAI-compatible adapter.
+ * A missing `baseUrl` means the operator must supply one explicitly
+ * (openai-compatible); the others default to their vendor endpoint.
+ */
+const PROVIDER_DEFAULTS: Record<
+  ReviewConfig["provider"],
+  { baseUrl?: string; completionTokenParam?: "max_completion_tokens" }
+> = {
+  "openai-compatible": {},
+  openai: {
+    baseUrl: OPENAI_API_BASE_URL,
+    completionTokenParam: "max_completion_tokens",
+  },
+  kimi: { baseUrl: KIMI_API_BASE_URL },
+};
 
 function parseProvider(provider: string): ReviewConfig["provider"] {
-  if (provider === "openai-compatible" || provider === "kimi") {
-    return provider;
+  if ((SUPPORTED_PROVIDERS as readonly string[]).includes(provider)) {
+    return provider as ReviewConfig["provider"];
   }
 
   throw new ConfigError(
@@ -30,34 +48,25 @@ export function createLLMProvider(config: {
   retry?: ResilientProviderOptions;
 }): LLMProvider {
   const provider = parseProvider(config.provider);
+  const defaults = PROVIDER_DEFAULTS[provider];
 
-  // All providers share the OpenAI-compatible adapter.
-  // Adding non-compatible providers (e.g., Anthropic) is straightforward.
-  let inner: LLMProvider;
-  switch (provider) {
-    case "openai-compatible":
-      if (!config.baseUrl) {
-        throw new ConfigError(
-          'Missing baseUrl for provider "openai-compatible". Configure an operator-controlled BASE_URL.',
-        );
-      }
-      inner = new OpenAICompatibleProvider({
-        apiKey: config.apiKey,
-        model: config.model,
-        baseUrl: config.baseUrl,
-        userAgent: config.userAgent,
-      });
-      break;
-    case "kimi":
-    default:
-      inner = new OpenAICompatibleProvider({
-        apiKey: config.apiKey,
-        model: config.model,
-        baseUrl: config.baseUrl ?? KIMI_API_BASE_URL,
-        userAgent: config.userAgent,
-      });
-      break;
+  // All providers share the OpenAI-compatible adapter, differing only in their
+  // base-URL default and token-cap field. Adding a non-compatible provider
+  // (e.g., Anthropic) is straightforward — swap the adapter in a new branch.
+  const baseUrl = config.baseUrl ?? defaults.baseUrl;
+  if (!baseUrl) {
+    throw new ConfigError(
+      `Missing baseUrl for provider "${provider}". Configure an operator-controlled BASE_URL.`,
+    );
   }
+
+  const inner = new OpenAICompatibleProvider({
+    apiKey: config.apiKey,
+    model: config.model,
+    baseUrl,
+    userAgent: config.userAgent,
+    completionTokenParam: defaults.completionTokenParam,
+  });
 
   return new ResilientProvider(inner, config.retry);
 }

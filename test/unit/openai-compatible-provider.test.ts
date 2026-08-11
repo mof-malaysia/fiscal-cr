@@ -44,6 +44,51 @@ describe('OpenAICompatibleProvider', () => {
     expect(body.max_tokens).toBeUndefined();
   });
 
+  it('emits max_completion_tokens (not max_tokens) when configured for OpenAI', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      }),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'gpt-5',
+      baseUrl: 'https://api.openai.com/v1',
+      completionTokenParam: 'max_completion_tokens',
+    });
+    await provider.chatCompletion({
+      messages: [{ role: 'user', content: 'hi' }],
+      maxTokens: 4096,
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.max_completion_tokens).toBe(4096);
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it('defaults to max_tokens for the completion-token cap', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      }),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'm',
+      baseUrl: 'https://api.example.com/v1',
+    });
+    await provider.chatCompletion({
+      messages: [{ role: 'user', content: 'hi' }],
+      maxTokens: 4096,
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.max_tokens).toBe(4096);
+    expect(body.max_completion_tokens).toBeUndefined();
+  });
+
   it('surfaces finish_reason so truncation is detectable', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(

@@ -15,6 +15,18 @@ describe('reviewTemperature', () => {
     expect(reviewTemperature(config)).toBeUndefined();
   });
 
+  it('omits temperature for OpenAI reasoning models (o-series, gpt-5)', () => {
+    for (const model of ['o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-5-mini']) {
+      expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBeUndefined();
+    }
+  });
+
+  it('keeps the preferred temperature for non-reasoning OpenAI models', () => {
+    for (const model of ['gpt-4o', 'gpt-4.1', 'gpt-4-turbo']) {
+      expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBe(0.3);
+    }
+  });
+
   it('an explicit config temperature always wins', () => {
     expect(reviewTemperature({ ...DEFAULT_CONFIG, temperature: 1 })).toBe(1);
     expect(

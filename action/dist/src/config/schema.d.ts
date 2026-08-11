@@ -8,7 +8,7 @@ import { z } from "zod";
 export declare const DEFAULT_EXCLUDE_PATTERNS: readonly ["**/node_modules/**", "**/dist/**", "**/build/**", "**/*.min.*", "**/*.lock", "**/*.lockb", "**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/bun.lockb", "**/go.sum", "**/go.work.sum", "**/packages.lock.json"];
 export declare const reviewConfigSchema: z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
-    provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi"]>>;
+    provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi", "openai"]>>;
     model: z.ZodDefault<z.ZodString>;
     baseUrl: z.ZodOptional<z.ZodString>;
     /** Custom User-Agent for endpoints that whitelist clients. */
@@ -230,7 +230,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
         maxOutputTokens?: number | undefined;
     }>>;
 }, "strip", z.ZodTypeAny, {
-    provider: "openai-compatible" | "kimi";
+    provider: "openai-compatible" | "kimi" | "openai";
     model: string;
     language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
     experimental: boolean;
@@ -296,7 +296,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
     userAgent?: string | undefined;
     temperature?: number | undefined;
 }, {
-    provider?: "openai-compatible" | "kimi" | undefined;
+    provider?: "openai-compatible" | "kimi" | "openai" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
     baseUrl?: string | undefined;
