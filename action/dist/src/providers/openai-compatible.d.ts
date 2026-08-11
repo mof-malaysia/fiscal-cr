@@ -11,6 +11,12 @@ export interface OpenAICompatibleProviderConfig {
      * is omitted so the request carries one identity.
      */
     userAgent?: string;
+    /**
+     * Field name for the completion-token cap. OpenAI models require
+     * "max_completion_tokens"; legacy/compatible endpoints use "max_tokens".
+     * Defaults to "max_tokens".
+     */
+    completionTokenParam?: 'max_tokens' | 'max_completion_tokens';
 }
 /**
  * Generic provider for OpenAI-compatible chat completion APIs.
@@ -23,6 +29,7 @@ export declare class OpenAICompatibleProvider implements LLMProvider {
     private readonly temperature?;
     private readonly timeout;
     private readonly userAgent?;
+    private readonly completionTokenParam;
     constructor(config: OpenAICompatibleProviderConfig);
     chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse>;
     private performCompletionRequest;

@@ -53799,6 +53799,14 @@ const FIXED_TEMPERATURE_MODELS = new Set([
     "kimi-k3",
 ]);
 /**
+ * OpenAI reasoning models reject any temperature other than the server default.
+ * Matched by name (o1/o3/o4-mini…, gpt-5 family) so the guard also protects an
+ * `openai-compatible` endpoint that happens to serve a reasoning model.
+ */
+function isReasoningModel(model) {
+    return /^(o[1-9]|gpt-5)/i.test(model);
+}
+/**
  * Resolve the temperature for a review call: an explicit config value wins;
  * models that pin their own temperature get none at all (the server default
  * applies); everything else uses the pipeline's preferred low temperature.
@@ -53807,6 +53815,8 @@ function reviewTemperature(config, preferred = 0.3) {
     if (config.temperature !== undefined)
         return config.temperature;
     if (FIXED_TEMPERATURE_MODELS.has(config.model))
+        return undefined;
+    if (isReasoningModel(config.model))
         return undefined;
     return preferred;
 }
@@ -55019,6 +55029,7 @@ class OpenAICompatibleProvider {
     temperature;
     timeout;
     userAgent;
+    completionTokenParam;
     constructor(config) {
         this.apiKey = config.apiKey;
         this.model = config.model;
@@ -55029,6 +55040,7 @@ class OpenAICompatibleProvider {
         this.temperature = config.temperature;
         this.timeout = config.timeout ?? 300_000;
         this.userAgent = config.userAgent;
+        this.completionTokenParam = config.completionTokenParam ?? 'max_tokens';
     }
     async chatCompletion(params) {
         const controller = new AbortController();
@@ -55046,7 +55058,9 @@ class OpenAICompatibleProvider {
             model: this.model,
             messages: params.messages,
             ...(temperature !== undefined && { temperature }),
-            ...(params.maxTokens !== undefined && { max_tokens: params.maxTokens }),
+            ...(params.maxTokens !== undefined && {
+                [this.completionTokenParam]: params.maxTokens,
+            }),
             ...(params.responseFormat && { response_format: params.responseFormat }),
         };
         const res = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -55153,41 +55167,45 @@ function sleep(ms) {
 
 
 
-const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi"];
+const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi", "openai"];
 const KIMI_API_BASE_URL = "https://api.kimi.com/coding/v1";
+const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
+/**
+ * Per-provider construction defaults for the shared OpenAI-compatible adapter.
+ * A missing `baseUrl` means the operator must supply one explicitly
+ * (openai-compatible); the others default to their vendor endpoint.
+ */
+const PROVIDER_DEFAULTS = {
+    "openai-compatible": {},
+    openai: {
+        baseUrl: OPENAI_API_BASE_URL,
+        completionTokenParam: "max_completion_tokens",
+    },
+    kimi: { baseUrl: KIMI_API_BASE_URL },
+};
 function parseProvider(provider) {
-    if (provider === "openai-compatible" || provider === "kimi") {
+    if (SUPPORTED_PROVIDERS.includes(provider)) {
         return provider;
     }
     throw new ConfigError(`Invalid provider: "${provider}". Supported providers: ${SUPPORTED_PROVIDERS.join(", ")}`);
 }
 function createLLMProvider(config) {
     const provider = parseProvider(config.provider);
-    // All providers share the OpenAI-compatible adapter.
-    // Adding non-compatible providers (e.g., Anthropic) is straightforward.
-    let inner;
-    switch (provider) {
-        case "openai-compatible":
-            if (!config.baseUrl) {
-                throw new ConfigError('Missing baseUrl for provider "openai-compatible". Configure an operator-controlled BASE_URL.');
-            }
-            inner = new OpenAICompatibleProvider({
-                apiKey: config.apiKey,
-                model: config.model,
-                baseUrl: config.baseUrl,
-                userAgent: config.userAgent,
-            });
-            break;
-        case "kimi":
-        default:
-            inner = new OpenAICompatibleProvider({
-                apiKey: config.apiKey,
-                model: config.model,
-                baseUrl: config.baseUrl ?? KIMI_API_BASE_URL,
-                userAgent: config.userAgent,
-            });
-            break;
+    const defaults = PROVIDER_DEFAULTS[provider];
+    // All providers share the OpenAI-compatible adapter, differing only in their
+    // base-URL default and token-cap field. Adding a non-compatible provider
+    // (e.g., Anthropic) is straightforward — swap the adapter in a new branch.
+    const baseUrl = config.baseUrl ?? defaults.baseUrl;
+    if (!baseUrl) {
+        throw new ConfigError(`Missing baseUrl for provider "${provider}". Configure an operator-controlled BASE_URL.`);
     }
+    const inner = new OpenAICompatibleProvider({
+        apiKey: config.apiKey,
+        model: config.model,
+        baseUrl,
+        userAgent: config.userAgent,
+        completionTokenParam: defaults.completionTokenParam,
+    });
     return new ResilientProvider(inner, config.retry);
 }
 
@@ -55221,7 +55239,7 @@ const DEFAULT_EXCLUDE_PATTERNS = [
 ];
 const reviewConfigSchema = objectType({
     language: enumType(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
-    provider: enumType(["openai-compatible", "kimi"]).default("kimi"),
+    provider: enumType(["openai-compatible", "kimi", "openai"]).default("kimi"),
     model: stringType().default("kimi-for-coding"),
     baseUrl: stringType().url().optional(),
     /** Custom User-Agent for endpoints that whitelist clients. */

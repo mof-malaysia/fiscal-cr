@@ -33,6 +33,17 @@ describe('provider factory', () => {
     ).toThrow(/Missing baseUrl/);
   });
 
+  it('creates the openai provider without an explicit baseUrl (default applies)', () => {
+    const provider = createLLMProvider({
+      apiKey: 'test-key',
+      provider: 'openai',
+      model: 'gpt-5',
+    });
+
+    expect(provider).toBeTruthy();
+    expect(typeof provider.chatCompletion).toBe('function');
+  });
+
   it('throws ConfigError for invalid provider', () => {
     expect(() =>
       createLLMProvider({

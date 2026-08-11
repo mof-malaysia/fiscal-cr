@@ -27,7 +27,7 @@ export const DEFAULT_EXCLUDE_PATTERNS = [
 
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
-  provider: z.enum(["openai-compatible", "kimi"]).default("kimi"),
+  provider: z.enum(["openai-compatible", "kimi", "openai"]).default("kimi"),
   model: z.string().default("kimi-for-coding"),
   baseUrl: z.string().url().optional(),
   /** Custom User-Agent for endpoints that whitelist clients. */

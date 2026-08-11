@@ -15,7 +15,7 @@ inputs:
     required: false
     default: ${{ github.token }}
   provider:
-    description: 'Model provider: openai-compatible'
+    description: 'Model provider: openai-compatible, kimi, or openai'
     required: false
   model:
     description: 'Model to use (overrides repo config when provided)'

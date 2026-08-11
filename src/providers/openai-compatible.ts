@@ -18,6 +18,12 @@ export interface OpenAICompatibleProviderConfig {
    * is omitted so the request carries one identity.
    */
   userAgent?: string;
+  /**
+   * Field name for the completion-token cap. OpenAI models require
+   * "max_completion_tokens"; legacy/compatible endpoints use "max_tokens".
+   * Defaults to "max_tokens".
+   */
+  completionTokenParam?: 'max_tokens' | 'max_completion_tokens';
 }
 
 interface OpenAICompatibleResponse {
@@ -52,6 +58,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly temperature?: number;
   private readonly timeout: number;
   private readonly userAgent?: string;
+  private readonly completionTokenParam: 'max_tokens' | 'max_completion_tokens';
 
   constructor(config: OpenAICompatibleProviderConfig) {
     this.apiKey = config.apiKey;
@@ -63,6 +70,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.temperature = config.temperature;
     this.timeout = config.timeout ?? 300_000;
     this.userAgent = config.userAgent;
+    this.completionTokenParam = config.completionTokenParam ?? 'max_tokens';
   }
 
   async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
@@ -85,7 +93,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
       model: this.model,
       messages: params.messages,
       ...(temperature !== undefined && { temperature }),
-      ...(params.maxTokens !== undefined && { max_tokens: params.maxTokens }),
+      ...(params.maxTokens !== undefined && {
+        [this.completionTokenParam]: params.maxTokens,
+      }),
       ...(params.responseFormat && { response_format: params.responseFormat }),
     };
 
