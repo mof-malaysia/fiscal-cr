@@ -124,7 +124,7 @@ describe('runFastPath', () => {
     const llm: LLMProvider = { chatCompletion };
 
     // Legacy config: no stage overrides → top-level model pins its temperature and gets the Kimi cap.
-    const config = { ...DEFAULT_CONFIG, models: {}, model: 'kimi-for-coding' };
+    const config = { ...DEFAULT_CONFIG, modelPreset: undefined, models: {}, model: 'kimi-for-coding' };
     await runFastPath(llm, context(), config, new UsageTracker());
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;

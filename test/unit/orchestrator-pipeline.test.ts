@@ -333,7 +333,7 @@ describe('ReviewOrchestrator pipeline routing', () => {
     const orchestrator = new ReviewOrchestrator(
       octokit as never,
       llm,
-      { ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }), models: {}, model: 'legacy-model' },
+      { ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }), modelPreset: undefined, models: {}, model: 'legacy-model' },
     );
     await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
 

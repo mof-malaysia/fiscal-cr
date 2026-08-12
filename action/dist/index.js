@@ -56024,12 +56024,12 @@ function createLLMProvider(config) {
 var dist = __nccwpck_require__(6159);
 ;// CONCATENATED MODULE: ./src/config/defaults.ts
 
-
 const DEFAULT_CONFIG = {
     language: "en",
     provider: "kimi",
     model: "k3",
-    models: { ...MODEL_PRESETS.kimi },
+    modelPreset: "provider-default",
+    models: {},
     experimental: false,
     review: {
         auto: {

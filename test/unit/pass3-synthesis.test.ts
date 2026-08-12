@@ -226,7 +226,7 @@ describe('synthesize', () => {
     await synthesize(
       { chatCompletion },
       input,
-      { ...cfg(), models: {}, model: 'legacy-model' },
+      { ...cfg(), modelPreset: undefined, models: {}, model: 'legacy-model' },
       new UsageTracker(),
     );
     expect(chatCompletion.mock.calls[1][0].model).toBe('legacy-model');
