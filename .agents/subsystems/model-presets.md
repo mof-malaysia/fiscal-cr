@@ -6,9 +6,9 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 
 ## Purpose
 
-`provider-default` auto-picks the preset matching the effective repo provider.
+`provider-default` auto-picks the preset matching the effective provider.
 The current built-ins use latest provider models: Kimi K3, OpenAI GPT-5.6, and
-Anthropic Claude Fable/Sonnet 5.
+Anthropic Claude Opus/Sonnet 5.
 
 ## Source files
 
