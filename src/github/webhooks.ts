@@ -59,7 +59,13 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         modelParams: config.modelParams,
       });
 
-      const orchestrator = new ReviewOrchestrator(octokit, llm, config);
+      const orchestrator = new ReviewOrchestrator(octokit, llm, config, {
+        pricingContext: {
+          provider: appCtx.provider ?? config.provider,
+          model: appCtx.model ?? config.model,
+          baseUrl: appCtx.baseUrl ?? config.baseUrl,
+        },
+      });
       await orchestrator.reviewPullRequest({ owner, repo, pullNumber, headSha });
     },
   );
@@ -98,8 +104,13 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         pull_number: pullNumber,
       });
 
-      const orchestrator = new ReviewOrchestrator(octokit, llm, config);
-      // An explicit @fiscalcr review always re-reviews the whole PR.
+      const orchestrator = new ReviewOrchestrator(octokit, llm, config, {
+        pricingContext: {
+          provider: appCtx.provider ?? config.provider,
+          model: appCtx.model ?? config.model,
+          baseUrl: appCtx.baseUrl ?? config.baseUrl,
+        },
+      });
       await orchestrator.reviewPullRequest({
         owner,
         repo,
@@ -149,7 +160,13 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       modelParams: config.modelParams,
     });
 
-    const orchestrator = new ReviewOrchestrator(octokit, llm, config);
+    const orchestrator = new ReviewOrchestrator(octokit, llm, config, {
+      pricingContext: {
+        provider: appCtx.provider ?? config.provider,
+        model: appCtx.model ?? config.model,
+        baseUrl: appCtx.baseUrl ?? config.baseUrl,
+      },
+    });
     await orchestrator.reviewPullRequest({ owner, repo, pullNumber, headSha });
   });
 }

@@ -2,7 +2,7 @@ import type { Octokit } from '@octokit/rest';
 import type { ChangedFile, ReviewAnnotation, ReviewResult, Severity } from '../types/review.js';
 import { commentableLines } from '../review/diff-analyzer.js';
 import { fingerprintAnnotation, fingerprintMarker } from './fingerprint.js';
-import { calculateCost } from '../utils/tokens.js';
+import { calculateCostForModel } from '../utils/tokens.js';
 import { logger } from '../utils/logger.js';
 
 const SEVERITY_EMOJI: Record<Severity, string> = {
@@ -205,7 +205,7 @@ export async function createPRReview(
 }
 
 function buildReviewBody(result: ReviewResult): string {
-  const cost = calculateCost(result.tokensUsed);
+  const cost = result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {});
   const lines: string[] = [];
 
   lines.push('## 🤖 FiscalCR Code Review\n');
@@ -242,7 +242,7 @@ function buildReviewBody(result: ReviewResult): string {
   lines.push(`- Input: ${result.tokensUsed.input.toLocaleString()} tokens`);
   lines.push(`- Output: ${result.tokensUsed.output.toLocaleString()} tokens`);
   lines.push(`- Cached: ${result.tokensUsed.cached.toLocaleString()} tokens`);
-  lines.push(`- Estimated cost: $${cost}`);
+  lines.push(`- Estimated cost: $${cost} (${result.costEstimate?.source ?? 'fallback'} pricing)`);
   lines.push('</details>\n');
 
   lines.push('---');

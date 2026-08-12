@@ -1,6 +1,5 @@
 import type { ReviewResult, Severity } from '../types/review.js';
 import { calculateCost } from '../utils/tokens.js';
-
 const SEVERITY_EMOJI: Record<Severity, string> = {
   critical: '🔴',
   warning: '🟡',
@@ -12,9 +11,8 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
  * Build a markdown summary for the Check Run output.
  */
 export function buildSummary(result: ReviewResult): string {
-  const cost = calculateCost(result.tokensUsed);
+  const cost = result.costEstimate?.usd ?? calculateCost(result.tokensUsed);
   const lines: string[] = [];
-
   lines.push(`## Score: ${result.score}/100\n`);
   if (result.intent) {
     lines.push(`> ${result.intent}\n`);
@@ -61,6 +59,9 @@ export function buildSummary(result: ReviewResult): string {
     lines.push(`| LLM calls | ${result.callCount} |`);
   }
   lines.push(`| Estimated cost | $${cost} |`);
+  if (result.costEstimate) {
+    lines.push(`| Pricing source | ${result.costEstimate.source} |`);
+  }
   lines.push('</details>');
 
   return lines.join('\n');

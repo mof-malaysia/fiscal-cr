@@ -1,3 +1,10 @@
+import {
+  calculateCostWithPricing,
+  FALLBACK_TOKEN_PRICING,
+  resolvePricing,
+  type PricingContext,
+} from './pricing.js';
+
 /**
  * Rough token estimation. ~4 chars per token for English,
  * ~2 chars per token for CJK. Good enough for context budget planning.
@@ -10,15 +17,27 @@ export function estimateTokens(text: string): number {
 }
 
 /**
- * Calculate API cost in USD based on token usage.
+ * Calculate API cost using the legacy fallback pricing.
+ *
+ * Call `calculateCostForModel` when provider/model context is available.
  */
+ 
+
 export function calculateCost(usage: {
   input: number;
   output: number;
   cached: number;
 }): number {
-  const inputCost = (usage.input / 1_000_000) * 0.39;
-  const outputCost = (usage.output / 1_000_000) * 1.9;
-  const cachedCost = (usage.cached / 1_000_000) * 0.1;
-  return Math.round((inputCost + outputCost + cachedCost) * 10000) / 10000;
+  return roundCost(calculateCostWithPricing(usage, FALLBACK_TOKEN_PRICING));
+}
+
+export function calculateCostForModel(
+  usage: { input: number; output: number; cached: number },
+  context: PricingContext,
+): number {
+  return roundCost(calculateCostWithPricing(usage, resolvePricing(context).pricing));
+}
+
+function roundCost(cost: number): number {
+  return Math.round(cost * 10000) / 10000;
 }
