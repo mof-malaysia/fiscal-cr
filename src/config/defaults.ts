@@ -1,15 +1,11 @@
 import { DEFAULT_EXCLUDE_PATTERNS, type ReviewConfig } from "./schema.js";
+import { MODEL_PRESETS } from "./model-presets.js";
 
 export const DEFAULT_CONFIG: ReviewConfig = {
   language: "en",
   provider: "kimi",
   model: "kimi-for-coding",
-  models: {
-    intent: "kimi-for-coding-highspeed",
-    fastPath: "kimi-for-coding",
-    groupReview: "kimi-for-coding",
-    synthesis: "kimi-for-coding",
-  },
+  models: { ...MODEL_PRESETS.kimi },
   experimental: false,
   review: {
     auto: {

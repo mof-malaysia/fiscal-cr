@@ -49711,6 +49711,17 @@ const coerce = {
 const NEVER = (/* unused pure expression or super */ null && (INVALID));
 
 ;// CONCATENATED MODULE: ./src/config/model-presets.ts
+/**
+ * Opt-in opinionated model presets. A preset pins pipeline stages to
+ * provider-tuned models. Built-ins ship for the native providers; users may
+ * add their own under `config.modelPresets` and select any preset by name via
+ * `config.modelPreset`.
+ *
+ * `provider-default` is a selector, not a map: it picks the preset matching
+ * `config.provider` (`kimi`, `openai`, or `anthropic`). `openai-compatible`
+ * has no built-in preset (any model works over the compatible endpoint), so it
+ * resolves to `undefined` and callers fall back to the top-level `model`.
+ */
 /** Built-in preset names accepted by the `modelPreset` selector. */
 const BUILTIN_MODEL_PRESET_NAMES = [
     "provider-default",
@@ -49816,6 +49827,14 @@ const DEFAULT_EXCLUDE_PATTERNS = [
     "**/go.work.sum",
     "**/packages.lock.json", // NuGet
 ];
+/** Shared strict shape for explicit stage overrides and custom preset stages. */
+const modelStageSchema = objectType({
+    intent: stringType().min(1).optional(),
+    fastPath: stringType().min(1).optional(),
+    groupReview: stringType().min(1).optional(),
+    synthesis: stringType().min(1).optional(),
+})
+    .strict();
 const reviewConfigSchema = objectType({
     language: enumType(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
     provider: enumType(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
@@ -49829,14 +49848,7 @@ const reviewConfigSchema = objectType({
      * keys are rejected (`.strict()`), so the old `big`/`small` roles fail
      * loudly instead of silently disappearing.
      */
-    models: objectType({
-        intent: stringType().min(1).optional(),
-        fastPath: stringType().min(1).optional(),
-        groupReview: stringType().min(1).optional(),
-        synthesis: stringType().min(1).optional(),
-    })
-        .strict()
-        .default({}),
+    models: modelStageSchema.default({}),
     /**
      * Selected model preset (see `src/config/model-presets.ts`). Accepts the
      * built-in names `provider-default`, `kimi`, `openai`, `anthropic`, or any
@@ -49853,14 +49865,7 @@ const reviewConfigSchema = objectType({
      * new names are selectable via `modelPreset`. Unknown stage keys are
      * rejected (`.strict()`); unset stages fall back to the top-level `model`.
      */
-    modelPresets: recordType(stringType().min(1), objectType({
-        intent: stringType().min(1).optional(),
-        fastPath: stringType().min(1).optional(),
-        groupReview: stringType().min(1).optional(),
-        synthesis: stringType().min(1).optional(),
-    })
-        .strict())
-        .optional(),
+    modelPresets: recordType(stringType().min(1), modelStageSchema).optional(),
     baseUrl: stringType().url().optional(),
     /** Custom User-Agent for endpoints that whitelist clients. */
     userAgent: stringType().max(200).optional(),
@@ -54472,6 +54477,7 @@ async function synthesize(llm, input, config, usage) {
                 timeoutMs: 90_000,
             });
             usage.add(response.usage, {
+                model,
                 stage: 'synthesis',
                 messages,
                 maxOutputTokens: 4_096,
@@ -54575,6 +54581,7 @@ async function runIntentPass(llm, ctx, config, usage) {
             timeoutMs: 60_000,
         });
         usage.add(response.usage, {
+            model,
             stage: 'intent',
             messages,
             maxOutputTokens: 2_048,
@@ -54922,6 +54929,7 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
                 timeoutMs: config.pipeline.callTimeoutMs,
             });
             usage.add(response.usage, {
+                model,
                 stage: 'group-review',
                 messages,
                 maxOutputTokens,
@@ -55033,6 +55041,7 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
         throw err;
     });
     usage.add(response.usage, {
+        model,
         stage: 'fast-path',
         messages,
         maxOutputTokens,
@@ -55141,22 +55150,33 @@ const SAFE_FINISH_REASONS = new Set([
     'tool_calls',
     'function_call',
 ]);
-function safeFinishReason(value) {
-    if (value === undefined)
-        return undefined;
-    return SAFE_FINISH_REASONS.has(value)
-        ? value
-        : 'other';
-}
 /** Aggregates token usage and provider-specific cost across all pipeline LLM calls. */
 class UsageTracker {
     telemetry;
     totals = { input: 0, output: 0, cached: 0 };
     callCount = 0;
+    totalCostUsd = 0;
     pricing;
-    constructor(telemetry, pricingContext = {}, pricingResolution) {
+    pricingContext;
+    pricingByModel;
+    constructor(telemetry, pricingContext = {}, pricingResolutions) {
         this.telemetry = telemetry;
-        this.pricing = pricingResolution ?? resolvePricing(pricingContext);
+        this.pricingContext = pricingContext;
+        this.pricing = resolvePricing(pricingContext);
+        this.pricingByModel = new Map(pricingResolutions);
+        if (this.pricing.model && !this.pricingByModel.has(this.pricing.model)) {
+            this.pricingByModel.set(this.pricing.model, this.pricing);
+        }
+    }
+    pricingForModel(model) {
+        if (!model)
+            return this.pricing;
+        const cached = this.pricingByModel.get(model);
+        if (cached)
+            return cached;
+        const resolved = resolvePricing({ ...this.pricingContext, model });
+        this.pricingByModel.set(model, resolved);
+        return resolved;
     }
     startCall() {
         this.callCount++;
@@ -55165,6 +55185,8 @@ class UsageTracker {
         this.totals.input += usage.input;
         this.totals.output += usage.output;
         this.totals.cached += usage.cached;
+        const pricing = this.pricingForModel(call?.model);
+        this.totalCostUsd += calculateCostWithPricing(usage, pricing.pricing);
         if (call && this.telemetry) {
             const finishReason = safeFinishReason(call.finishReason);
             this.emit({
@@ -55176,8 +55198,8 @@ class UsageTracker {
                 inputTokens: usage.input,
                 outputTokens: usage.output,
                 cachedTokens: usage.cached,
-                estimatedCostUsd: calculateCostWithPricing(usage, this.pricing.pricing),
-                pricingSource: this.pricing.source,
+                estimatedCostUsd: calculateCostWithPricing(usage, pricing.pricing),
+                pricingSource: pricing.source,
                 maxOutputTokens: call.maxOutputTokens,
                 durationMs: Math.max(0, call.durationMs),
                 ...(finishReason === undefined ? {} : { finishReason }),
@@ -55201,11 +55223,18 @@ class UsageTracker {
         return this.callCount;
     }
     cost() {
-        return calculateCostWithPricing(this.totals, this.pricing.pricing);
+        return this.totalCostUsd;
     }
     pricingInfo() {
         return this.pricing;
     }
+}
+function safeFinishReason(value) {
+    if (value === undefined)
+        return undefined;
+    return SAFE_FINISH_REASONS.has(value)
+        ? value
+        : 'other';
 }
 
 ;// CONCATENATED MODULE: ./src/review/orchestrator.ts
@@ -55360,11 +55389,21 @@ class ReviewOrchestrator {
                 : undefined;
             const pricingContext = this.options.pricingContext ?? {
                 provider: this.config.provider,
-                model: modelForRole(this.config, 'groupReview'),
                 baseUrl: this.config.baseUrl,
             };
-            const pricingResolution = await resolvePricingAsync(pricingContext);
-            const usage = new UsageTracker(this.options.telemetry, pricingContext, pricingResolution);
+            const stageModels = [
+                modelForRole(this.config, 'intent'),
+                modelForRole(this.config, 'fastPath'),
+                modelForRole(this.config, 'groupReview'),
+                modelForRole(this.config, 'synthesis'),
+            ];
+            const pricingEntries = await Promise.all([...new Set(stageModels)].map(async (model) => [
+                model,
+                await resolvePricingAsync({ ...pricingContext, model }),
+            ]));
+            const pricingResolutions = new Map(pricingEntries);
+            const pricingResolution = pricingResolutions.get(stageModels[2]);
+            const usage = new UsageTracker(this.options.telemetry, pricingContext, pricingResolutions);
             const result = await runReviewPipeline(this.llm, prContext, this.config, usage, {
                 workspaceRoot: this.options.workspaceRoot,
                 deltaHint,
@@ -55984,16 +56023,12 @@ function createLLMProvider(config) {
 var dist = __nccwpck_require__(6159);
 ;// CONCATENATED MODULE: ./src/config/defaults.ts
 
+
 const DEFAULT_CONFIG = {
     language: "en",
     provider: "kimi",
     model: "kimi-for-coding",
-    models: {
-        intent: "kimi-for-coding-highspeed",
-        fastPath: "kimi-for-coding",
-        groupReview: "kimi-for-coding",
-        synthesis: "kimi-for-coding",
-    },
+    models: { ...MODEL_PRESETS.kimi },
     experimental: false,
     review: {
         auto: {
@@ -56099,6 +56134,23 @@ function parseYaml(content) {
     return parsed;
 }
 
+;// CONCATENATED MODULE: ./src/config/overrides.ts
+/** Apply an explicit provider override before resolving provider-default presets. */
+function applyProviderOverride(config, provider) {
+    if (provider)
+        config.provider = provider;
+}
+/** Apply an explicit global model override to every pipeline stage. */
+function applyModelOverride(config, model) {
+    if (!model)
+        return;
+    config.model = model;
+    config.models.intent = model;
+    config.models.fastPath = model;
+    config.models.groupReview = model;
+    config.models.synthesis = model;
+}
+
 ;// CONCATENATED MODULE: ./action/telemetry.ts
 function telemetryFromActionInput(core) {
     if (!core.getBooleanInput("telemetry"))
@@ -56156,6 +56208,7 @@ function modelParamsFromActionInput(core) {
 
 
 
+
 async function run() {
     try {
         // Get inputs
@@ -56198,15 +56251,8 @@ async function run() {
         if (failOnInput) {
             config.review.failOn = failOnInput;
         }
-        if (modelInput) {
-            // Explicit Action override is global: pin every pipeline stage so repo
-            // `models` roles are bypassed, preserving pre-roles behavior.
-            config.model = modelInput;
-            config.models.intent = modelInput;
-            config.models.fastPath = modelInput;
-            config.models.groupReview = modelInput;
-            config.models.synthesis = modelInput;
-        }
+        applyProviderOverride(config, providerInput);
+        applyModelOverride(config, modelInput);
         if (baseUrlInput) {
             config.baseUrl = baseUrlInput;
         }

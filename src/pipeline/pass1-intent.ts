@@ -35,6 +35,7 @@ export async function runIntentPass(
       timeoutMs: 60_000,
     });
     usage.add(response.usage, {
+      model,
       stage: 'intent',
       messages,
       maxOutputTokens: 2_048,

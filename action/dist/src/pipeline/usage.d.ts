@@ -42,6 +42,7 @@ export type TelemetryEvent = LLMCallTelemetryEvent | StageResultTelemetryEvent |
 export type TelemetrySink = (event: TelemetryEvent) => void | PromiseLike<void>;
 export interface LLMCallTelemetry {
     stage: TelemetryStage;
+    model?: string;
     messages: ChatMessage[];
     maxOutputTokens: number;
     durationMs: number;
@@ -54,8 +55,12 @@ export declare class UsageTracker {
     private readonly telemetry?;
     private totals;
     private callCount;
+    private totalCostUsd;
     private readonly pricing;
-    constructor(telemetry?: TelemetrySink | undefined, pricingContext?: PricingContext, pricingResolution?: PricingResolution);
+    private readonly pricingContext;
+    private readonly pricingByModel;
+    constructor(telemetry?: TelemetrySink | undefined, pricingContext?: PricingContext, pricingResolutions?: ReadonlyMap<string, PricingResolution>);
+    private pricingForModel;
     startCall(): void;
     add(usage: LLMTokenUsage, call?: LLMCallTelemetry): void;
     emit(event: TelemetryEvent): void;

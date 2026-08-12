@@ -76,6 +76,7 @@ export async function runReviewPass(
             timeoutMs: config.pipeline.callTimeoutMs,
           });
           usage.add(response.usage, {
+            model,
             stage: 'group-review',
             messages,
             maxOutputTokens,

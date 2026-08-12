@@ -29,6 +29,18 @@ export const DEFAULT_EXCLUDE_PATTERNS = [
   "**/go.work.sum",
   "**/packages.lock.json", // NuGet
 ] as const;
+/** Shared strict shape for explicit stage overrides and custom preset stages. */
+export const modelStageSchema = z
+  .object({
+    intent: z.string().min(1).optional(),
+    fastPath: z.string().min(1).optional(),
+    groupReview: z.string().min(1).optional(),
+    synthesis: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type ModelRole = keyof z.infer<typeof modelStageSchema>;
+
 
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
@@ -43,15 +55,8 @@ export const reviewConfigSchema = z.object({
    * keys are rejected (`.strict()`), so the old `big`/`small` roles fail
    * loudly instead of silently disappearing.
    */
-  models: z
-    .object({
-      intent: z.string().min(1).optional(),
-      fastPath: z.string().min(1).optional(),
-      groupReview: z.string().min(1).optional(),
-      synthesis: z.string().min(1).optional(),
-    })
-    .strict()
-    .default({}),
+  models: modelStageSchema.default({}),
+
   /**
    * Selected model preset (see `src/config/model-presets.ts`). Accepts the
    * built-in names `provider-default`, `kimi`, `openai`, `anthropic`, or any
@@ -68,19 +73,8 @@ export const reviewConfigSchema = z.object({
    * new names are selectable via `modelPreset`. Unknown stage keys are
    * rejected (`.strict()`); unset stages fall back to the top-level `model`.
    */
-  modelPresets: z
-    .record(
-      z.string().min(1),
-      z
-        .object({
-          intent: z.string().min(1).optional(),
-          fastPath: z.string().min(1).optional(),
-          groupReview: z.string().min(1).optional(),
-          synthesis: z.string().min(1).optional(),
-        })
-        .strict(),
-    )
-    .optional(),
+  modelPresets: z.record(z.string().min(1), modelStageSchema).optional(),
+
   baseUrl: z.string().url().optional(),
   /** Custom User-Agent for endpoints that whitelist clients. */
   userAgent: z.string().max(200).optional(),
@@ -219,8 +213,6 @@ export const reviewConfigSchema = z.object({
 
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
 
-/** Pipeline model stages: intent, fastPath, groupReview, synthesis. */
-export type ModelRole = "intent" | "fastPath" | "groupReview" | "synthesis";
 
 /**
  * Resolve the model for a pipeline stage. Precedence: explicit per-stage

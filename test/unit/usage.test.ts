@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { UsageTracker, type TelemetryEvent } from '../../src/pipeline/usage.js';
+import { resolvePricing } from '../../src/utils/pricing.js';
 
 describe('UsageTracker telemetry', () => {
   it('aggregates usage without telemetry', () => {
@@ -12,6 +13,26 @@ describe('UsageTracker telemetry', () => {
 
     expect(tracker.total()).toEqual({ input: 150, output: 25, cached: 10 });
     expect(tracker.calls()).toBe(2);
+  });
+
+  it('prices each call with its resolved stage model', () => {
+    const pricing = new Map([
+      ['gpt-5-mini', resolvePricing({ provider: 'openai', model: 'gpt-5-mini' })],
+      ['gpt-5', resolvePricing({ provider: 'openai', model: 'gpt-5' })],
+    ]);
+    const tracker = new UsageTracker(undefined, { provider: 'openai' }, pricing);
+    const call = (model: string) => ({
+      stage: 'group-review' as const,
+      model,
+      messages: [],
+      maxOutputTokens: 1,
+      durationMs: 0,
+    });
+
+    tracker.add({ input: 1_000_000, output: 0, cached: 0 }, call('gpt-5-mini'));
+    tracker.add({ input: 1_000_000, output: 0, cached: 0 }, call('gpt-5'));
+
+    expect(tracker.cost()).toBeCloseTo(1.5);
   });
 
   it('emits safe call metrics without message content', () => {

@@ -2,7 +2,8 @@ import type { Octokit } from '@octokit/rest';
 import type { Webhooks } from '@octokit/webhooks';
 import { ReviewOrchestrator } from '../review/orchestrator.js';
 import { loadConfig } from '../config/loader.js';
-import { modelForRole, type ReviewConfig } from '../config/schema.js';
+import { modelForRole } from '../config/schema.js';
+import { applyModelOverride, applyProviderOverride } from '../config/overrides.js';
 import { createLLMProvider } from '../providers/factory.js';
 import { logger } from '../utils/logger.js';
 
@@ -17,18 +18,6 @@ interface AppContext {
 
 type FiscalCRCommand = 'review' | 'help' | 'unknown';
 
-/**
- * Explicit App-level model override is global: pin every pipeline stage so repo
- * `models` roles are bypassed, preserving pre-roles behavior.
- */
-function applyModelOverride(config: ReviewConfig, model?: string): void {
-  if (!model) return;
-  config.model = model;
-  config.models.intent = model;
-  config.models.fastPath = model;
-  config.models.groupReview = model;
-  config.models.synthesis = model;
-}
 
 export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
   // Auto-review on PR opened, new commits pushed, reopened, or marked ready
@@ -53,6 +42,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       logger.info({ owner, repo, pullNumber, action: payload.action }, 'PR event received');
 
       const config = await loadConfig(octokit, owner, repo);
+      applyProviderOverride(config, appCtx.provider);
       applyModelOverride(config, appCtx.model);
 
       if (isDraft && !config.review.auto.drafts) {
@@ -104,6 +94,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
 
     if (command === 'review') {
       const config = await loadConfig(octokit, owner, repo);
+      applyProviderOverride(config, appCtx.provider);
       applyModelOverride(config, appCtx.model);
       const llm = createLLMProvider({
         apiKey: appCtx.apiKey,

@@ -4,6 +4,7 @@ import { ReviewOrchestrator } from "../src/review/orchestrator.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
 import { modelForRole } from "../src/config/schema.js";
+import { applyModelOverride, applyProviderOverride } from "../src/config/overrides.js";
 import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
@@ -61,15 +62,8 @@ async function run(): Promise<void> {
     if (failOnInput) {
       config.review.failOn = failOnInput;
     }
-    if (modelInput) {
-      // Explicit Action override is global: pin every pipeline stage so repo
-      // `models` roles are bypassed, preserving pre-roles behavior.
-      config.model = modelInput;
-      config.models.intent = modelInput;
-      config.models.fastPath = modelInput;
-      config.models.groupReview = modelInput;
-      config.models.synthesis = modelInput;
-    }
+    applyProviderOverride(config, providerInput);
+    applyModelOverride(config, modelInput);
     if (baseUrlInput) {
       config.baseUrl = baseUrlInput;
     }

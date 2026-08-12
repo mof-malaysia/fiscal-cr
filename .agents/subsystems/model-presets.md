@@ -64,7 +64,7 @@ provider: anthropic
 modelPreset: provider-default   # resolves to the anthropic preset
 ```
 
-Resolution reads `config.provider` from the repo config — the Action `provider` input / App `MODEL_PROVIDER` env override the provider used for API calls but do not change which preset `provider-default` selects.
+Resolution reads the effective `config.provider`: the Action `provider` input / App `MODEL_PROVIDER` env override update it before model routing, so `provider-default` selects the same provider used for API calls.
 
 ## Custom modelPresets
 
@@ -155,6 +155,6 @@ Per-model knobs consume the **resolved** stage model: `src/pipeline/max-output.t
 - Every stage model resolves through `modelForRole`; no pipeline call site reads `config.model` directly for its stage model (per-model knobs default to it only as a legacy fallback).
 - Precedence order never changes: `models.<stage>` > selected preset stage > top-level `model`; Action `model` / App `MODEL`/`FISCALCR_MODEL` sit above all of it by pinning `models.*`.
 - Presets are YAML-only — no Action input or App env selects one.
-- `provider-default` resolves from the repo-config `provider`, not the Action/App provider override.
+- `provider-default` resolves from the effective provider after Action/App provider overrides, not the stale repository value.
 - Unknown preset names and unknown stage keys (including legacy `big`/`small`) fail validation fast; nothing is silently ignored.
 - `schema.ts` and `defaults.ts` remain structurally compatible; their `models` defaults intentionally differ (`{}` for schema-parsed YAML, populated Kimi stages for missing-config fallback).

@@ -10,7 +10,6 @@ import type { ModelRole } from "./schema.js";
  * has no built-in preset (any model works over the compatible endpoint), so it
  * resolves to `undefined` and callers fall back to the top-level `model`.
  */
-export type ModelPreset = string;
 /** Built-in preset names accepted by the `modelPreset` selector. */
 export declare const BUILTIN_MODEL_PRESET_NAMES: readonly ["provider-default", "kimi", "openai", "anthropic"];
 export type BuiltinModelPreset = (typeof BUILTIN_MODEL_PRESET_NAMES)[number];
@@ -49,5 +48,5 @@ export declare function resolvePresetName(config: {
  * user-only preset contributes just its own stages, the rest falling back to
  * the top-level `model`.
  */
-export declare function resolveStageMapFor(name: string, userPresets?: Record<string, PartialModelStageMap>): ModelStageMap | undefined;
+export declare function resolveStageMapFor(name: string, userPresets?: Record<string, PartialModelStageMap>): PartialModelStageMap | undefined;
 //# sourceMappingURL=model-presets.d.ts.map

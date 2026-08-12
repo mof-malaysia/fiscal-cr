@@ -48,6 +48,7 @@ export async function runFastPath(
       throw err;
     });
   usage.add(response.usage, {
+    model,
     stage: 'fast-path',
     messages,
     maxOutputTokens,

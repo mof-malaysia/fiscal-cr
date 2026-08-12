@@ -6,14 +6,14 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 
 ## Config precedence (highest wins)
 
-1. **Explicit Action inputs** (`action/index.ts`): `model`, `model_params`, `base_url`, `user_agent`, `language`, `fail_on`, `experimental` override the loaded repo config after `loadConfig`. An explicit `model` input is a **global override**: it pins `config.model` and all four `config.models.*` stages, bypassing `modelPreset`/`models` precedence entirely.
-2. **App env vars** (`src/index.ts` → `webhooks.ts`): `applyModelOverride` pins `config.model` and all four `config.models.*` stages from `MODEL`/`FISCALCR_MODEL` (same global override semantics) before provider construction; `appCtx.provider ?? config.provider`, `appCtx.userAgent ?? config.userAgent`; `baseUrl` env always wins (no config fallback in App mode).
+1. **Explicit Action inputs** (`action/index.ts`): `provider`, `model`, `model_params`, `base_url`, `user_agent`, `language`, `fail_on`, `experimental` override the loaded repo config after `loadConfig`. `provider` becomes effective before `provider-default` model routing; `model` is a **global override** that pins `config.model` and all four `config.models.*` stages, bypassing `modelPreset`/`models` precedence entirely.
+2. **App env vars** (`src/index.ts` → `webhooks.ts`): `applyProviderOverride` normalizes `config.provider` from `MODEL_PROVIDER`; `applyModelOverride` pins `config.model` and all four `config.models.*` stages from `MODEL`/`FISCALCR_MODEL` (same global override semantics) before provider construction; `baseUrl` env always wins (no config fallback in App mode).
 3. **Repo config** `.fiscalcr-review.yml` (path overridable via `config_path` input), fetched through the GitHub API.
-4. **Built-in defaults** — `DEFAULT_CONFIG` in `src/config/defaults.ts`, mirrored by zod schema `.default()` values.
+4. **Built-in defaults** — `DEFAULT_CONFIG` in `src/config/defaults.ts`; explicit repo YAML uses zod schema defaults, with the populated missing-config Kimi stage map intentionally distinct from schema `models: {}`.
 
 - `src/config/schema.ts` — `reviewConfigSchema` (zod) is the **canonical** config definition. Shape: top-level `language` (en/zh-TW/zh-CN/ja/ko), `provider` (openai-compatible/kimi/openai/anthropic), `model` (legacy single-model fallback), `models` (per-stage `intent`/`fastPath`/`groupReview`/`synthesis`, `.strict()` so legacy `big`/`small` keys fail fast), `modelPreset` (preset selector), `modelPresets` (custom preset name → partial stage map), `baseUrl`, `userAgent`, `temperature`, `modelParams` (provider-native fields; `reasoning_effort`/`verbosity` typed, others passthrough), `experimental`; `review.{auto,aspects,minSeverity,maxAnnotations,failOn,incremental,comments}`; `files.{include,exclude,maxFileSize}`; `rules[]` (custom repo rules); `prompt.{systemAppend,reviewFocus}`; `pipeline.{enabled,concurrency,groupTokenBudget,relatedContextBudget,maxGroups,fastPathThreshold,minConfidence,maxRetries,callTimeoutMs,maxOutputTokens}`. `modelForRole(config, role)` (same file) resolves a stage model.
 - `DEFAULT_EXCLUDE_PATTERNS` is a shared const used both by the schema default and `DEFAULT_CONFIG` specifically so the two cannot drift.
-- `src/config/defaults.ts` — `DEFAULT_CONFIG`, a fully-populated `ReviewConfig` mirroring schema defaults. **Changing one without the other is a bug.**
+- `src/config/defaults.ts` — `DEFAULT_CONFIG`, a fully-populated `ReviewConfig`; its populated Kimi `models` map intentionally differs from the schema's `{}` default for explicit YAML.
 
 ## Loader (`src/config/loader.ts`)
 

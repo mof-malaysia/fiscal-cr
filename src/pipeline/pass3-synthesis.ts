@@ -162,6 +162,7 @@ export async function synthesize(
         timeoutMs: 90_000,
       });
       usage.add(response.usage, {
+        model,
         stage: 'synthesis',
         messages,
         maxOutputTokens: 4_096,

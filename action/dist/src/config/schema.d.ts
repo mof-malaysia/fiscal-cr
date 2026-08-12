@@ -6,6 +6,24 @@ import { z } from "zod";
  * Shared by the schema default and DEFAULT_CONFIG so the two never drift.
  */
 export declare const DEFAULT_EXCLUDE_PATTERNS: readonly ["**/node_modules/**", "**/dist/**", "**/build/**", "**/*.min.*", "**/*.lock", "**/*.lockb", "**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/bun.lockb", "**/go.sum", "**/go.work.sum", "**/packages.lock.json"];
+/** Shared strict shape for explicit stage overrides and custom preset stages. */
+export declare const modelStageSchema: z.ZodObject<{
+    intent: z.ZodOptional<z.ZodString>;
+    fastPath: z.ZodOptional<z.ZodString>;
+    groupReview: z.ZodOptional<z.ZodString>;
+    synthesis: z.ZodOptional<z.ZodString>;
+}, "strict", z.ZodTypeAny, {
+    intent?: string | undefined;
+    fastPath?: string | undefined;
+    groupReview?: string | undefined;
+    synthesis?: string | undefined;
+}, {
+    intent?: string | undefined;
+    fastPath?: string | undefined;
+    groupReview?: string | undefined;
+    synthesis?: string | undefined;
+}>;
+export type ModelRole = keyof z.infer<typeof modelStageSchema>;
 export declare const reviewConfigSchema: z.ZodEffects<z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
     provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi", "openai", "anthropic"]>>;
@@ -635,8 +653,6 @@ export declare const reviewConfigSchema: z.ZodEffects<z.ZodObject<{
     } | undefined;
 }>;
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
-/** Pipeline model stages: intent, fastPath, groupReview, synthesis. */
-export type ModelRole = "intent" | "fastPath" | "groupReview" | "synthesis";
 /**
  * Resolve the model for a pipeline stage. Precedence: explicit per-stage
  * override from `config.models` > the selected `modelPreset` stage model

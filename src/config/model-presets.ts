@@ -11,7 +11,6 @@ import type { ModelRole } from "./schema.js";
  * has no built-in preset (any model works over the compatible endpoint), so it
  * resolves to `undefined` and callers fall back to the top-level `model`.
  */
-export type ModelPreset = string;
 
 /** Built-in preset names accepted by the `modelPreset` selector. */
 export const BUILTIN_MODEL_PRESET_NAMES = [
@@ -105,7 +104,7 @@ export function resolvePresetName(config: {
 export function resolveStageMapFor(
   name: string,
   userPresets?: Record<string, PartialModelStageMap>,
-): ModelStageMap | undefined {
+): PartialModelStageMap | undefined {
   const builtin = MODEL_PRESETS[name as ConcreteBuiltinModelPreset];
   const user = userPresets?.[name];
   if (builtin === undefined && user === undefined) return undefined;

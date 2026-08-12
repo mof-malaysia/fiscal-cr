@@ -89,8 +89,8 @@ jobs:
   configured in the repo's `.fiscalcr-review.yml`; there is no Action input
   for preset selection. The `model` input remains a global override and wins
   over every pipeline stage, including stages a preset would select. A
-  `provider` input override does not change which preset `provider-default`
-  selects — that follows the `provider` set in `.fiscalcr-review.yml`.
+  `provider` input override also becomes effective for `provider-default`
+  selection, so stage models match the provider used for API calls.
 - `openai-compatible` requires an explicit `base_url`.
 - `anthropic` uses the native Messages API and defaults to
   `https://api.anthropic.com/v1`; its API key is sent in `x-api-key`.
@@ -162,9 +162,9 @@ Model presets (`modelPreset` selector, `modelPresets` custom maps) are
 configured per repo in `.fiscalcr-review.yml`; there is no App-level env var
 for preset selection. `MODEL` (alias `FISCALCR_MODEL`) remains a global
 override that wins over every pipeline stage, including preset-derived
-models. `MODEL_PROVIDER` overrides the provider at request time but does not
-change which preset `provider-default` selects — that follows the `provider`
-set in `.fiscalcr-review.yml`.
+models. `MODEL_PROVIDER` overrides the effective provider and therefore changes
+which preset `provider-default` selects; stage models match the provider used
+for API calls.
 
 ### Comment commands
 
