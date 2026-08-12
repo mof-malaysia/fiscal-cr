@@ -45925,7 +45925,110 @@ function extractFingerprint(commentBody) {
     return commentBody.match(FP_MARKER_RE)?.[1] ?? null;
 }
 
+;// CONCATENATED MODULE: ./src/utils/pricing.ts
+/** Previous FiscalCR estimate, retained for unknown/custom endpoints. */
+const FALLBACK_TOKEN_PRICING = {
+    inputPerMillion: 0.39,
+    outputPerMillion: 1.9,
+    cachedInputPerMillion: 0.1,
+};
+const OPENAI_PRICING = {
+    'gpt-4.1': { inputPerMillion: 2, outputPerMillion: 8, cachedInputPerMillion: 0.5 },
+    'gpt-4.1-mini': { inputPerMillion: 0.4, outputPerMillion: 1.6, cachedInputPerMillion: 0.1 },
+    'gpt-4.1-nano': { inputPerMillion: 0.1, outputPerMillion: 0.4, cachedInputPerMillion: 0.025 },
+    'gpt-4o': { inputPerMillion: 2.5, outputPerMillion: 10, cachedInputPerMillion: 1.25 },
+    'gpt-4o-mini': { inputPerMillion: 0.15, outputPerMillion: 0.6, cachedInputPerMillion: 0.075 },
+    'gpt-5': { inputPerMillion: 1.25, outputPerMillion: 10, cachedInputPerMillion: 0.125 },
+    'gpt-5-mini': { inputPerMillion: 0.25, outputPerMillion: 2, cachedInputPerMillion: 0.025 },
+    'gpt-5-nano': { inputPerMillion: 0.05, outputPerMillion: 0.4, cachedInputPerMillion: 0.005 },
+    o1: { inputPerMillion: 15, outputPerMillion: 60, cachedInputPerMillion: 7.5 },
+    o3: { inputPerMillion: 2, outputPerMillion: 8, cachedInputPerMillion: 0.5 },
+    'o3-mini': { inputPerMillion: 1.1, outputPerMillion: 4.4, cachedInputPerMillion: 0.55 },
+    'o4-mini': { inputPerMillion: 1.1, outputPerMillion: 4.4, cachedInputPerMillion: 0.275 },
+};
+const ANTHROPIC_PRICING = {
+    'claude-opus-4.6': { inputPerMillion: 5, outputPerMillion: 25, cachedInputPerMillion: 0.5 },
+    'claude-opus-4.5': { inputPerMillion: 5, outputPerMillion: 25, cachedInputPerMillion: 0.5 },
+    'claude-sonnet-4.6': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
+    'claude-sonnet-4.5': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
+    'claude-haiku-4.5': { inputPerMillion: 1, outputPerMillion: 5, cachedInputPerMillion: 0.1 },
+    'claude-3.5-sonnet': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
+    'claude-3-5-sonnet': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
+};
+const KIMI_PRICING = {
+    // Kimi Open Platform K2.7. Kimi Code subscription models intentionally do
+    // not appear here because they do not publish a fixed token rate.
+    'kimi-k2.7': { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.19 },
+    'kimi-k2-7': { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.19 },
+};
+/**
+ * OpenRouter prices are maintained separately because routing/markup can make
+ * them differ from the upstream vendor's direct API price.
+ */
+const OPENROUTER_PRICING = {
+    'openai/gpt-4.1': OPENAI_PRICING['gpt-4.1'],
+    'openai/gpt-4.1-mini': OPENAI_PRICING['gpt-4.1-mini'],
+    'openai/gpt-4.1-nano': OPENAI_PRICING['gpt-4.1-nano'],
+    'openai/gpt-4o': OPENAI_PRICING['gpt-4o'],
+    'openai/gpt-4o-mini': OPENAI_PRICING['gpt-4o-mini'],
+    'openai/gpt-5': OPENAI_PRICING['gpt-5'],
+    'openai/gpt-5-mini': OPENAI_PRICING['gpt-5-mini'],
+    'openai/o3': OPENAI_PRICING.o3,
+    'openai/o4-mini': OPENAI_PRICING['o4-mini'],
+    'anthropic/claude-opus-4.5': ANTHROPIC_PRICING['claude-opus-4.5'],
+    'anthropic/claude-sonnet-4.5': ANTHROPIC_PRICING['claude-sonnet-4.5'],
+    'anthropic/claude-haiku-4.5': ANTHROPIC_PRICING['claude-haiku-4.5'],
+};
+function normalizedModel(model) {
+    return model.trim().toLowerCase().replace(/:free$|:thinking$|:online$/, '');
+}
+function lookup(table, model) {
+    const normalized = normalizedModel(model);
+    const exact = table[normalized];
+    if (exact)
+        return { pricing: exact, source: 'exact', matchedModel: normalized };
+    const family = Object.keys(table)
+        .filter((key) => normalized.startsWith(`${key}-`))
+        .sort((a, b) => b.length - a.length)[0];
+    if (!family)
+        return undefined;
+    return { pricing: table[family], source: 'family', matchedModel: family };
+}
+function isOpenRouter(baseUrl) {
+    return Boolean(baseUrl && /(^|[/.])openrouter\.ai(?:\/|$)/i.test(baseUrl));
+}
+/** Resolve a local pricing snapshot for a provider/model pair. */
+function resolvePricing(context = {}) {
+    const provider = context.provider?.trim().toLowerCase();
+    const model = context.model?.trim();
+    const tableAndModel = model && (provider === 'openrouter' || isOpenRouter(context.baseUrl))
+        ? lookup(OPENROUTER_PRICING, model)
+        : model && provider === 'openai'
+            ? lookup(OPENAI_PRICING, model)
+            : model && provider === 'anthropic'
+                ? lookup(ANTHROPIC_PRICING, model)
+                : model && provider === 'kimi'
+                    ? lookup(KIMI_PRICING, model)
+                    : undefined;
+    if (tableAndModel) {
+        return { ...tableAndModel, provider, model };
+    }
+    return {
+        pricing: FALLBACK_TOKEN_PRICING,
+        source: 'fallback',
+        provider,
+        model,
+    };
+}
+function calculateCostWithPricing(usage, pricing) {
+    const uncachedInput = Math.max(0, usage.input - usage.cached);
+    return ((uncachedInput / 1_000_000) * pricing.inputPerMillion +
+        (usage.cached / 1_000_000) * pricing.cachedInputPerMillion +
+        (usage.output / 1_000_000) * pricing.outputPerMillion);
+}
+
 ;// CONCATENATED MODULE: ./src/utils/tokens.ts
+
 /**
  * Rough token estimation. ~4 chars per token for English,
  * ~2 chars per token for CJK. Good enough for context budget planning.
@@ -45937,13 +46040,18 @@ function estimateTokens(text) {
     return Math.ceil(nonCjkLength / 4 + cjkCount / 2);
 }
 /**
- * Calculate API cost in USD based on token usage.
+ * Calculate API cost using the legacy fallback pricing.
+ *
+ * Call `calculateCostForModel` when provider/model context is available.
  */
 function calculateCost(usage) {
-    const inputCost = (usage.input / 1_000_000) * 0.39;
-    const outputCost = (usage.output / 1_000_000) * 1.9;
-    const cachedCost = (usage.cached / 1_000_000) * 0.1;
-    return Math.round((inputCost + outputCost + cachedCost) * 10000) / 10000;
+    return roundCost(calculateCostWithPricing(usage, FALLBACK_TOKEN_PRICING));
+}
+function calculateCostForModel(usage, context) {
+    return roundCost(calculateCostWithPricing(usage, resolvePricing(context).pricing));
+}
+function roundCost(cost) {
+    return Math.round(cost * 10000) / 10000;
 }
 
 ;// CONCATENATED MODULE: ./src/github/comments.ts
@@ -46095,7 +46203,7 @@ async function createPRReview(octokit, params) {
     }
 }
 function buildReviewBody(result) {
-    const cost = calculateCost(result.tokensUsed);
+    const cost = result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {});
     const lines = [];
     lines.push('## 🤖 FiscalCR Code Review\n');
     if (result.intent) {
@@ -46128,7 +46236,7 @@ function buildReviewBody(result) {
     lines.push(`- Input: ${result.tokensUsed.input.toLocaleString()} tokens`);
     lines.push(`- Output: ${result.tokensUsed.output.toLocaleString()} tokens`);
     lines.push(`- Cached: ${result.tokensUsed.cached.toLocaleString()} tokens`);
-    lines.push(`- Estimated cost: $${cost}`);
+    lines.push(`- Estimated cost: $${cost} (${result.costEstimate?.source ?? 'fallback'} pricing)`);
     lines.push('</details>\n');
     lines.push('---');
     lines.push('*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
@@ -48956,7 +49064,7 @@ const summary_builder_SEVERITY_EMOJI = {
  * Build a markdown summary for the Check Run output.
  */
 function buildSummary(result) {
-    const cost = calculateCost(result.tokensUsed);
+    const cost = result.costEstimate?.usd ?? calculateCost(result.tokensUsed);
     const lines = [];
     lines.push(`## Score: ${result.score}/100\n`);
     if (result.intent) {
@@ -49002,6 +49110,9 @@ function buildSummary(result) {
         lines.push(`| LLM calls | ${result.callCount} |`);
     }
     lines.push(`| Estimated cost | $${cost} |`);
+    if (result.costEstimate) {
+        lines.push(`| Pricing source | ${result.costEstimate.source} |`);
+    }
     lines.push('</details>');
     return lines.join('\n');
 }
@@ -54586,6 +54697,7 @@ async function runReviewPipeline(llm, ctx, config, usage, options = {}) {
 
 ;// CONCATENATED MODULE: ./src/pipeline/usage.ts
 
+
 const SAFE_FINISH_REASONS = new Set([
     'stop',
     'length',
@@ -54600,13 +54712,15 @@ function safeFinishReason(value) {
         ? value
         : 'other';
 }
-/** Aggregates token usage and call counts across all pipeline LLM calls. */
+/** Aggregates token usage and provider-specific cost across all pipeline LLM calls. */
 class UsageTracker {
     telemetry;
     totals = { input: 0, output: 0, cached: 0 };
     callCount = 0;
-    constructor(telemetry) {
+    pricing;
+    constructor(telemetry, pricingContext = {}) {
         this.telemetry = telemetry;
+        this.pricing = resolvePricing(pricingContext);
     }
     startCall() {
         this.callCount++;
@@ -54626,6 +54740,8 @@ class UsageTracker {
                 inputTokens: usage.input,
                 outputTokens: usage.output,
                 cachedTokens: usage.cached,
+                estimatedCostUsd: calculateCostWithPricing(usage, this.pricing.pricing),
+                pricingSource: this.pricing.source,
                 maxOutputTokens: call.maxOutputTokens,
                 durationMs: Math.max(0, call.durationMs),
                 ...(finishReason === undefined ? {} : { finishReason }),
@@ -54647,6 +54763,12 @@ class UsageTracker {
     }
     calls() {
         return this.callCount;
+    }
+    cost() {
+        return calculateCostWithPricing(this.totals, this.pricing.pricing);
+    }
+    pricingInfo() {
+        return this.pricing;
     }
 }
 
@@ -54764,11 +54886,20 @@ class ReviewOrchestrator {
             const deltaHint = scope.mode === 'delta' && scope.sinceSha
                 ? `### Incremental Review\nOnly files changed since commit \`${scope.sinceSha.slice(0, 7)}\` are included. Focus on lines changed since that commit; findings on other files are tracked separately.`
                 : undefined;
-            const usage = new UsageTracker(this.options.telemetry);
+            const pricingContext = this.options.pricingContext ?? {
+                provider: this.config.provider,
+                model: this.config.model,
+                baseUrl: this.config.baseUrl,
+            };
+            const usage = new UsageTracker(this.options.telemetry, pricingContext);
             const result = await runReviewPipeline(this.llm, prContext, this.config, usage, {
                 workspaceRoot: this.options.workspaceRoot,
                 deltaHint,
             });
+            result.costEstimate = {
+                usd: usage.cost(),
+                ...resolvePricing(pricingContext),
+            };
             // Step 6: Publish (sticky lifecycle or legacy stacked review)
             if (!sticky) {
                 return await this.publishLegacy({ checkRunId, prContext, result });
@@ -54959,7 +55090,7 @@ class ReviewOrchestrator {
                 at: new Date().toISOString().slice(0, 10),
                 scope: scope.mode === 'delta' ? 'delta' : 'full',
                 newFindings: newAnnotations.length,
-                cost: calculateCost(result.tokensUsed).toString(),
+                cost: result.costEstimate?.usd.toFixed(4) ?? '0',
             }),
         };
         await saveStickyComment(this.octokit, {
@@ -55626,6 +55757,11 @@ async function run() {
         const orchestrator = new ReviewOrchestrator(restOctokit, llm, config, {
             workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd(),
             telemetry,
+            pricingContext: {
+                provider: providerInput || config.provider,
+                model: config.model,
+                baseUrl: config.baseUrl,
+            },
         });
         const result = await orchestrator.reviewPullRequest({
             owner,
@@ -55639,6 +55775,8 @@ async function run() {
             inputTokens: result.tokensUsed.input,
             outputTokens: result.tokensUsed.output,
             cachedTokens: result.tokensUsed.cached,
+            estimatedCostUsd: result.costEstimate?.usd ?? 0,
+            pricingSource: result.costEstimate?.source ?? "fallback",
             annotations: result.annotations.length,
         });
         // Set outputs
@@ -55646,7 +55784,11 @@ async function run() {
         core.setOutput("annotations_count", result.annotations.length.toString());
         core.setOutput("critical_count", result.stats.critical.toString());
         core.setOutput("tokens_used", (result.tokensUsed.input + result.tokensUsed.output).toString());
-        core.setOutput("cost_estimate", calculateCost(result.tokensUsed).toString());
+        core.setOutput("cost_estimate", (result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {
+            provider: config.provider,
+            model: config.model,
+            baseUrl: config.baseUrl,
+        })).toFixed(4));
         // Summary in job output
         core.summary
             .addHeading("FiscalCR Code Review", 2)

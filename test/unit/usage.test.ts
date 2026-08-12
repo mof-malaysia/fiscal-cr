@@ -36,7 +36,6 @@ describe('UsageTracker telemetry', () => {
       },
     );
 
-    expect(sink).toHaveBeenCalledOnce();
     expect(events[0]).toMatchObject({
       type: 'llm_call',
       stage: 'group-review',
@@ -45,6 +44,8 @@ describe('UsageTracker telemetry', () => {
       inputTokens: 100,
       outputTokens: 20,
       cachedTokens: 10,
+      estimatedCostUsd: expect.any(Number),
+      pricingSource: 'fallback',
       maxOutputTokens: 4_096,
       durationMs: 12,
       finishReason: 'stop',

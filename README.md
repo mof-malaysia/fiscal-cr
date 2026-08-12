@@ -300,8 +300,12 @@ the same PR don't race each other's state.
 
 ## Cost model
 
-The cost estimate uses a single set of token pricing constants for a rough
-estimate across providers.
+FiscalCR uses a local provider/model pricing snapshot to estimate API cost.
+Known direct-provider families currently include OpenAI, Anthropic, and Kimi
+Open Platform models. OpenRouter model IDs use OpenRouter-specific entries when
+the configured endpoint is OpenRouter.
+
+Unknown models and custom endpoints use the legacy fallback estimate:
 
 | Token type   | Rate              |
 | ------------ | ----------------- |
@@ -309,7 +313,10 @@ estimate across providers.
 | Output       | $1.90 / 1M tokens |
 | Cached input | $0.10 / 1M tokens |
 
-Provider-specific pricing tables are a reasonable follow-up.
+The estimate is local and never fetched during a review. It is approximate:
+vendor pricing, routing, discounts, long-context tiers, batch/priority modes,
+and subscription quotas can differ. The displayed pricing source identifies
+whether the estimate used an exact model, a model family, or the fallback.
 
 ## Architecture
 

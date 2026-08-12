@@ -3,7 +3,7 @@ import * as github from "@actions/github";
 import { ReviewOrchestrator } from "../src/review/orchestrator.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
-import { calculateCost } from "../src/utils/tokens.js";
+import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
 import { modelParamsFromActionInput } from "./model-params.js";
@@ -112,6 +112,11 @@ async function run(): Promise<void> {
       {
         workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd(),
         telemetry,
+        pricingContext: {
+          provider: providerInput || config.provider,
+          model: config.model,
+          baseUrl: config.baseUrl,
+        },
       },
     );
     const result = await orchestrator.reviewPullRequest({
@@ -126,20 +131,29 @@ async function run(): Promise<void> {
       inputTokens: result.tokensUsed.input,
       outputTokens: result.tokensUsed.output,
       cachedTokens: result.tokensUsed.cached,
+      estimatedCostUsd: result.costEstimate?.usd ?? 0,
+      pricingSource: result.costEstimate?.source ?? "fallback",
       annotations: result.annotations.length,
     });
 
     // Set outputs
     core.setOutput("review_summary", result.summary);
     core.setOutput("annotations_count", result.annotations.length.toString());
-    core.setOutput("critical_count", result.stats.critical.toString());
+    core.setOutput(
+      "critical_count",
+      result.stats.critical.toString(),
+    );
     core.setOutput(
       "tokens_used",
       (result.tokensUsed.input + result.tokensUsed.output).toString(),
     );
     core.setOutput(
       "cost_estimate",
-      calculateCost(result.tokensUsed).toString(),
+      (result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {
+        provider: config.provider,
+        model: config.model,
+        baseUrl: config.baseUrl,
+      })).toFixed(4),
     );
 
     // Summary in job output
