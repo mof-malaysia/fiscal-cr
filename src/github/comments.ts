@@ -49,6 +49,50 @@ export interface IncrementalReviewOutcome {
   demoted: ReviewAnnotation[];
 }
 
+type ReviewComment = {
+  path: string;
+  line: number;
+  side: 'RIGHT';
+  body: string;
+};
+
+type ReviewRequest = {
+  owner: string;
+  repo: string;
+  pull_number: number;
+  commit_id: string;
+  event: 'COMMENT' | 'REQUEST_CHANGES';
+  body: string;
+  comments?: ReviewComment[];
+};
+
+function statusOf(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null || !('status' in error)) return undefined;
+  const status = error.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+async function postReview(
+  octokit: Octokit,
+  request: ReviewRequest,
+  fallbackNote: string,
+): Promise<{ reviewId: number; bodyOnly: boolean }> {
+  try {
+    const { data } = await octokit.pulls.createReview(request);
+    return { reviewId: data.id, bodyOnly: false };
+  } catch (err) {
+    if (statusOf(err) !== 422) throw err;
+
+    logger.warn({ err, pullNumber: request.pull_number }, 'Inline comments rejected — posting body-only review');
+    const { comments: _comments, ...bodyOnlyRequest } = request;
+    const { data } = await octokit.pulls.createReview({
+      ...bodyOnlyRequest,
+      body: `${request.body}\n\n${fallbackNote}`,
+    });
+    return { reviewId: data.id, bodyOnly: true };
+  }
+}
+
 /**
  * Post one small review containing only this run's new findings. Zero
  * placeable findings and a non-blocking event → nothing is posted at all.
@@ -85,32 +129,21 @@ export async function createIncrementalReview(
     body: `${formatAnnotationComment(a)}\n\n${fingerprintMarker(fingerprintAnnotation(a))}`,
   }));
 
-  try {
-    const { data } = await octokit.pulls.createReview({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      commit_id: commitSha,
-      event,
-      body,
-      comments,
-    });
-    logger.info({ pullNumber, event, commentCount: comments.length }, 'Incremental review created');
-    return { reviewId: data.id, posted: placeable, demoted };
-  } catch (err) {
-    // Pre-validation should prevent this; if GitHub still rejects the inline
-    // comments, fall back to a body-only review so the run is not lost.
-    logger.warn({ err, pullNumber }, 'Inline comments rejected — posting body-only review');
-    const { data } = await octokit.pulls.createReview({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      commit_id: commitSha,
-      event,
-      body: `${body}\n\n> _Note: inline comments could not be placed on the diff — see the check-run annotations._`,
-    });
-    return { reviewId: data.id, posted: [], demoted: [...demoted, ...placeable] };
-  }
+  const review = await postReview(octokit, {
+    owner,
+    repo,
+    pull_number: pullNumber,
+    commit_id: commitSha,
+    event,
+    body,
+    comments,
+  }, '> _Note: inline comments could not be placed on the diff — see the check-run annotations._');
+  logger.info({ pullNumber, event, commentCount: review.bodyOnly ? 0 : comments.length }, 'Incremental review created');
+  return {
+    reviewId: review.reviewId,
+    posted: review.bodyOnly ? [] : placeable,
+    demoted: review.bodyOnly ? [...demoted, ...placeable] : demoted,
+  };
 }
 
 /**
@@ -175,33 +208,19 @@ export async function createPRReview(
       body: formatAnnotationComment(a),
     }));
 
-  try {
-    await octokit.pulls.createReview({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      commit_id: commitSha,
-      event,
-      body,
-      comments,
-    });
-
-    logger.info(
-      { pullNumber, event, commentCount: comments.length },
-      'PR review created',
-    );
-  } catch (err) {
-    // If inline comments fail (e.g., line not in diff), fall back to body-only review
-    logger.warn({ err }, 'Failed to create review with inline comments, falling back');
-    await octokit.pulls.createReview({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      commit_id: commitSha,
-      event,
-      body: body + '\n\n> _Note: Some inline comments could not be placed on the diff._',
-    });
-  }
+  const review = await postReview(octokit, {
+    owner,
+    repo,
+    pull_number: pullNumber,
+    commit_id: commitSha,
+    event,
+    body,
+    comments,
+  }, '> _Note: Some inline comments could not be placed on the diff._');
+  logger.info(
+    { pullNumber, event, commentCount: review.bodyOnly ? 0 : comments.length },
+    'PR review created',
+  );
 }
 
 function buildReviewBody(result: ReviewResult): string {

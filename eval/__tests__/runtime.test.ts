@@ -293,29 +293,30 @@ describe('resolveEvalEnv', () => {
     expect(cfg.baseUrl).toBeUndefined();
   });
 
-  it('resolves API_KEY with FISCALCR_API_KEY / KIMI_API_KEY fallbacks; empty treated as unset', () => {
+  it('resolves API_KEY with provider-specific fallbacks; empty treated as unset', () => {
     expect(resolveEvalEnv({ API_KEY: 'a' }).apiKey).toBe('a');
     expect(resolveEvalEnv({ API_KEY: 'a', FISCALCR_API_KEY: 'f' }).apiKey).toBe('a');
-    expect(resolveEvalEnv({ FISCALCR_API_KEY: 'f', KIMI_API_KEY: 'k' }).apiKey).toBe('f');
+    expect(resolveEvalEnv({ FISCALCR_API_KEY: 'f', ANTHROPIC_API_KEY: 'a' }).apiKey).toBe('f');
+    expect(resolveEvalEnv({ ANTHROPIC_API_KEY: 'a' }).apiKey).toBe('a');
     expect(resolveEvalEnv({ KIMI_API_KEY: 'k' }).apiKey).toBe('k');
     const cfg = resolveEvalEnv({ API_KEY: '', MODEL: '', BASE_URL: '' });
     expect(cfg.apiKey).toBeUndefined();
     expect(cfg.model).toBe(DEFAULT_CONFIG.model);
     expect(cfg.baseUrl).toBeUndefined();
   });
-
   it('resolves MODEL/MODEL_PROVIDER/BASE_URL with fallbacks and validation', () => {
     expect(resolveEvalEnv({ MODEL: 'm1', KIMI_MODEL: 'm2' }).model).toBe('m1');
     expect(resolveEvalEnv({ KIMI_MODEL: 'm2' }).model).toBe('m2');
     expect(resolveEvalEnv({ MODEL: '', KIMI_MODEL: 'm2' }).model).toBe('m2');
     expect(resolveEvalEnv({ KIMI_MODEL: '' }).model).toBe(DEFAULT_CONFIG.model);
-
     expect(resolveEvalEnv({ MODEL_PROVIDER: 'openai-compatible' }).provider).toBe(
       'openai-compatible',
     );
-    expect(() => resolveEvalEnv({ MODEL_PROVIDER: 'anthropic' })).toThrow(
-      /Invalid MODEL_PROVIDER "anthropic"/,
-    );
+    expect(resolveEvalEnv({ MODEL_PROVIDER: 'anthropic', ANTHROPIC_MODEL: 'claude-sonnet-4.5' })).toMatchObject({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4.5',
+    });
+    expect(resolveEvalEnv({ ANTHROPIC_MODEL: 'claude-sonnet-4.5' }).model).toBe('claude-sonnet-4.5');
 
     expect(
       resolveEvalEnv({ BASE_URL: 'https://a.example/v1', FISCALCR_BASE_URL: 'https://b.example/v1' }).baseUrl,

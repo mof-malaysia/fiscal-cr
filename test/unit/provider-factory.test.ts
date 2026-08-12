@@ -47,6 +47,23 @@ describe('provider factory', () => {
     expect(provider).toBeTruthy();
     expect(typeof provider.chatCompletion).toBe('function');
   });
+  it('creates the Anthropic provider with its native Messages endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
+        status: 200,
+      }),
+    );
+    const provider = createLLMProvider({
+      apiKey: 'test-key',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4.5',
+    });
+
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/v1/messages');
+  });
+
 
   it('threads modelParams through to the provider for any provider', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
@@ -56,11 +73,16 @@ describe('provider factory', () => {
         }),
     );
 
-    for (const provider of ['openai', 'kimi'] as const) {
+    for (const provider of ['openai', 'kimi', 'anthropic'] as const) {
       const llm = createLLMProvider({
         apiKey: 'test-key',
         provider,
-        model: provider === 'openai' ? 'gpt-5' : 'kimi-for-coding',
+        model:
+          provider === 'openai'
+            ? 'gpt-5'
+            : provider === 'kimi'
+              ? 'kimi-for-coding'
+              : 'claude-sonnet-4.5',
         modelParams: { reasoning_effort: 'high' },
       });
       await llm.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });

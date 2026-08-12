@@ -36,9 +36,9 @@ export interface EvalEnvConfig {
 /**
  * Resolve harness settings from the environment.
  *
- * - API_KEY, falling back to FISCALCR_API_KEY, then KIMI_API_KEY
+ * - API_KEY, falling back to FISCALCR_API_KEY, ANTHROPIC_API_KEY, then KIMI_API_KEY
  * - MODEL_PROVIDER, falling back to DEFAULT_CONFIG.provider
- * - MODEL, falling back to KIMI_MODEL, then DEFAULT_CONFIG.model
+ * - MODEL, falling back to ANTHROPIC_MODEL, KIMI_MODEL, then DEFAULT_CONFIG.model
  * - BASE_URL, falling back to FISCALCR_BASE_URL (optional)
  * - LLM_USER_AGENT (optional)
  *

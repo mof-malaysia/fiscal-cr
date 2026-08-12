@@ -6,6 +6,12 @@ const STATE_MARKER_PREFIX = '<!-- fiscalcr:state:v1 ';
 const STATE_MARKER_SUFFIX = ' -->';
 const STATE_MARKER_RE = /<!-- fiscalcr:state:v1 (\{.*?\}) -->/s;
 
+function statusOf(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null || !('status' in error)) return undefined;
+  const status = error.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
 const MAX_FINGERPRINTS = 300;
 const MAX_RUN_HISTORY = 20;
 
@@ -145,7 +151,8 @@ export async function saveStickyComment(
       await octokit.issues.updateComment({ owner, repo, comment_id: commentId, body });
       return commentId;
     } catch (err) {
-      logger.warn({ err, commentId }, 'Sticky comment update failed (deleted?) — creating a new one');
+      if (statusOf(err) !== 404) throw err;
+      logger.warn({ err, commentId }, 'Sticky comment was deleted — creating a replacement');
     }
   }
 

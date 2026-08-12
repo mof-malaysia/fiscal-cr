@@ -176,7 +176,7 @@ describe('loadReviewState / saveStickyComment', () => {
     const octokit = {
       issues: {
         updateComment: vi.fn(async () => {
-          throw new Error('404');
+          throw Object.assign(new Error('404'), { status: 404 });
         }),
         createComment: vi.fn(async () => ({ data: { id: 99 } })),
         listComments: vi.fn(async () => ({ data: [] })),
@@ -186,5 +186,21 @@ describe('loadReviewState / saveStickyComment', () => {
       owner: 'o', repo: 'r', pullNumber: 1, commentId: 3, body: 'body',
     });
     expect(id).toBe(99);
+  });
+
+  it('propagates non-404 update failures instead of creating duplicates', async () => {
+    const octokit = {
+      issues: {
+        updateComment: vi.fn(async () => {
+          throw Object.assign(new Error('server unavailable'), { status: 503 });
+        }),
+        createComment: vi.fn(),
+        listComments: vi.fn(),
+      },
+    };
+    await expect(saveStickyComment(octokit as never, {
+      owner: 'o', repo: 'r', pullNumber: 1, commentId: 3, body: 'body',
+    })).rejects.toThrow('server unavailable');
+    expect(octokit.issues.createComment).not.toHaveBeenCalled();
   });
 });

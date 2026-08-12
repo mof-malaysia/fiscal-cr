@@ -85,9 +85,9 @@ export interface EvalEnvConfig {
 /**
  * Resolve harness settings from the environment.
  *
- * - API_KEY, falling back to FISCALCR_API_KEY, then KIMI_API_KEY
+ * - API_KEY, falling back to FISCALCR_API_KEY, ANTHROPIC_API_KEY, then KIMI_API_KEY
  * - MODEL_PROVIDER, falling back to DEFAULT_CONFIG.provider
- * - MODEL, falling back to KIMI_MODEL, then DEFAULT_CONFIG.model
+ * - MODEL, falling back to ANTHROPIC_MODEL, KIMI_MODEL, then DEFAULT_CONFIG.model
  * - BASE_URL, falling back to FISCALCR_BASE_URL (optional)
  * - LLM_USER_AGENT (optional)
  *
@@ -103,9 +103,9 @@ export function resolveEvalEnv(env: NodeJS.ProcessEnv): EvalEnvConfig {
     );
   }
   return {
-    apiKey: env.API_KEY || env.FISCALCR_API_KEY || env.KIMI_API_KEY,
+    apiKey: env.API_KEY || env.FISCALCR_API_KEY || env.ANTHROPIC_API_KEY || env.KIMI_API_KEY,
     provider,
-    model: env.MODEL || env.KIMI_MODEL || DEFAULT_CONFIG.model,
+    model: env.MODEL || env.ANTHROPIC_MODEL || env.KIMI_MODEL || DEFAULT_CONFIG.model,
     baseUrl: env.BASE_URL || env.FISCALCR_BASE_URL || undefined,
     userAgent: env.LLM_USER_AGENT || undefined,
   };
@@ -116,7 +116,7 @@ export function requireApiKey(cfg: EvalEnvConfig): string {
   if (!cfg.apiKey) {
     throw new Error(
       'Live LLM eval requires an API key. Export API_KEY (or FISCALCR_API_KEY / ' +
-        'KIMI_API_KEY) in your shell — never paste it into chat or commit it. ' +
+        'ANTHROPIC_API_KEY / KIMI_API_KEY) in your shell — never paste it into chat or commit it. ' +
         'Use `make eval-llm-dry` for a keyless, network-free run.',
     );
   }

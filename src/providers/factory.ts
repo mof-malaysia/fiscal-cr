@@ -1,4 +1,5 @@
 import type { ReviewConfig } from "../config/schema.js";
+import { AnthropicProvider } from "./anthropic.js";
 import { OpenAICompatibleProvider } from "./openai-compatible.js";
 import {
   ResilientProvider,
@@ -7,14 +8,14 @@ import {
 import type { LLMProvider } from "./interface.js";
 import { ConfigError } from "../utils/errors.js";
 
-export const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi", "openai"] as const;
+export const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi", "openai", "anthropic"] as const;
 const KIMI_API_BASE_URL = "https://api.kimi.com/coding/v1";
 const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
+const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com/v1";
 
 /**
- * Per-provider construction defaults for the shared OpenAI-compatible adapter.
- * A missing `baseUrl` means the operator must supply one explicitly
- * (openai-compatible); the others default to their vendor endpoint.
+ * Per-provider construction defaults. OpenAI-compatible, OpenAI, and Kimi use
+ * the shared Chat Completions adapter; Anthropic uses its native Messages API.
  */
 const PROVIDER_DEFAULTS: Record<
   ReviewConfig["provider"],
@@ -26,6 +27,7 @@ const PROVIDER_DEFAULTS: Record<
     completionTokenParam: "max_completion_tokens",
   },
   kimi: { baseUrl: KIMI_API_BASE_URL },
+  anthropic: { baseUrl: ANTHROPIC_API_BASE_URL },
 };
 
 function parseProvider(provider: string): ReviewConfig["provider"] {
@@ -45,20 +47,30 @@ export function createLLMProvider(config: {
   provider: string;
   /** Custom User-Agent for endpoints that whitelist clients. */
   userAgent?: string;
-  /** Extra OpenAI request fields merged into every call (all providers). */
+  /** Provider-native request fields merged into every call. */
   modelParams?: Record<string, unknown>;
   retry?: ResilientProviderOptions;
 }): LLMProvider {
   const provider = parseProvider(config.provider);
   const defaults = PROVIDER_DEFAULTS[provider];
 
-  // All providers share the OpenAI-compatible adapter, differing only in their
-  // base-URL default and token-cap field. Adding a non-compatible provider
-  // (e.g., Anthropic) is straightforward — swap the adapter in a new branch.
   const baseUrl = config.baseUrl ?? defaults.baseUrl;
   if (!baseUrl) {
     throw new ConfigError(
       `Missing baseUrl for provider "${provider}". Configure an operator-controlled BASE_URL.`,
+    );
+  }
+
+  if (provider === "anthropic") {
+    return new ResilientProvider(
+      new AnthropicProvider({
+        apiKey: config.apiKey,
+        model: config.model,
+        baseUrl,
+        userAgent: config.userAgent,
+        modelParams: config.modelParams,
+      }),
+      config.retry,
     );
   }
 

@@ -6,7 +6,7 @@ AI-powered, model-agnostic code review for GitHub pull requests.
 
 ## Features
 
-- Model-agnostic provider support with OpenAI-compatible APIs
+- Model-agnostic provider support with native Anthropic, OpenAI, Kimi, and OpenAI-compatible APIs
 - Full-PR review with inline GitHub annotations and summary comments
 - Repo-level configuration via `.fiscalcr-review.yml`
 - GitHub Action and self-hosted GitHub App modes
@@ -20,7 +20,7 @@ In your repository, add the secret for your LLM provider:
 
 | Secret        | Use for                                 |
 | ------------- | --------------------------------------- |
-| `LLM_API_KEY` | Your OpenAI-compatible provider API key |
+| `LLM_API_KEY` | Your Anthropic, OpenAI, Kimi, or compatible provider API key |
 
 ### 2. Create the workflow
 
@@ -61,7 +61,7 @@ jobs:
 | -------------- | -------- | ------------------------------- | ----------------------------------------------------------------- |
 | `api_key`      | Yes      | —                               | LLM API key                                                       |
 | `github_token` | No       | `${{ github.token }}`           | GitHub token for API access                                       |
-| `provider`     | No       | Repo config or built-in default | `openai-compatible`                                               |
+| `provider`     | No       | Repo config or built-in default | `openai-compatible`, `kimi`, `openai`, or `anthropic`          |
 | `model`        | No       | Repo config or built-in default | Model name override                                               |
 | `base_url`     | No       | Repo config                     | Provider base URL override                                        |
 | `user_agent`   | No       | `fiscalcr/1.0`                  | Custom User-Agent for endpoints that whitelist clients (see note) |
@@ -86,6 +86,8 @@ jobs:
 - Repo config is loaded from `.fiscalcr-review.yml` by default.
 - Action inputs override repo config only when you explicitly provide them.
 - `openai-compatible` requires an explicit `base_url`.
+- `anthropic` uses the native Messages API and defaults to
+  `https://api.anthropic.com/v1`; its API key is sent in `x-api-key`.
 
 ### Token telemetry
 
@@ -140,7 +142,7 @@ pnpm dev
 | ----------------------- | -------- | ------------------------------------------- |
 | `API_KEY`               | Yes      | Provider API key                            |
 | `FISCALCR_API_KEY`      | Optional | Alternate API key env name                  |
-| `MODEL_PROVIDER`        | Optional | Provider name (`openai-compatible`)         |
+| `MODEL_PROVIDER`        | Optional | Provider name (`openai-compatible`, `kimi`, `openai`, or `anthropic`) |
 | `MODEL`                 | Optional | Model name                                  |
 | `BASE_URL`              | Optional | Operator-controlled base URL                |
 | `LLM_USER_AGENT`        | Optional | Custom User-Agent for whitelisted endpoints |
@@ -243,6 +245,15 @@ pipeline:
   callTimeoutMs: 120000
   maxOutputTokens: 8192
 ```
+
+For native Anthropic Messages API support:
+
+```yaml
+provider: anthropic
+model: claude-sonnet-4.5
+# baseUrl: https://api.anthropic.com/v1  # optional; this is the default
+```
+
 
 If the configured file is not found, FiscalCR falls back to built-in defaults. Invalid configs fail fast instead of being silently ignored.
 

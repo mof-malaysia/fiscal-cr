@@ -1,6 +1,6 @@
 import { type ResilientProviderOptions } from "./resilient.js";
 import type { LLMProvider } from "./interface.js";
-export declare const SUPPORTED_PROVIDERS: readonly ["openai-compatible", "kimi", "openai"];
+export declare const SUPPORTED_PROVIDERS: readonly ["openai-compatible", "kimi", "openai", "anthropic"];
 export declare function createLLMProvider(config: {
     apiKey: string;
     model: string;
@@ -8,7 +8,7 @@ export declare function createLLMProvider(config: {
     provider: string;
     /** Custom User-Agent for endpoints that whitelist clients. */
     userAgent?: string;
-    /** Extra OpenAI request fields merged into every call (all providers). */
+    /** Provider-native request fields merged into every call. */
     modelParams?: Record<string, unknown>;
     retry?: ResilientProviderOptions;
 }): LLMProvider;
