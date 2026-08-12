@@ -1,6 +1,6 @@
 import type { Octokit } from '@octokit/rest';
 import type { ReviewConfig } from '../config/schema.js';
-import type { PullRequestContext, ReviewResult, Severity } from '../types/review.js';
+import type { PullRequestContext, ReviewAnnotation, ReviewResult, Severity } from '../types/review.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { extractPullRequestContext } from '../github/pulls.js';
 import { createCheckRun, completeCheckRun } from '../github/checks.js';
@@ -59,6 +59,61 @@ function conclusionFor(
   if (failOn === 'warning')
     return counts.critical > 0 || counts.warning > 0 ? 'failure' : 'success';
   return 'success';
+}
+
+interface StickyPublicationPlan {
+  fingerprints: Map<ReviewAnnotation, string>;
+  newAnnotations: ReviewAnnotation[];
+  inlineNew: ReviewAnnotation[];
+  capOverflow: ReviewAnnotation[];
+  openCounts: Record<Severity, number>;
+  blocking: boolean;
+}
+
+function planStickyPublication(input: {
+  result: ReviewResult;
+  config: ReviewConfig;
+  scope: ScopeDecision;
+  state: ReviewState | null;
+  resolvedCounts: Record<Severity, number>;
+}): StickyPublicationPlan {
+  const { result, config, scope, state, resolvedCounts } = input;
+  const commentsCfg = config.review.comments;
+  const prevCounts = state?.openCounts ?? { ...EMPTY_COUNTS };
+  const fingerprints = new Map(result.annotations.map((a) => [a, fingerprintAnnotation(a)]));
+  const currentFingerprints = new Set(fingerprints.values());
+  const alreadyPosted = new Set(state?.postedFingerprints ?? []);
+  const newAnnotations =
+    commentsCfg.dedupe && state
+      ? result.annotations.filter((a) => !alreadyPosted.has(fingerprints.get(a)!))
+      : result.annotations;
+  const openTotal = Object.values(prevCounts).reduce((a, b) => a + b, 0);
+  const inlineBudget = Math.max(0, commentsCfg.maxOpenComments - openTotal);
+  const inlineNew = newAnnotations.slice(0, inlineBudget);
+  const capOverflow = newAnnotations.slice(inlineBudget);
+
+  let openCounts: Record<Severity, number>;
+  if (scope.mode === 'full') {
+    openCounts = countBySeverity(result.annotations);
+  } else {
+    openCounts = { ...prevCounts };
+    const newCounts = countBySeverity(newAnnotations);
+    for (const severity of Object.keys(openCounts) as Severity[]) {
+      openCounts[severity] = Math.max(
+        0,
+        openCounts[severity] - resolvedCounts[severity] + newCounts[severity],
+      );
+    }
+  }
+
+  return {
+    fingerprints,
+    newAnnotations,
+    inlineNew,
+    capOverflow,
+    openCounts,
+    blocking: conclusionFor(openCounts, config.review.failOn) === 'failure',
+  };
 }
 
 export class ReviewOrchestrator {
@@ -303,29 +358,6 @@ export class ReviewOrchestrator {
     const { checkRunId, prContext, result, scope, state } = input;
     const { owner, repo, pullNumber, headSha } = prContext;
     const commentsCfg = this.config.review.comments;
-    const prevCounts = state?.openCounts ?? { ...EMPTY_COUNTS };
-
-    // Dedupe against everything ever posted (including human-deleted comments —
-    // deleting a bot comment must not invite a re-nag).
-    const fingerprints = new Map(result.annotations.map((a) => [a, fingerprintAnnotation(a)]));
-    const currentFingerprints = new Set(fingerprints.values());
-    const alreadyPosted = new Set(state?.postedFingerprints ?? []);
-    const newAnnotations =
-      commentsCfg.dedupe && state
-        ? result.annotations.filter((a) => !alreadyPosted.has(fingerprints.get(a)!))
-        : result.annotations;
-
-    // Cumulative inline cap: overflow lives in check-run annotations + sticky.
-    const openTotal = Object.values(prevCounts).reduce((a, b) => a + b, 0);
-    const inlineBudget = Math.max(0, commentsCfg.maxOpenComments - openTotal);
-    const inlineNew = newAnnotations.slice(0, inlineBudget);
-    const capOverflow = newAnnotations.slice(inlineBudget);
-    if (capOverflow.length > 0) {
-      logger.info(
-        { overflow: capOverflow.length, cap: commentsCfg.maxOpenComments },
-        'maxOpenComments reached — overflow findings demoted to check-run annotations',
-      );
-    }
 
     // Resolve threads whose file changed but whose finding did not recur.
     let resolvedCounts: Record<Severity, number> = { ...EMPTY_COUNTS };
@@ -335,28 +367,30 @@ export class ReviewOrchestrator {
         repo,
         pullNumber,
         changedPaths: new Set(prContext.changedFiles.map((f) => f.filename)),
-        currentFingerprints,
+        currentFingerprints: new Set(
+          result.annotations.map((annotation) => fingerprintAnnotation(annotation)),
+        ),
         headSha,
       });
-      for (const t of resolved) {
-        if (t.severity) resolvedCounts[t.severity]++;
+      for (const thread of resolved) {
+        if (thread.severity) resolvedCounts[thread.severity]++;
       }
     }
 
-    // Cumulative open counts: a full review re-derives them; a delta adjusts.
-    let openCounts: Record<Severity, number>;
-    if (scope.mode === 'full') {
-      openCounts = countBySeverity(result.annotations);
-    } else {
-      openCounts = { ...prevCounts };
-      const newCounts = countBySeverity(newAnnotations);
-      for (const sev of Object.keys(openCounts) as Severity[]) {
-        openCounts[sev] = Math.max(0, openCounts[sev] - resolvedCounts[sev] + newCounts[sev]);
-      }
+    const plan = planStickyPublication({
+      result,
+      config: this.config,
+      scope,
+      state,
+      resolvedCounts,
+    });
+    if (plan.capOverflow.length > 0) {
+      logger.info(
+        { overflow: plan.capOverflow.length, cap: commentsCfg.maxOpenComments },
+        'maxOpenComments reached — overflow findings demoted to check-run annotations',
+      );
     }
-
-    const conclusion = conclusionFor(openCounts, this.config.review.failOn);
-    const blocking = conclusion === 'failure';
+    const conclusion = plan.blocking ? 'failure' : 'success';
 
     // Check run reflects cumulative PR health, not just this run's delta.
     await completeCheckRun(this.octokit, {
@@ -364,12 +398,12 @@ export class ReviewOrchestrator {
       repo,
       checkRunId,
       conclusion,
-      summary: buildSummary({ ...result, stats: openCounts }),
+      summary: buildSummary({ ...result, stats: plan.openCounts }),
       annotations: result.annotations,
       externalId: JSON.stringify({
         scope: scope.mode,
         calls: result.callCount ?? 0,
-        newFindings: newAnnotations.length,
+        newFindings: plan.newAnnotations.length,
       }),
     });
 
@@ -377,7 +411,7 @@ export class ReviewOrchestrator {
     // the old one; re-post below when still failing.
     let blockingReviewId = state?.blockingReviewId ?? null;
     if (blockingReviewId !== null) {
-      const message = blocking
+      const message = plan.blocking
         ? `Superseded by an updated review as of ${headSha.slice(0, 7)}.`
         : `✅ Issues addressed as of ${headSha.slice(0, 7)}.`;
       await dismissBlockingReview(this.octokit, {
@@ -395,15 +429,21 @@ export class ReviewOrchestrator {
       repo,
       pullNumber,
       commitSha: headSha,
-      annotations: inlineNew,
+      annotations: plan.inlineNew,
       changedFiles: prContext.changedFiles,
-      event: blocking ? 'REQUEST_CHANGES' : 'COMMENT',
-      body: this.buildIncrementalBody(result, scope, newAnnotations.length, openCounts, blocking),
+      event: plan.blocking ? 'REQUEST_CHANGES' : 'COMMENT',
+      body: this.buildIncrementalBody(
+        result,
+        scope,
+        plan.newAnnotations.length,
+        plan.openCounts,
+        plan.blocking,
+      ),
     });
-    if (blocking) blockingReviewId = outcome.reviewId;
+    if (plan.blocking) blockingReviewId = outcome.reviewId;
 
     // State is saved last, only after posting succeeded.
-    const demoted = [...outcome.demoted, ...capOverflow];
+    const demoted = [...outcome.demoted, ...plan.capOverflow];
     const newState: ReviewState = {
       v: 1,
       lastReviewedSha: headSha,
@@ -411,14 +451,14 @@ export class ReviewOrchestrator {
       blockingReviewId,
       postedFingerprints: appendFingerprints(
         state?.postedFingerprints ?? [],
-        newAnnotations.map((a) => fingerprints.get(a)!),
+        plan.newAnnotations.map((a) => plan.fingerprints.get(a)!),
       ),
-      openCounts,
+      openCounts: plan.openCounts,
       runs: appendRun(state?.runs ?? [], {
         sha: headSha.slice(0, 7),
         at: new Date().toISOString().slice(0, 10),
         scope: scope.mode === 'delta' ? 'delta' : 'full',
-        newFindings: newAnnotations.length,
+        newFindings: plan.newAnnotations.length,
         cost: result.costEstimate?.usd.toFixed(4) ?? '0',
       }),
     };
@@ -444,9 +484,9 @@ export class ReviewOrchestrator {
         pullNumber,
         scope: scope.mode,
         score: result.score,
-        newFindings: newAnnotations.length,
+        newFindings: plan.newAnnotations.length,
         postedInline: outcome.posted.length,
-        openCounts,
+        openCounts: plan.openCounts,
         llmCalls: result.callCount,
         conclusion,
       },
@@ -454,7 +494,7 @@ export class ReviewOrchestrator {
     );
 
     // Cumulative stats so failOn logic downstream (Action outputs) matches the check run.
-    return { ...result, stats: openCounts };
+    return { ...result, stats: plan.openCounts };
   }
 
   private buildIncrementalBody(

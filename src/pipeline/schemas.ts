@@ -47,6 +47,15 @@ const findingSchema = z
     };
   });
 
+function parseFindings(rawFindings: unknown[]): ReviewAnnotation[] {
+  const findings: ReviewAnnotation[] = [];
+  for (const item of rawFindings) {
+    const finding = findingSchema.safeParse(item);
+    if (finding.success) findings.push(finding.data);
+  }
+  return findings;
+}
+
 const walkthroughSchema = z
   .array(z.object({ path: z.string(), summary: z.string() }))
   .catch([]);
@@ -112,15 +121,10 @@ export function parseGroupResponse(raw: string): GroupReviewResult | null {
   const rawFindings = parsed.data.findings.length > 0
     ? parsed.data.findings
     : parsed.data.annotations ?? [];
-  const findings: ReviewAnnotation[] = [];
-  for (const item of rawFindings) {
-    const finding = findingSchema.safeParse(item);
-    if (finding.success) findings.push(finding.data);
-  }
   return {
     groupSummary:
       parsed.data.groupSummary ?? parsed.data.group_summary ?? parsed.data.summary ?? '',
-    findings,
+    findings: parseFindings(rawFindings),
   };
 }
 
@@ -195,11 +199,7 @@ export function parseFastPathResponse(raw: string): FastPathResult | null {
   const rawFindings = parsed.data.findings.length > 0
     ? parsed.data.findings
     : parsed.data.annotations ?? [];
-  const findings: ReviewAnnotation[] = [];
-  for (const item of rawFindings) {
-    const finding = findingSchema.safeParse(item);
-    if (finding.success) findings.push(finding.data);
-  }
+  const findings = parseFindings(rawFindings);
   return {
     intent: parsed.data.intent,
     summary: parsed.data.summary,

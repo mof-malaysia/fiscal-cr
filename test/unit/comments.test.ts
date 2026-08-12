@@ -121,6 +121,19 @@ describe('createIncrementalReview', () => {
     expect(outcome.posted).toEqual([]);
     expect(outcome.demoted).toHaveLength(1);
   });
+
+  it('does not retry body-only for non-validation failures', async () => {
+    const createReview = vi.fn().mockRejectedValue(Object.assign(new Error('timeout'), { status: 503 }));
+    const octokit = { pulls: { createReview } };
+    await expect(createIncrementalReview(octokit as never, {
+      ...params,
+      annotations: [annotation()],
+      changedFiles: [file('src/a.ts')],
+      event: 'COMMENT',
+      body: 'body',
+    })).rejects.toThrow('timeout');
+    expect(createReview).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('dismissBlockingReview', () => {

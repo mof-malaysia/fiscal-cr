@@ -50425,6 +50425,29 @@ function partitionPlaceable(annotations, changedFiles) {
     }
     return { placeable, demoted };
 }
+function statusOf(error) {
+    if (typeof error !== 'object' || error === null || !('status' in error))
+        return undefined;
+    const status = error.status;
+    return typeof status === 'number' ? status : undefined;
+}
+async function postReview(octokit, request, fallbackNote) {
+    try {
+        const { data } = await octokit.pulls.createReview(request);
+        return { reviewId: data.id, bodyOnly: false };
+    }
+    catch (err) {
+        if (statusOf(err) !== 422)
+            throw err;
+        logger.warn({ err, pullNumber: request.pull_number }, 'Inline comments rejected — posting body-only review');
+        const { comments: _comments, ...bodyOnlyRequest } = request;
+        const { data } = await octokit.pulls.createReview({
+            ...bodyOnlyRequest,
+            body: `${request.body}\n\n${fallbackNote}`,
+        });
+        return { reviewId: data.id, bodyOnly: true };
+    }
+}
 /**
  * Post one small review containing only this run's new findings. Zero
  * placeable findings and a non-blocking event → nothing is posted at all.
@@ -50445,33 +50468,21 @@ async function createIncrementalReview(octokit, params) {
         side: 'RIGHT',
         body: `${formatAnnotationComment(a)}\n\n${fingerprintMarker(fingerprintAnnotation(a))}`,
     }));
-    try {
-        const { data } = await octokit.pulls.createReview({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            commit_id: commitSha,
-            event,
-            body,
-            comments,
-        });
-        logger.info({ pullNumber, event, commentCount: comments.length }, 'Incremental review created');
-        return { reviewId: data.id, posted: placeable, demoted };
-    }
-    catch (err) {
-        // Pre-validation should prevent this; if GitHub still rejects the inline
-        // comments, fall back to a body-only review so the run is not lost.
-        logger.warn({ err, pullNumber }, 'Inline comments rejected — posting body-only review');
-        const { data } = await octokit.pulls.createReview({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            commit_id: commitSha,
-            event,
-            body: `${body}\n\n> _Note: inline comments could not be placed on the diff — see the check-run annotations._`,
-        });
-        return { reviewId: data.id, posted: [], demoted: [...demoted, ...placeable] };
-    }
+    const review = await postReview(octokit, {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        commit_id: commitSha,
+        event,
+        body,
+        comments,
+    }, '> _Note: inline comments could not be placed on the diff — see the check-run annotations._');
+    logger.info({ pullNumber, event, commentCount: review.bodyOnly ? 0 : comments.length }, 'Incremental review created');
+    return {
+        reviewId: review.reviewId,
+        posted: review.bodyOnly ? [] : placeable,
+        demoted: review.bodyOnly ? [...demoted, ...placeable] : demoted,
+    };
 }
 /**
  * Dismiss the live blocking review (REQUEST_CHANGES). Failures degrade to a
@@ -50516,30 +50527,16 @@ async function createPRReview(octokit, params) {
         side: 'RIGHT',
         body: formatAnnotationComment(a),
     }));
-    try {
-        await octokit.pulls.createReview({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            commit_id: commitSha,
-            event,
-            body,
-            comments,
-        });
-        logger.info({ pullNumber, event, commentCount: comments.length }, 'PR review created');
-    }
-    catch (err) {
-        // If inline comments fail (e.g., line not in diff), fall back to body-only review
-        logger.warn({ err }, 'Failed to create review with inline comments, falling back');
-        await octokit.pulls.createReview({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            commit_id: commitSha,
-            event,
-            body: body + '\n\n> _Note: Some inline comments could not be placed on the diff._',
-        });
-    }
+    const review = await postReview(octokit, {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        commit_id: commitSha,
+        event,
+        body,
+        comments,
+    }, '> _Note: Some inline comments could not be placed on the diff._');
+    logger.info({ pullNumber, event, commentCount: review.bodyOnly ? 0 : comments.length }, 'PR review created');
 }
 function buildReviewBody(result) {
     const cost = result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {});
@@ -50599,6 +50596,12 @@ function formatAnnotationComment(a) {
 const STATE_MARKER_PREFIX = '<!-- fiscalcr:state:v1 ';
 const STATE_MARKER_SUFFIX = ' -->';
 const STATE_MARKER_RE = /<!-- fiscalcr:state:v1 (\{.*?\}) -->/s;
+function review_state_statusOf(error) {
+    if (typeof error !== 'object' || error === null || !('status' in error))
+        return undefined;
+    const status = error.status;
+    return typeof status === 'number' ? status : undefined;
+}
 const MAX_FINGERPRINTS = 300;
 const MAX_RUN_HISTORY = 20;
 const EMPTY_COUNTS = {
@@ -50694,7 +50697,9 @@ async function saveStickyComment(octokit, params) {
             return commentId;
         }
         catch (err) {
-            logger.warn({ err, commentId }, 'Sticky comment update failed (deleted?) — creating a new one');
+            if (review_state_statusOf(err) !== 404)
+                throw err;
+            logger.warn({ err, commentId }, 'Sticky comment was deleted — creating a replacement');
         }
     }
     const { data } = await octokit.issues.createComment({
@@ -53920,6 +53925,15 @@ const findingSchema = objectType({
         confidence: a.confidence ?? DEFAULT_CONFIDENCE,
     };
 });
+function parseFindings(rawFindings) {
+    const findings = [];
+    for (const item of rawFindings) {
+        const finding = findingSchema.safeParse(item);
+        if (finding.success)
+            findings.push(finding.data);
+    }
+    return findings;
+}
 const walkthroughSchema = arrayType(objectType({ path: stringType(), summary: stringType() }))
     .catch([]);
 const intentSchema = objectType({
@@ -53962,15 +53976,9 @@ function parseGroupResponse(raw) {
     const rawFindings = parsed.data.findings.length > 0
         ? parsed.data.findings
         : parsed.data.annotations ?? [];
-    const findings = [];
-    for (const item of rawFindings) {
-        const finding = findingSchema.safeParse(item);
-        if (finding.success)
-            findings.push(finding.data);
-    }
     return {
         groupSummary: parsed.data.groupSummary ?? parsed.data.group_summary ?? parsed.data.summary ?? '',
-        findings,
+        findings: parseFindings(rawFindings),
     };
 }
 const synthesisSchema = objectType({
@@ -54020,12 +54028,7 @@ function parseFastPathResponse(raw) {
     const rawFindings = parsed.data.findings.length > 0
         ? parsed.data.findings
         : parsed.data.annotations ?? [];
-    const findings = [];
-    for (const item of rawFindings) {
-        const finding = findingSchema.safeParse(item);
-        if (finding.success)
-            findings.push(finding.data);
-    }
+    const findings = parseFindings(rawFindings);
     return {
         intent: parsed.data.intent,
         summary: parsed.data.summary,
@@ -54930,6 +54933,40 @@ function conclusionFor(counts, failOn) {
         return counts.critical > 0 || counts.warning > 0 ? 'failure' : 'success';
     return 'success';
 }
+function planStickyPublication(input) {
+    const { result, config, scope, state, resolvedCounts } = input;
+    const commentsCfg = config.review.comments;
+    const prevCounts = state?.openCounts ?? { ...EMPTY_COUNTS };
+    const fingerprints = new Map(result.annotations.map((a) => [a, fingerprintAnnotation(a)]));
+    const currentFingerprints = new Set(fingerprints.values());
+    const alreadyPosted = new Set(state?.postedFingerprints ?? []);
+    const newAnnotations = commentsCfg.dedupe && state
+        ? result.annotations.filter((a) => !alreadyPosted.has(fingerprints.get(a)))
+        : result.annotations;
+    const openTotal = Object.values(prevCounts).reduce((a, b) => a + b, 0);
+    const inlineBudget = Math.max(0, commentsCfg.maxOpenComments - openTotal);
+    const inlineNew = newAnnotations.slice(0, inlineBudget);
+    const capOverflow = newAnnotations.slice(inlineBudget);
+    let openCounts;
+    if (scope.mode === 'full') {
+        openCounts = countBySeverity(result.annotations);
+    }
+    else {
+        openCounts = { ...prevCounts };
+        const newCounts = countBySeverity(newAnnotations);
+        for (const severity of Object.keys(openCounts)) {
+            openCounts[severity] = Math.max(0, openCounts[severity] - resolvedCounts[severity] + newCounts[severity]);
+        }
+    }
+    return {
+        fingerprints,
+        newAnnotations,
+        inlineNew,
+        capOverflow,
+        openCounts,
+        blocking: conclusionFor(openCounts, config.review.failOn) === 'failure',
+    };
+}
 class ReviewOrchestrator {
     octokit;
     llm;
@@ -55122,23 +55159,6 @@ class ReviewOrchestrator {
         const { checkRunId, prContext, result, scope, state } = input;
         const { owner, repo, pullNumber, headSha } = prContext;
         const commentsCfg = this.config.review.comments;
-        const prevCounts = state?.openCounts ?? { ...EMPTY_COUNTS };
-        // Dedupe against everything ever posted (including human-deleted comments —
-        // deleting a bot comment must not invite a re-nag).
-        const fingerprints = new Map(result.annotations.map((a) => [a, fingerprintAnnotation(a)]));
-        const currentFingerprints = new Set(fingerprints.values());
-        const alreadyPosted = new Set(state?.postedFingerprints ?? []);
-        const newAnnotations = commentsCfg.dedupe && state
-            ? result.annotations.filter((a) => !alreadyPosted.has(fingerprints.get(a)))
-            : result.annotations;
-        // Cumulative inline cap: overflow lives in check-run annotations + sticky.
-        const openTotal = Object.values(prevCounts).reduce((a, b) => a + b, 0);
-        const inlineBudget = Math.max(0, commentsCfg.maxOpenComments - openTotal);
-        const inlineNew = newAnnotations.slice(0, inlineBudget);
-        const capOverflow = newAnnotations.slice(inlineBudget);
-        if (capOverflow.length > 0) {
-            logger.info({ overflow: capOverflow.length, cap: commentsCfg.maxOpenComments }, 'maxOpenComments reached — overflow findings demoted to check-run annotations');
-        }
         // Resolve threads whose file changed but whose finding did not recur.
         let resolvedCounts = { ...EMPTY_COUNTS };
         if (commentsCfg.resolveOutdated && state) {
@@ -55147,47 +55167,44 @@ class ReviewOrchestrator {
                 repo,
                 pullNumber,
                 changedPaths: new Set(prContext.changedFiles.map((f) => f.filename)),
-                currentFingerprints,
+                currentFingerprints: new Set(result.annotations.map((annotation) => fingerprintAnnotation(annotation))),
                 headSha,
             });
-            for (const t of resolved) {
-                if (t.severity)
-                    resolvedCounts[t.severity]++;
+            for (const thread of resolved) {
+                if (thread.severity)
+                    resolvedCounts[thread.severity]++;
             }
         }
-        // Cumulative open counts: a full review re-derives them; a delta adjusts.
-        let openCounts;
-        if (scope.mode === 'full') {
-            openCounts = countBySeverity(result.annotations);
+        const plan = planStickyPublication({
+            result,
+            config: this.config,
+            scope,
+            state,
+            resolvedCounts,
+        });
+        if (plan.capOverflow.length > 0) {
+            logger.info({ overflow: plan.capOverflow.length, cap: commentsCfg.maxOpenComments }, 'maxOpenComments reached — overflow findings demoted to check-run annotations');
         }
-        else {
-            openCounts = { ...prevCounts };
-            const newCounts = countBySeverity(newAnnotations);
-            for (const sev of Object.keys(openCounts)) {
-                openCounts[sev] = Math.max(0, openCounts[sev] - resolvedCounts[sev] + newCounts[sev]);
-            }
-        }
-        const conclusion = conclusionFor(openCounts, this.config.review.failOn);
-        const blocking = conclusion === 'failure';
+        const conclusion = plan.blocking ? 'failure' : 'success';
         // Check run reflects cumulative PR health, not just this run's delta.
         await completeCheckRun(this.octokit, {
             owner,
             repo,
             checkRunId,
             conclusion,
-            summary: buildSummary({ ...result, stats: openCounts }),
+            summary: buildSummary({ ...result, stats: plan.openCounts }),
             annotations: result.annotations,
             externalId: JSON.stringify({
                 scope: scope.mode,
                 calls: result.callCount ?? 0,
-                newFindings: newAnnotations.length,
+                newFindings: plan.newAnnotations.length,
             }),
         });
         // One live blocking review, anchored to the newest commit: always dismiss
         // the old one; re-post below when still failing.
         let blockingReviewId = state?.blockingReviewId ?? null;
         if (blockingReviewId !== null) {
-            const message = blocking
+            const message = plan.blocking
                 ? `Superseded by an updated review as of ${headSha.slice(0, 7)}.`
                 : `✅ Issues addressed as of ${headSha.slice(0, 7)}.`;
             await dismissBlockingReview(this.octokit, {
@@ -55204,27 +55221,27 @@ class ReviewOrchestrator {
             repo,
             pullNumber,
             commitSha: headSha,
-            annotations: inlineNew,
+            annotations: plan.inlineNew,
             changedFiles: prContext.changedFiles,
-            event: blocking ? 'REQUEST_CHANGES' : 'COMMENT',
-            body: this.buildIncrementalBody(result, scope, newAnnotations.length, openCounts, blocking),
+            event: plan.blocking ? 'REQUEST_CHANGES' : 'COMMENT',
+            body: this.buildIncrementalBody(result, scope, plan.newAnnotations.length, plan.openCounts, plan.blocking),
         });
-        if (blocking)
+        if (plan.blocking)
             blockingReviewId = outcome.reviewId;
         // State is saved last, only after posting succeeded.
-        const demoted = [...outcome.demoted, ...capOverflow];
+        const demoted = [...outcome.demoted, ...plan.capOverflow];
         const newState = {
             v: 1,
             lastReviewedSha: headSha,
             baseSha: prContext.baseSha,
             blockingReviewId,
-            postedFingerprints: appendFingerprints(state?.postedFingerprints ?? [], newAnnotations.map((a) => fingerprints.get(a))),
-            openCounts,
+            postedFingerprints: appendFingerprints(state?.postedFingerprints ?? [], plan.newAnnotations.map((a) => plan.fingerprints.get(a))),
+            openCounts: plan.openCounts,
             runs: appendRun(state?.runs ?? [], {
                 sha: headSha.slice(0, 7),
                 at: new Date().toISOString().slice(0, 10),
                 scope: scope.mode === 'delta' ? 'delta' : 'full',
-                newFindings: newAnnotations.length,
+                newFindings: plan.newAnnotations.length,
                 cost: result.costEstimate?.usd.toFixed(4) ?? '0',
             }),
         };
@@ -55248,14 +55265,14 @@ class ReviewOrchestrator {
             pullNumber,
             scope: scope.mode,
             score: result.score,
-            newFindings: newAnnotations.length,
+            newFindings: plan.newAnnotations.length,
             postedInline: outcome.posted.length,
-            openCounts,
+            openCounts: plan.openCounts,
             llmCalls: result.callCount,
             conclusion,
         }, 'Review completed');
         // Cumulative stats so failOn logic downstream (Action outputs) matches the check run.
-        return { ...result, stats: openCounts };
+        return { ...result, stats: plan.openCounts };
     }
     buildIncrementalBody(result, scope, newFindings, openCounts, blocking) {
         const openTotal = Object.values(openCounts).reduce((a, b) => a + b, 0);
