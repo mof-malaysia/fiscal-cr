@@ -190,6 +190,11 @@ Create `.fiscalcr-review.yml` in your repository root:
 language: en
 provider: openai-compatible
 model: kimi-for-coding-highspeed
+modelPreset: kimi # optional; built-in or custom preset — explicit models.* stages win (see "Model presets")
+# modelPresets: # optional; custom named presets, selectable via modelPreset
+#   fast:
+#     intent: gpt-5-mini
+#     groupReview: gpt-5
 models:
   intent: kimi-for-coding-highspeed
   fastPath: kimi-for-coding
@@ -295,10 +300,10 @@ with no `models` block at all. Built-in defaults: `intent` is
 `kimi-for-coding`. With no config file all stages use these defaults. Unknown
 keys under `models` (such as the legacy `big`/`small` roles) are rejected, so
 a stale config fails fast instead of silently ignoring a stage.
-Repo `models.*` values override built-in stage defaults, while the top-level
-repo `model` is the fallback for unset stages. An explicit `model` input on
-the GitHub Action or `MODEL`/`FISCALCR_MODEL` in App mode overrides all stages
-globally.
+Repo `models.*` values override the selected preset's stage models and the
+built-in defaults; an unset stage falls back to the preset stage model, then
+to the top-level repo `model`. An explicit `model` input on the GitHub Action
+or `MODEL`/`FISCALCR_MODEL` in App mode overrides all stages globally.
 
 ### Model presets
 
