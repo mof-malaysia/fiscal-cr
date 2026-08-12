@@ -19,4 +19,5 @@ export declare function calculateCostForModel(usage: {
     output: number;
     cached: number;
 }, context: PricingContext): number;
+export declare function roundCost(cost: number): number;
 //# sourceMappingURL=tokens.d.ts.map

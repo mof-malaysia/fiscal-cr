@@ -38,6 +38,6 @@ export function calculateCostForModel(
   return roundCost(calculateCostWithPricing(usage, resolvePricing(context).pricing));
 }
 
-function roundCost(cost: number): number {
+export function roundCost(cost: number): number {
   return Math.round(cost * 10000) / 10000;
 }

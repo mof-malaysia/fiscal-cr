@@ -155,6 +155,36 @@ describe('resolvePricingAsync', () => {
     expect(result.source).toBe('fallback');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('falls back to prompt pricing for omitted cache-read rates', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        id: 'vendor/no-cache-price',
+        pricing: { prompt: '0.000003', completion: '0.000012' },
+      },
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolvePricingAsync({
+      provider: 'openai-compatible',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'vendor/no-cache-price',
+    });
+    expect(result.pricing.cachedInputPerMillion).toBe(3);
+  });
+
+  it('does not treat an OpenRouter-looking path as an OpenRouter host', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await resolvePricingAsync({
+      provider: 'openai-compatible',
+      baseUrl: 'https://internal.example.com/openrouter.ai/v1',
+      model: 'vendor/private-model',
+    });
+    expect(result.source).toBe('fallback');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed OpenRouter prices instead of treating them as free', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       data: {

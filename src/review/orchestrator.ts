@@ -30,6 +30,7 @@ import { runReviewPipeline } from '../pipeline/run-review.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
 import { resolvePricingAsync, type PricingContext, type PricingResolution } from '../utils/pricing.js';
+import { roundCost } from '../utils/tokens.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -181,7 +182,7 @@ export class ReviewOrchestrator {
         deltaHint,
       });
       result.costEstimate = {
-        usd: usage.cost(),
+        usd: roundCost(usage.cost()),
         ...pricingResolution,
       };
 

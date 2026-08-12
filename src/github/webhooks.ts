@@ -54,7 +54,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         apiKey: appCtx.apiKey,
         provider: appCtx.provider ?? config.provider,
         model: appCtx.model ?? config.model,
-        baseUrl: appCtx.baseUrl,
+        baseUrl: appCtx.baseUrl ?? config.baseUrl,
         userAgent: appCtx.userAgent ?? config.userAgent,
         modelParams: config.modelParams,
       });
@@ -93,7 +93,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         apiKey: appCtx.apiKey,
         provider: appCtx.provider ?? config.provider,
         model: appCtx.model ?? config.model,
-        baseUrl: appCtx.baseUrl,
+        baseUrl: appCtx.baseUrl ?? config.baseUrl,
         userAgent: appCtx.userAgent ?? config.userAgent,
         modelParams: config.modelParams,
       });
@@ -155,7 +155,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       apiKey: appCtx.apiKey,
       provider: appCtx.provider ?? config.provider,
       model: appCtx.model ?? config.model,
-      baseUrl: appCtx.baseUrl,
+      baseUrl: appCtx.baseUrl ?? config.baseUrl,
       userAgent: appCtx.userAgent ?? config.userAgent,
       modelParams: config.modelParams,
     });

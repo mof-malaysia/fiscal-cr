@@ -50219,7 +50219,15 @@ function lookup(table, model) {
     return { pricing: table[family], source: 'family', matchedModel: family };
 }
 function isOpenRouter(baseUrl) {
-    return Boolean(baseUrl && /(^|[/.])openrouter\.ai(?:\/|$)/i.test(baseUrl));
+    if (!baseUrl)
+        return false;
+    try {
+        const hostname = new URL(baseUrl).hostname.toLowerCase();
+        return hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai');
+    }
+    catch {
+        return false;
+    }
 }
 const OPENROUTER_CACHE_TTL_MS = 60 * 60 * 1000;
 const openRouterPricingCache = new Map();
@@ -50267,11 +50275,12 @@ function parseOpenRouterPricing(payload) {
     if (!parsed.success)
         return undefined;
     const { pricing } = parsed.data.data;
+    const cacheReadPerToken = pricing.input_cache_read ?? pricing.prompt;
     const tiers = pricing.overrides?.map((override) => ({
         minPromptTokens: override.min_prompt_tokens,
         inputPerMillion: override.prompt * 1_000_000,
         outputPerMillion: override.completion * 1_000_000,
-        cachedInputPerMillion: (override.input_cache_read ?? 0) * 1_000_000,
+        cachedInputPerMillion: (override.input_cache_read ?? override.prompt) * 1_000_000,
     }));
     const matchedModel = parsed.data.data.id
         ? normalizedModel(parsed.data.data.id)
@@ -50280,7 +50289,7 @@ function parseOpenRouterPricing(payload) {
         pricing: {
             inputPerMillion: pricing.prompt * 1_000_000,
             outputPerMillion: pricing.completion * 1_000_000,
-            cachedInputPerMillion: (pricing.input_cache_read ?? 0) * 1_000_000,
+            cachedInputPerMillion: cacheReadPerToken * 1_000_000,
             ...(tiers && tiers.length > 0 ? { tiers } : {}),
         },
         matchedModel,
@@ -54913,6 +54922,7 @@ class UsageTracker {
 
 
 
+
 function conclusionFor(counts, failOn) {
     if (failOn === 'critical')
         return counts.critical > 0 ? 'failure' : 'success';
@@ -55022,7 +55032,7 @@ class ReviewOrchestrator {
                 deltaHint,
             });
             result.costEstimate = {
-                usd: usage.cost(),
+                usd: roundCost(usage.cost()),
                 ...pricingResolution,
             };
             // Step 6: Publish (sticky lifecycle or legacy stacked review)
