@@ -308,6 +308,18 @@ OpenRouter-specific entries when the configured endpoint is OpenRouter.
 For an unknown OpenRouter model, FiscalCR queries the public model endpoint,
 caches the result for one hour, and falls back to the local snapshot if the
 lookup fails.
+
+Kimi Open Platform snapshot rates:
+
+| Model                         | Input cache hit | Input cache miss | Output |
+| ----------------------------- | --------------- | ---------------- | ------ |
+| `kimi-k3`                     | $0.30           | $3.00            | $15.00 |
+| `kimi-k2.7-code`              | $0.19           | $0.95            | $4.00  |
+| `kimi-k2.7-code-highspeed`    | $0.38           | $1.90            | $8.00  |
+| `kimi-k2.6`                   | $0.16           | $0.95            | $4.00  |
+
+Legacy `kimi-k2.7` and `kimi-k2-7` IDs resolve to the K2.7 Code rate.
+
 Unknown models and custom endpoints otherwise use the legacy fallback estimate:
 
 | Token type   | Rate              |

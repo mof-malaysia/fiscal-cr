@@ -290,6 +290,17 @@ Unknown OpenRouter models receive a best-effort lookup from the public model
 endpoint, cached for one hour. Other unknown models use the legacy fallback
 estimate.
 
+Current Kimi Open Platform snapshot rates (USD per 1M tokens):
+
+| Model | Cache hit | Cache miss | Output |
+| --- | ---: | ---: | ---: |
+| `kimi-k3` | $0.30 | $3.00 | $15.00 |
+| `kimi-k2.7-code` | $0.19 | $0.95 | $4.00 |
+| `kimi-k2.7-code-highspeed` | $0.38 | $1.90 | $8.00 |
+| `kimi-k2.6` | $0.16 | $0.95 | $4.00 |
+
+Legacy `kimi-k2.7` and `kimi-k2-7` IDs use the K2.7 Code rate.
+
 Pricing lookup has a two-second timeout and cannot fail a review; a failed
 lookup returns the fallback estimate. Telemetry marks estimates as `exact`,
 `family`, `remote`, or `fallback`. Rates can change, and long-context tiers,

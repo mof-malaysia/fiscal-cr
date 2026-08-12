@@ -73,11 +73,26 @@ const ANTHROPIC_PRICING: Record<string, TokenPricing> = {
   'claude-fable-5': { inputPerMillion: 10, outputPerMillion: 50, cachedInputPerMillion: 1 },
 };
 
+const KIMI_K27_CODE_PRICING: TokenPricing = {
+  inputPerMillion: 0.95,
+  outputPerMillion: 4,
+  cachedInputPerMillion: 0.19,
+};
+
 const KIMI_PRICING: Record<string, TokenPricing> = {
-  // Kimi Open Platform K2.7. Kimi Code subscription models intentionally do
-  // not appear here because they do not publish a fixed token rate.
-  'kimi-k2.7': { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.19 },
-  'kimi-k2-7': { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.19 },
+  // Kimi Open Platform pricing; subscription-only IDs such as
+  // `kimi-for-coding` are intentionally omitted.
+  'kimi-k3': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
+  'kimi-k2.7-code': KIMI_K27_CODE_PRICING,
+  'kimi-k2.7-code-highspeed': {
+    inputPerMillion: 1.9,
+    outputPerMillion: 8,
+    cachedInputPerMillion: 0.38,
+  },
+  'kimi-k2.6': { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.16 },
+  // Legacy aliases retained for existing direct-provider configurations.
+  'kimi-k2.7': KIMI_K27_CODE_PRICING,
+  'kimi-k2-7': KIMI_K27_CODE_PRICING,
 };
 
 const PROVIDER_PRICING: Record<string, Record<string, TokenPricing>> = {

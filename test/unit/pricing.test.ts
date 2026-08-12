@@ -46,6 +46,29 @@ describe('resolvePricing', () => {
     });
   });
 
+  it('resolves current Kimi Open Platform models without collapsing their rates', () => {
+    expect(resolvePricing({ provider: 'kimi', model: 'kimi-k3' })).toMatchObject({
+      source: 'exact',
+      matchedModel: 'kimi-k3',
+      pricing: { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
+    });
+    expect(resolvePricing({ provider: 'kimi', model: 'kimi-k2.6' })).toMatchObject({
+      source: 'exact',
+      matchedModel: 'kimi-k2.6',
+      pricing: { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.16 },
+    });
+    expect(resolvePricing({ provider: 'kimi', model: 'kimi-k2.7-code' })).toMatchObject({
+      source: 'exact',
+      matchedModel: 'kimi-k2.7-code',
+      pricing: { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.19 },
+    });
+    expect(resolvePricing({ provider: 'kimi', model: 'kimi-k2.7-code-highspeed' })).toMatchObject({
+      source: 'exact',
+      matchedModel: 'kimi-k2.7-code-highspeed',
+      pricing: { inputPerMillion: 1.9, outputPerMillion: 8, cachedInputPerMillion: 0.38 },
+    });
+  });
+
   it('uses OpenRouter pricing for an OpenRouter endpoint', () => {
     expect(resolvePricing({
       provider: 'openai-compatible',
