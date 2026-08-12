@@ -7,9 +7,9 @@ const KIMI_MAX_OUTPUT_TOKENS = 65_536;
 const DEFAULT_MAX_OUTPUT_TOKENS = 32_768;
 
 /** True when the review runs against a Kimi model, by provider or model name. */
-function isKimiModel(config: ReviewConfig): boolean {
+function isKimiModel(config: ReviewConfig, model: string): boolean {
   return (
-    config.provider === "kimi" || config.model.toLowerCase().startsWith("kimi")
+    config.provider === "kimi" || model.toLowerCase().startsWith("kimi")
   );
 }
 
@@ -18,10 +18,17 @@ function isKimiModel(config: ReviewConfig): boolean {
  * `pipeline.maxOutputTokens` wins; Kimi models get a larger cap since they
  * reliably emit long structured output (and short caps truncate mid-JSON);
  * everything else uses a conservative default that unknown endpoints accept.
+ *
+ * `model` is the model actually used for this call (a stage model when the
+ * caller resolved one); it defaults to the legacy single `config.model` so
+ * callers that predate stage routing keep their behavior.
  */
-export function reviewMaxOutputTokens(config: ReviewConfig): number {
+export function reviewMaxOutputTokens(
+  config: ReviewConfig,
+  model: string = config.model,
+): number {
   if (config.pipeline.maxOutputTokens !== undefined)
     return config.pipeline.maxOutputTokens;
-  if (isKimiModel(config)) return KIMI_MAX_OUTPUT_TOKENS;
+  if (isKimiModel(config, model)) return KIMI_MAX_OUTPUT_TOKENS;
   return DEFAULT_MAX_OUTPUT_TOKENS;
 }

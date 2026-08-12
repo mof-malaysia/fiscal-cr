@@ -133,10 +133,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
     signal: AbortSignal,
   ): Promise<LLMCompletionResponse> {
     const temperature = params.temperature ?? this.temperature;
+    const model = params.model ?? this.model;
     const body = {
       // Operator passthrough is the base layer; managed fields below always win.
       ...this.modelParams,
-      model: this.model,
+      model,
       messages: params.messages,
       ...(temperature !== undefined && { temperature }),
       ...(params.maxTokens !== undefined && {
@@ -162,7 +163,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       // Surface the endpoint's own message — a bare "400 Bad Request" is undiagnosable.
       const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
       logger.warn(
-        { status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet },
+        { status: res.status, model, baseUrl: this.baseUrl, body: snippet },
         'LLM API request rejected',
       );
       throw new LLMApiError(
@@ -185,7 +186,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     logger.info(
       {
-        model: this.model,
+        model,
         baseUrl: this.baseUrl,
         promptTokens: usage.input,
         completionTokens: usage.output,

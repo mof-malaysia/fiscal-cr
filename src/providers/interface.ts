@@ -19,6 +19,10 @@ export interface LLMCompletionResponse {
 
 export interface ChatCompletionParams {
   messages: ChatMessage[];
+  /**
+   * Model to use for this call. Omitted → the provider's constructor model.
+   */
+  model?: string;
   responseFormat?: { type: 'json_object' | 'text' };
   /** Cap on completion tokens. Omitted → provider/server default. */
   maxTokens?: number;

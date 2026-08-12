@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import type { ReviewConfig } from '../config/schema.js';
+import { modelForRole, type ReviewConfig } from '../config/schema.js';
 import type { PullRequestContext, ReviewAnnotation, ReviewResult, Severity } from '../types/review.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { extractPullRequestContext } from '../github/pulls.js';
@@ -227,7 +227,7 @@ export class ReviewOrchestrator {
           : undefined;
       const pricingContext = this.options.pricingContext ?? {
         provider: this.config.provider,
-        model: this.config.model,
+        model: modelForRole(this.config, 'groupReview'),
         baseUrl: this.config.baseUrl,
       };
       const pricingResolution: PricingResolution = await resolvePricingAsync(pricingContext);

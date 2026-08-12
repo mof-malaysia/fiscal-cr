@@ -29,6 +29,23 @@ export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
   provider: z.enum(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
   model: z.string().default("kimi-for-coding"),
+  /**
+   * Per-stage model overrides. `intent` drives the Pass 1 intent call,
+   * `fastPath` the fast-path combined call, `groupReview` the per-group file
+   * reviews, and `synthesis` the final synthesis call. An unset stage falls
+   * back to the legacy top-level `model`, so configs that only set `model`
+   * keep working. Unknown keys are rejected (`.strict()`), so the old
+   * `big`/`small` roles fail loudly instead of silently disappearing.
+   */
+  models: z
+    .object({
+      intent: z.string().min(1).optional(),
+      fastPath: z.string().min(1).optional(),
+      groupReview: z.string().min(1).optional(),
+      synthesis: z.string().min(1).optional(),
+    })
+    .strict()
+    .default({}),
   baseUrl: z.string().url().optional(),
   /** Custom User-Agent for endpoints that whitelist clients. */
   userAgent: z.string().max(200).optional(),
@@ -149,3 +166,15 @@ export const reviewConfigSchema = z.object({
 });
 
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
+
+/** Pipeline model stages: intent, fastPath, groupReview, synthesis. */
+export type ModelRole = "intent" | "fastPath" | "groupReview" | "synthesis";
+
+/**
+ * Resolve the model for a pipeline stage. Prefers the per-stage override from
+ * `config.models`, falling back to the legacy top-level `model` so old configs
+ * keep their single-model behavior.
+ */
+export function modelForRole(config: ReviewConfig, role: ModelRole): string {
+  return config.models[role] ?? config.model;
+}

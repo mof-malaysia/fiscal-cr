@@ -4,6 +4,12 @@ export const DEFAULT_CONFIG: ReviewConfig = {
   language: "en",
   provider: "kimi",
   model: "kimi-for-coding",
+  models: {
+    intent: "kimi-for-coding-highspeed",
+    fastPath: "kimi-for-coding",
+    groupReview: "kimi-for-coding",
+    synthesis: "kimi-for-coding",
+  },
   experimental: false,
   review: {
     auto: {

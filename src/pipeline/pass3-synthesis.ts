@@ -7,6 +7,7 @@ import type {
   WalkthroughEntry,
 } from '../types/review.js';
 import type { ReviewConfig } from '../config/schema.js';
+import { modelForRole } from '../config/schema.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { lineToDiffPosition } from '../review/diff-analyzer.js';
 import { buildSynthesisSystemPrompt, buildSynthesisUserPrompt } from './prompts.js';
@@ -151,11 +152,13 @@ export async function synthesize(
       ];
       const startedAt = Date.now();
       usage.startCall();
+      const model = modelForRole(config, 'synthesis');
       const response = await llm.chatCompletion({
         messages,
+        model,
         responseFormat: { type: 'json_object' },
         maxTokens: 4_096,
-        temperature: reviewTemperature(config),
+        temperature: reviewTemperature(config, 0.3, model),
         timeoutMs: 90_000,
       });
       usage.add(response.usage, {

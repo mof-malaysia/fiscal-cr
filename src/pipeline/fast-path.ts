@@ -1,5 +1,6 @@
 import type { PullRequestContext, ReviewResult } from '../types/review.js';
 import type { ReviewConfig } from '../config/schema.js';
+import { modelForRole } from '../config/schema.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { buildFastPathSystemPrompt, buildFastPathUserPrompt } from './prompts.js';
 import { parseFastPathResponse } from './schemas.js';
@@ -15,7 +16,7 @@ import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Fast path: one combined call for small PRs (and the `pipeline.enabled: false`
+ * Fast path: one combined call for lightweight PRs (and the `pipeline.enabled: false`
  * kill-switch). Same output contract and code-side validation as the pipeline.
  */
 export async function runFastPath(
@@ -25,7 +26,8 @@ export async function runFastPath(
   usage: UsageTracker,
   deltaHint?: string,
 ): Promise<ReviewResult> {
-  const maxOutputTokens = reviewMaxOutputTokens(config);
+  const model = modelForRole(config, 'fastPath');
+  const maxOutputTokens = reviewMaxOutputTokens(config, model);
   const messages = [
     { role: 'system' as const, content: buildFastPathSystemPrompt(config) },
     { role: 'user' as const, content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
@@ -35,9 +37,10 @@ export async function runFastPath(
   const response = await llm
     .chatCompletion({
       messages,
+      model,
       responseFormat: { type: 'json_object' },
       maxTokens: maxOutputTokens,
-      temperature: reviewTemperature(config),
+      temperature: reviewTemperature(config, 0.3, model),
       timeoutMs: config.pipeline.callTimeoutMs,
     })
     .catch((err: unknown) => {
