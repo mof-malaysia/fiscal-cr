@@ -109,6 +109,46 @@ const groupResponse = (title: string) => ({
   ],
 });
 
+function bigPrOctokit() {
+  const octokit = fakeOctokit([{ filename: 'src/a.ts' }, { filename: 'lib/b.ts' }]);
+  octokit.repos.getContent = vi.fn(async ({ path }: { path: string }) => ({
+    data: {
+      content: Buffer.from(`// ${path}\n${'x'.repeat(90_000)}`).toString('base64'),
+      encoding: 'base64',
+    },
+  }));
+  return octokit;
+}
+
+function multiPassScript() {
+  return [
+    {
+      match: isIntentCall,
+      content: {
+        intent: 'Big refactor',
+        walkthrough: [],
+        groups: [
+          { label: 'g1', files: ['src/a.ts'] },
+          { label: 'g2', files: ['lib/b.ts'] },
+        ],
+        riskHotspots: [],
+      },
+    },
+    { match: isGroupCall, content: groupResponse('Group finding') },
+    { match: isGroupCall, content: groupResponse('Group finding 2') },
+    {
+      match: isSynthesisCall,
+      content: {
+        summary: 'Final synthesis',
+        score: 80,
+        walkthrough: [],
+        nearDuplicates: [],
+        likelyFalsePositives: [],
+      },
+    },
+  ];
+}
+
 describe('ReviewOrchestrator pipeline routing', () => {
   it('small PR takes the fast path: exactly 1 LLM call', async () => {
     const octokit = fakeOctokit([{ filename: 'src/a.ts' }]);
@@ -300,6 +340,151 @@ describe('ReviewOrchestrator pipeline routing', () => {
     for (const call of llm.calls) {
       expect(call.model).toBe('legacy-model');
     }
+  });
+
+  it('provider-default resolves the kimi preset for every stage when the provider is kimi', async () => {
+    const llm = scriptedLLM(multiPassScript());
+    const orchestrator = new ReviewOrchestrator(bigPrOctokit() as never, llm, {
+      ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+      provider: 'kimi',
+      modelPreset: 'provider-default',
+      models: {},
+      model: 'legacy-model',
+    });
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    const { calls } = llm;
+    expect(calls).toHaveLength(4);
+    expect(calls[0].model).toBe('kimi-for-coding-highspeed'); // intent
+    expect(calls[1].model).toBe('kimi-for-coding'); // group
+    expect(calls[2].model).toBe('kimi-for-coding'); // group
+    expect(calls[3].model).toBe('kimi-for-coding'); // synthesis
+  });
+
+  it('provider-default resolves the anthropic preset for every stage when the provider is anthropic', async () => {
+    const llm = scriptedLLM(multiPassScript());
+    const orchestrator = new ReviewOrchestrator(bigPrOctokit() as never, llm, {
+      ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+      provider: 'anthropic',
+      modelPreset: 'provider-default',
+      models: {},
+      model: 'legacy-model',
+    });
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    const { calls } = llm;
+    expect(calls).toHaveLength(4);
+    expect(calls[0].model).toBe('claude-haiku-4.5'); // intent
+    expect(calls[1].model).toBe('claude-sonnet-4.5'); // group
+    expect(calls[2].model).toBe('claude-sonnet-4.5'); // group
+    expect(calls[3].model).toBe('claude-sonnet-4.5'); // synthesis
+  });
+
+  it('provider-default resolves the openai preset for every stage when the provider is openai', async () => {
+    const llm = scriptedLLM(multiPassScript());
+    const orchestrator = new ReviewOrchestrator(bigPrOctokit() as never, llm, {
+      ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+      provider: 'openai',
+      modelPreset: 'provider-default',
+      models: {},
+      model: 'legacy-model',
+    });
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    const { calls } = llm;
+    expect(calls).toHaveLength(4);
+    expect(calls[0].model).toBe('gpt-5-mini'); // intent
+    expect(calls[1].model).toBe('gpt-5'); // group
+    expect(calls[2].model).toBe('gpt-5'); // group
+    expect(calls[3].model).toBe('gpt-5'); // synthesis
+  });
+
+  it('provider-default with an openai-compatible provider falls back to the top-level model', async () => {
+    const llm = scriptedLLM(multiPassScript());
+    const orchestrator = new ReviewOrchestrator(bigPrOctokit() as never, llm, {
+      ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.example.com/v1',
+      modelPreset: 'provider-default',
+      models: {},
+      model: 'legacy-model',
+    });
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    // openai-compatible has no opinionated preset → every stage uses the top-level model.
+    for (const call of llm.calls) {
+      expect(call.model).toBe('legacy-model');
+    }
+  });
+
+  it('explicit stage models take precedence over the selected builtin preset', async () => {
+    const llm = scriptedLLM(multiPassScript());
+    const orchestrator = new ReviewOrchestrator(bigPrOctokit() as never, llm, {
+      ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+      modelPreset: 'anthropic',
+      models: { groupReview: 'custom-group-review' },
+      model: 'legacy-model',
+    });
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    const { calls } = llm;
+    expect(calls).toHaveLength(4);
+    expect(calls[0].model).toBe('claude-haiku-4.5'); // intent: preset value
+    expect(calls[1].model).toBe('custom-group-review'); // group: explicit override wins
+    expect(calls[2].model).toBe('custom-group-review');
+    expect(calls[3].model).toBe('claude-sonnet-4.5'); // synthesis: preset value
+  });
+
+  it('routes a custom modelPresets entry across every stage', async () => {
+    const llm = scriptedLLM(multiPassScript());
+    const orchestrator = new ReviewOrchestrator(bigPrOctokit() as never, llm, {
+      ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+      modelPreset: 'team',
+      modelPresets: {
+        team: {
+          intent: 'team-intent',
+          fastPath: 'team-fast-path',
+          groupReview: 'team-group-review',
+          synthesis: 'team-synthesis',
+        },
+      },
+      models: {},
+      model: 'legacy-model',
+    });
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    const { calls } = llm;
+    expect(calls).toHaveLength(4);
+    expect(calls[0].model).toBe('team-intent'); // intent
+    expect(calls[1].model).toBe('team-group-review'); // group
+    expect(calls[2].model).toBe('team-group-review'); // group
+    expect(calls[3].model).toBe('team-synthesis'); // synthesis
+  });
+
+  it('explicit stage models take precedence over a custom preset', async () => {
+    const llm = scriptedLLM(multiPassScript());
+    const orchestrator = new ReviewOrchestrator(bigPrOctokit() as never, llm, {
+      ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+      modelPreset: 'team',
+      modelPresets: {
+        team: {
+          intent: 'team-intent',
+          fastPath: 'team-fast-path',
+          groupReview: 'team-group-review',
+          synthesis: 'team-synthesis',
+        },
+      },
+      models: { groupReview: 'explicit-group-review' },
+      model: 'legacy-model',
+    });
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    const { calls } = llm;
+    expect(calls).toHaveLength(4);
+    expect(calls[0].model).toBe('team-intent'); // intent: custom preset value
+    expect(calls[1].model).toBe('explicit-group-review'); // group: explicit override wins
+    expect(calls[2].model).toBe('explicit-group-review');
+    expect(calls[3].model).toBe('team-synthesis'); // synthesis: custom preset value
   });
 
   it('tolerates a failed group and notes it in the summary', async () => {

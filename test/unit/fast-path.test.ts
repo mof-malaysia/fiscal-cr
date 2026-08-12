@@ -132,4 +132,100 @@ describe('runFastPath', () => {
     expect(params.temperature).toBeUndefined();
     expect(params.maxTokens).toBe(65_536);
   });
+
+  it('routes to the anthropic preset fastPath model with preferred temperature and conservative cap', async () => {
+    const chatCompletion = vi.fn(async () => ({
+      content: '{"summary":"looks good","score":95,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    }));
+    const llm: LLMProvider = { chatCompletion };
+
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: 'anthropic' as const,
+      modelPreset: 'anthropic',
+      models: {},
+      model: 'legacy-model',
+    };
+    await runFastPath(llm, context(), config, new UsageTracker());
+
+    const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
+    expect(params.model).toBe('claude-haiku-4.5');
+    expect(params.temperature).toBe(0.3);
+    expect(params.maxTokens).toBe(32_768);
+  });
+
+  it('routes to the openai preset fastPath model, omitting temperature for the reasoning model', async () => {
+    const chatCompletion = vi.fn(async () => ({
+      content: '{"summary":"looks good","score":95,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    }));
+    const llm: LLMProvider = { chatCompletion };
+
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: 'openai' as const,
+      modelPreset: 'openai',
+      models: {},
+      model: 'legacy-model',
+    };
+    await runFastPath(llm, context(), config, new UsageTracker());
+
+    const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
+    expect(params.model).toBe('gpt-5-mini');
+    expect(params.temperature).toBeUndefined();
+    expect(params.maxTokens).toBe(32_768);
+  });
+
+  it('provider-default selects the kimi preset fastPath model for the kimi provider', async () => {
+    const chatCompletion = vi.fn(async () => ({
+      content: '{"summary":"looks good","score":95,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    }));
+    const llm: LLMProvider = { chatCompletion };
+
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: 'kimi' as const,
+      modelPreset: 'provider-default',
+      models: {},
+      model: 'legacy-model',
+    };
+    await runFastPath(llm, context(), config, new UsageTracker());
+
+    const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
+    expect(params.model).toBe('kimi-for-coding');
+    expect(params.temperature).toBeUndefined();
+    expect(params.maxTokens).toBe(65_536);
+  });
+
+  it('routes to a custom preset fastPath model and falls back for unset stages', async () => {
+    const chatCompletion = vi.fn(async () => ({
+      content: '{"summary":"looks good","score":95,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    }));
+    const llm: LLMProvider = { chatCompletion };
+
+    // Custom presets may be partial: only fastPath is pinned, so the fast path call
+    // resolves to the custom value while everything else stays on the top-level model.
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: 'openai-compatible' as const,
+      baseUrl: 'https://api.example.com/v1',
+      modelPreset: 'team',
+      modelPresets: { team: { fastPath: 'team-fast-path' } },
+      models: {},
+      model: 'legacy-model',
+    };
+    await runFastPath(llm, context(), config, new UsageTracker());
+
+    const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
+    expect(params.model).toBe('team-fast-path');
+    expect(params.temperature).toBe(0.3);
+    expect(params.maxTokens).toBe(32_768);
+  });
 });

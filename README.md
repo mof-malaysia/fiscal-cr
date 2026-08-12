@@ -62,7 +62,7 @@ jobs:
 | `api_key`      | Yes      | —                               | LLM API key                                                       |
 | `github_token` | No       | `${{ github.token }}`           | GitHub token for API access                                       |
 | `provider`     | No       | Repo config or built-in default | `openai-compatible`, `kimi`, `openai`, or `anthropic`          |
-| `model`        | No       | Repo config or built-in default | Model name override                                               |
+| `model`        | No       | Repo config or built-in default | Model name; global override for every stage                      |
 | `base_url`     | No       | Repo config                     | Provider base URL override                                        |
 | `user_agent`   | No       | `fiscalcr/1.0`                  | Custom User-Agent for endpoints that whitelist clients (see note) |
 | `language`     | No       | Repo config or built-in default | Review language override                                          |
@@ -85,6 +85,12 @@ jobs:
 
 - Repo config is loaded from `.fiscalcr-review.yml` by default.
 - Action inputs override repo config only when you explicitly provide them.
+- Model presets (`modelPreset` selector, `modelPresets` custom maps) are
+  configured in the repo's `.fiscalcr-review.yml`; there is no Action input
+  for preset selection. The `model` input remains a global override and wins
+  over every pipeline stage, including stages a preset would select. A
+  `provider` input override does not change which preset `provider-default`
+  selects — that follows the `provider` set in `.fiscalcr-review.yml`.
 - `openai-compatible` requires an explicit `base_url`.
 - `anthropic` uses the native Messages API and defaults to
   `https://api.anthropic.com/v1`; its API key is sent in `x-api-key`.
@@ -143,7 +149,7 @@ pnpm dev
 | `API_KEY`               | Yes      | Provider API key                            |
 | `FISCALCR_API_KEY`      | Optional | Alternate API key env name                  |
 | `MODEL_PROVIDER`        | Optional | Provider name (`openai-compatible`, `kimi`, `openai`, or `anthropic`) |
-| `MODEL`                 | Optional | Model name                                  |
+| `MODEL`                 | Optional | Model name; global override for every stage |
 | `BASE_URL`              | Optional | Operator-controlled base URL                |
 | `LLM_USER_AGENT`        | Optional | Custom User-Agent for whitelisted endpoints |
 | `GITHUB_APP_ID`         | Yes      | GitHub App ID                               |
@@ -151,6 +157,14 @@ pnpm dev
 | `GITHUB_WEBHOOK_SECRET` | Yes      | Webhook secret                              |
 | `PORT`                  | No       | Server port, default `3000`                 |
 | `LOG_LEVEL`             | No       | Log level, default `info`                   |
+
+Model presets (`modelPreset` selector, `modelPresets` custom maps) are
+configured per repo in `.fiscalcr-review.yml`; there is no App-level env var
+for preset selection. `MODEL` (alias `FISCALCR_MODEL`) remains a global
+override that wins over every pipeline stage, including preset-derived
+models. `MODEL_PROVIDER` overrides the provider at request time but does not
+change which preset `provider-default` selects — that follows the `provider`
+set in `.fiscalcr-review.yml`.
 
 ### Comment commands
 
@@ -273,17 +287,71 @@ FiscalCR configures a model per pipeline stage under `models`:
 | `models.groupReview`   | Pass 2 per-group file reviews                                         |
 | `models.synthesis`     | Pass 3 final synthesis merging group summaries into one review        |
 
-An unset stage falls back to the top-level `model`, so configs that only set
-`model` keep their single-model behavior — including configs with no `models`
-block at all. Built-in defaults: `intent` is `kimi-for-coding-highspeed`;
-`fastPath`, `groupReview`, and `synthesis` are `kimi-for-coding`. With no
-config file all stages use these defaults. Unknown keys under `models` (such
-as the legacy `big`/`small` roles) are rejected, so a stale config fails fast
-instead of silently ignoring a stage.
+An unset stage falls back to the selected `modelPreset` stage model (see
+[Model presets](#model-presets)), then to the top-level `model`, so configs
+that only set `model` keep their single-model behavior — including configs
+with no `models` block at all. Built-in defaults: `intent` is
+`kimi-for-coding-highspeed`; `fastPath`, `groupReview`, and `synthesis` are
+`kimi-for-coding`. With no config file all stages use these defaults. Unknown
+keys under `models` (such as the legacy `big`/`small` roles) are rejected, so
+a stale config fails fast instead of silently ignoring a stage.
 Repo `models.*` values override built-in stage defaults, while the top-level
 repo `model` is the fallback for unset stages. An explicit `model` input on
 the GitHub Action or `MODEL`/`FISCALCR_MODEL` in App mode overrides all stages
 globally.
+
+### Model presets
+
+Instead of listing every stage under `models`, select an opinionated preset
+with `modelPreset`. Presets are YAML-only and optional: omitting `modelPreset`
+keeps the legacy behavior (`models.*` stage, else the top-level `model`), and
+no preset is injected by default.
+
+Built-in presets and their exact stage models:
+
+| Preset             | Stage         | Model                         |
+| ------------------ | ------------- | ----------------------------- |
+| `kimi`             | `intent`      | `kimi-for-coding-highspeed`   |
+|                    | `fastPath`    | `kimi-for-coding`             |
+|                    | `groupReview` | `kimi-for-coding`             |
+|                    | `synthesis`   | `kimi-for-coding`             |
+| `openai`           | `intent`      | `gpt-5-mini`                  |
+|                    | `fastPath`    | `gpt-5-mini`                  |
+|                    | `groupReview` | `gpt-5`                       |
+|                    | `synthesis`   | `gpt-5`                       |
+| `anthropic`        | `intent`      | `claude-haiku-4.5`            |
+|                    | `fastPath`    | `claude-haiku-4.5`            |
+|                    | `groupReview` | `claude-sonnet-4.5`           |
+|                    | `synthesis`   | `claude-sonnet-4.5`           |
+| `provider-default` | —             | Resolves to the `kimi`, `openai`, or `anthropic` preset from `provider`; `openai-compatible` has no preset and falls back to the top-level `model`. |
+
+```yaml
+provider: anthropic
+modelPreset: anthropic
+```
+
+You can also define your own presets under `modelPresets` (preset name →
+partial per-stage object) and select them by name with `modelPreset`. An entry
+under a built-in name merges over that preset; a new name defines a fresh
+preset whose unset stages fall back to the top-level `model`:
+
+```yaml
+model: gpt-4.1-mini # fallback for stages a preset does not set
+modelPreset: team
+modelPresets:
+  team:
+    intent: gpt-4.1-mini
+    groupReview: gpt-5
+  kimi:
+    intent: team-tuned-kimi-highspeed # overrides the built-in kimi intent
+```
+
+Unknown preset names and unknown stage keys inside `modelPresets` fail config
+validation.
+
+Precedence: explicit `models.<stage>` > the selected preset's stage model >
+the top-level `model`. An explicit `model` input on the GitHub Action or
+`MODEL`/`FISCALCR_MODEL` in App mode still overrides every stage globally.
 
 ## How it works
 

@@ -49710,7 +49710,87 @@ const coerce = {
 
 const NEVER = (/* unused pure expression or super */ null && (INVALID));
 
+;// CONCATENATED MODULE: ./src/config/model-presets.ts
+/** Built-in preset names accepted by the `modelPreset` selector. */
+const BUILTIN_MODEL_PRESET_NAMES = [
+    "provider-default",
+    "kimi",
+    "openai",
+    "anthropic",
+];
+/**
+ * Exact per-stage model assignments for each built-in preset. User entries in
+ * `config.modelPresets` merge over these by name (see `resolveStageMapFor`).
+ */
+const MODEL_PRESETS = {
+    kimi: {
+        intent: "kimi-for-coding-highspeed",
+        fastPath: "kimi-for-coding",
+        groupReview: "kimi-for-coding",
+        synthesis: "kimi-for-coding",
+    },
+    openai: {
+        intent: "gpt-5-mini",
+        fastPath: "gpt-5-mini",
+        groupReview: "gpt-5",
+        synthesis: "gpt-5",
+    },
+    anthropic: {
+        intent: "claude-haiku-4.5",
+        fastPath: "claude-haiku-4.5",
+        groupReview: "claude-sonnet-4.5",
+        synthesis: "claude-sonnet-4.5",
+    },
+};
+/**
+ * Concrete preset name for a provider. `openai-compatible` and unknown
+ * providers have no preset and return `undefined`, so the top-level `model`
+ * fallback applies.
+ */
+function presetForProvider(provider) {
+    switch (provider) {
+        case "kimi":
+            return "kimi";
+        case "openai":
+            return "openai";
+        case "anthropic":
+            return "anthropic";
+        default:
+            return undefined;
+    }
+}
+/**
+ * Selected preset name for a config: an explicit `modelPreset` wins;
+ * `provider-default` resolves to the provider-matched preset. An absent
+ * `modelPreset` means no preset (legacy behavior), and `openai-compatible`
+ * under `provider-default` has no preset — both return `undefined` so
+ * `modelForRole` falls back to the top-level `model`.
+ */
+function resolvePresetName(config) {
+    if (config.modelPreset === undefined)
+        return undefined;
+    if (config.modelPreset === "provider-default") {
+        return presetForProvider(config.provider);
+    }
+    return config.modelPreset;
+}
+/**
+ * Merged stage map for a preset name: the built-in map (when the name matches
+ * one) overlaid with the user's `modelPresets` entry for that name. A preset
+ * with neither a built-in nor a user entry resolves to `undefined`; a
+ * user-only preset contributes just its own stages, the rest falling back to
+ * the top-level `model`.
+ */
+function resolveStageMapFor(name, userPresets) {
+    const builtin = MODEL_PRESETS[name];
+    const user = userPresets?.[name];
+    if (builtin === undefined && user === undefined)
+        return undefined;
+    return { ...builtin, ...user };
+}
+
 ;// CONCATENATED MODULE: ./src/config/schema.ts
+
 
 /**
  * Files excluded from review by default: dependency dirs, build output, and
@@ -49744,9 +49824,10 @@ const reviewConfigSchema = objectType({
      * Per-stage model overrides. `intent` drives the Pass 1 intent call,
      * `fastPath` the fast-path combined call, `groupReview` the per-group file
      * reviews, and `synthesis` the final synthesis call. An unset stage falls
-     * back to the legacy top-level `model`, so configs that only set `model`
-     * keep working. Unknown keys are rejected (`.strict()`), so the old
-     * `big`/`small` roles fail loudly instead of silently disappearing.
+     * back to the selected `modelPreset` stage model, then to the legacy
+     * top-level `model`, so configs that only set `model` keep working. Unknown
+     * keys are rejected (`.strict()`), so the old `big`/`small` roles fail
+     * loudly instead of silently disappearing.
      */
     models: objectType({
         intent: stringType().min(1).optional(),
@@ -49756,6 +49837,30 @@ const reviewConfigSchema = objectType({
     })
         .strict()
         .default({}),
+    /**
+     * Selected model preset (see `src/config/model-presets.ts`). Accepts the
+     * built-in names `provider-default`, `kimi`, `openai`, `anthropic`, or any
+     * name defined under `modelPresets`. `provider-default` resolves the preset
+     * from `provider` (`kimi`/`openai`/`anthropic`); `openai-compatible` has no
+     * preset and falls through to the top-level `model`. Omitted → no preset
+     * (legacy behavior). Explicit `models.*` stages always win. Unknown preset
+     * names fail validation.
+     */
+    modelPreset: stringType().min(1).optional(),
+    /**
+     * User-defined model presets: preset name → partial per-stage model object.
+     * Entries merge over the built-in preset of the same name (user stages win);
+     * new names are selectable via `modelPreset`. Unknown stage keys are
+     * rejected (`.strict()`); unset stages fall back to the top-level `model`.
+     */
+    modelPresets: recordType(stringType().min(1), objectType({
+        intent: stringType().min(1).optional(),
+        fastPath: stringType().min(1).optional(),
+        groupReview: stringType().min(1).optional(),
+        synthesis: stringType().min(1).optional(),
+    })
+        .strict())
+        .optional(),
     baseUrl: stringType().url().optional(),
     /** Custom User-Agent for endpoints that whitelist clients. */
     userAgent: stringType().max(200).optional(),
@@ -49848,14 +49953,41 @@ const reviewConfigSchema = objectType({
         maxOutputTokens: numberType().optional(),
     })
         .default({}),
+})
+    // A selected preset must be a built-in name or defined under `modelPresets`;
+    // anything else is a stale/typo'd selector and fails fast like other
+    // invalid config.
+    .superRefine((config, ctx) => {
+    if (config.modelPreset === undefined)
+        return;
+    const knownPresets = [
+        ...BUILTIN_MODEL_PRESET_NAMES,
+        ...Object.keys(config.modelPresets ?? {}),
+    ];
+    if (!knownPresets.includes(config.modelPreset)) {
+        ctx.addIssue({
+            code: ZodIssueCode.custom,
+            path: ["modelPreset"],
+            message: `Unknown model preset "${config.modelPreset}"; use a built-in (${BUILTIN_MODEL_PRESET_NAMES.join(", ")}) or define it under modelPresets`,
+        });
+    }
 });
 /**
- * Resolve the model for a pipeline stage. Prefers the per-stage override from
- * `config.models`, falling back to the legacy top-level `model` so old configs
- * keep their single-model behavior.
+ * Resolve the model for a pipeline stage. Precedence: explicit per-stage
+ * override from `config.models` > the selected `modelPreset` stage model
+ * (built-in or user-defined, merged) > the legacy top-level `model`. With no
+ * preset selected this reduces to `config.models[role] ?? config.model`, so
+ * old configs keep their single-model behavior.
  */
 function modelForRole(config, role) {
-    return config.models[role] ?? config.model;
+    const explicit = config.models[role];
+    if (explicit !== undefined)
+        return explicit;
+    const presetName = resolvePresetName(config);
+    const presetStage = presetName === undefined
+        ? undefined
+        : resolveStageMapFor(presetName, config.modelPresets)?.[role];
+    return presetStage ?? config.model;
 }
 
 ;// CONCATENATED MODULE: external "node:fs/promises"

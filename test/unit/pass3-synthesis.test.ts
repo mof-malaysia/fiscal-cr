@@ -231,4 +231,70 @@ describe('synthesize', () => {
     );
     expect(chatCompletion.mock.calls[1][0].model).toBe('legacy-model');
   });
+
+  it('routes the synthesis call to preset and provider-default models, honoring explicit overrides', async () => {
+    const chatCompletion = vi.fn(async (params: ChatCompletionParams) => ({
+      content: JSON.stringify({ summary: 'S', score: 70, walkthrough: [], nearDuplicates: [], likelyFalsePositives: [] }),
+      usage: { input: 1, output: 1, cached: 0 },
+    }));
+    const input = {
+      ctx: ctx([changedFile('src/a.ts')]),
+      intent: null,
+      outcomes: [outcome('a', []), outcome('b', [])],
+      findings: [],
+    };
+
+    await synthesize(
+      { chatCompletion },
+      input,
+      { ...cfg(), modelPreset: 'anthropic', models: {}, model: 'legacy-model' },
+      new UsageTracker(),
+    );
+    expect(chatCompletion.mock.calls[0][0].model).toBe('claude-sonnet-4.5');
+
+    // provider-default picks the openai preset when the provider is openai.
+    await synthesize(
+      { chatCompletion },
+      input,
+      { ...cfg(), provider: 'openai', modelPreset: 'provider-default', models: {}, model: 'legacy-model' },
+      new UsageTracker(),
+    );
+    expect(chatCompletion.mock.calls[1][0].model).toBe('gpt-5');
+
+    // Explicit models.synthesis still wins over the selected preset.
+    await synthesize(
+      { chatCompletion },
+      input,
+      { ...cfg(), modelPreset: 'anthropic', models: { synthesis: 'custom-synthesis' }, model: 'legacy-model' },
+      new UsageTracker(),
+    );
+    expect(chatCompletion.mock.calls[2][0].model).toBe('custom-synthesis');
+  });
+
+  it('routes the synthesis call to a custom modelPresets entry', async () => {
+    const chatCompletion = vi.fn(async (params: ChatCompletionParams) => ({
+      content: JSON.stringify({ summary: 'S', score: 70, walkthrough: [], nearDuplicates: [], likelyFalsePositives: [] }),
+      usage: { input: 1, output: 1, cached: 0 },
+    }));
+    const input = {
+      ctx: ctx([changedFile('src/a.ts')]),
+      intent: null,
+      outcomes: [outcome('a', []), outcome('b', [])],
+      findings: [],
+    };
+
+    await synthesize(
+      { chatCompletion },
+      input,
+      {
+        ...cfg(),
+        modelPreset: 'team',
+        modelPresets: { team: { synthesis: 'team-synthesis' } },
+        models: {},
+        model: 'legacy-model',
+      },
+      new UsageTracker(),
+    );
+    expect(chatCompletion.mock.calls[0][0].model).toBe('team-synthesis');
+  });
 });
