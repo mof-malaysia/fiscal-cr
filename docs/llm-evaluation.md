@@ -279,3 +279,14 @@ best-effort with fixed git arguments and nulled on failure.
 - Vacuous-truth conventions apply when a case has no predictions or no gold.
 - Blind human review is manual and time-consuming; sample or stratify rather
   than scoring every pair.
+
+## Pricing estimates
+
+FiscalCR resolves a local provider/model pricing snapshot for cost estimates.
+Known direct-provider model families include OpenAI, Anthropic, and Kimi Open
+Platform models; OpenRouter model IDs use OpenRouter-specific rates when the
+configured endpoint is OpenRouter. Unknown models and custom endpoints use the
+legacy fallback estimate and are marked as `fallback` in telemetry metadata.
+
+Pricing is not fetched during a review, so it cannot delay or fail a review.
+Rates can change; update the local registry when vendor pricing changes.
