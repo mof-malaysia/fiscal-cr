@@ -29,12 +29,12 @@ describe('resolvePricing', () => {
     expect(resolvePricing({ provider: 'openai', model: 'gpt-5.6-luna-20260709' })).toMatchObject({
       source: 'family',
       matchedModel: 'gpt-5.6-luna',
-      pricing: { inputPerMillion: 0.1, outputPerMillion: 0.6 },
+      pricing: { inputPerMillion: 0.2, outputPerMillion: 1.2 },
     });
     expect(resolvePricing({ provider: 'openai', model: 'gpt-5.6-terra-20260709' })).toMatchObject({
       source: 'family',
       matchedModel: 'gpt-5.6-terra',
-      pricing: { inputPerMillion: 1, outputPerMillion: 6 },
+      pricing: { inputPerMillion: 2, outputPerMillion: 12 },
     });
     expect(resolvePricing({ provider: 'openai', model: 'gpt-5.6-sol-20260709' })).toMatchObject({
       source: 'family',

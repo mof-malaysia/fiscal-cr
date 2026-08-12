@@ -4,7 +4,7 @@ import { MODEL_PRESETS } from "./model-presets.js";
 export const DEFAULT_CONFIG: ReviewConfig = {
   language: "en",
   provider: "kimi",
-  model: "kimi-for-coding",
+  model: "k3",
   models: { ...MODEL_PRESETS.kimi },
   experimental: false,
   review: {

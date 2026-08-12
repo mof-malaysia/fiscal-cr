@@ -189,17 +189,17 @@ Create `.fiscalcr-review.yml` in your repository root:
 ```yaml
 language: en
 provider: openai-compatible
-model: kimi-for-coding-highspeed
-modelPreset: kimi # optional; built-in or custom preset — explicit models.* stages win (see "Model presets")
+model: gpt-5.6-terra
+modelPreset: openai # optional; built-in or custom preset — explicit models.* stages win (see "Model presets")
 # modelPresets: # optional; custom named presets, selectable via modelPreset
 #   fast:
-#     intent: gpt-5-mini
-#     groupReview: gpt-5
+#     intent: gpt-5.6-terra
+#     groupReview: gpt-5.6-sol
 models:
-  intent: kimi-for-coding-highspeed
-  fastPath: kimi-for-coding
-  groupReview: kimi-for-coding
-  synthesis: kimi-for-coding
+  intent: gpt-5.6-terra
+  fastPath: gpt-5.6-terra
+  groupReview: gpt-5.6-sol
+  synthesis: gpt-5.6-sol
 baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
 experimental: false # opt in to prompt optimizations that may change between releases
@@ -274,7 +274,7 @@ For native Anthropic Messages API support:
 
 ```yaml
 provider: anthropic
-model: claude-sonnet-4.5
+model: claude-fable-5
 # baseUrl: https://api.anthropic.com/v1  # optional; this is the default
 ```
 
@@ -295,11 +295,11 @@ FiscalCR configures a model per pipeline stage under `models`:
 An unset stage falls back to the selected `modelPreset` stage model (see
 [Model presets](#model-presets)), then to the top-level `model`, so configs
 that only set `model` keep their single-model behavior — including configs
-with no `models` block at all. Built-in defaults: `intent` is
-`kimi-for-coding-highspeed`; `fastPath`, `groupReview`, and `synthesis` are
-`kimi-for-coding`. With no config file all stages use these defaults. Unknown
-keys under `models` (such as the legacy `big`/`small` roles) are rejected, so
-a stale config fails fast instead of silently ignoring a stage.
+with no `models` block at all. Built-in Kimi defaults are `k3-256k` for
+`intent` and `fastPath`, and `k3` for `groupReview` and `synthesis`. With no
+config file all stages use these defaults. Unknown keys under `models` (such
+as the legacy `big`/`small` roles) are rejected, so a stale config fails fast
+instead of silently ignoring a stage.
 Repo `models.*` values override the selected preset's stage models and the
 built-in defaults; an unset stage falls back to the preset stage model, then
 to the top-level repo `model`. An explicit `model` input on the GitHub Action
@@ -316,18 +316,18 @@ Built-in presets and their exact stage models:
 
 | Preset             | Stage         | Model                         |
 | ------------------ | ------------- | ----------------------------- |
-| `kimi`             | `intent`      | `kimi-for-coding-highspeed`   |
-|                    | `fastPath`    | `kimi-for-coding`             |
-|                    | `groupReview` | `kimi-for-coding`             |
-|                    | `synthesis`   | `kimi-for-coding`             |
-| `openai`           | `intent`      | `gpt-5-mini`                  |
-|                    | `fastPath`    | `gpt-5-mini`                  |
-|                    | `groupReview` | `gpt-5`                       |
-|                    | `synthesis`   | `gpt-5`                       |
-| `anthropic`        | `intent`      | `claude-haiku-4.5`            |
-|                    | `fastPath`    | `claude-haiku-4.5`            |
-|                    | `groupReview` | `claude-sonnet-4.5`           |
-|                    | `synthesis`   | `claude-sonnet-4.5`           |
+| `kimi`             | `intent`      | `k3-256k`                    |
+|                    | `fastPath`    | `k3-256k`                    |
+|                    | `groupReview` | `k3`                         |
+|                    | `synthesis`   | `k3`                         |
+| `openai`           | `intent`      | `gpt-5.6-terra`              |
+|                    | `fastPath`    | `gpt-5.6-terra`              |
+|                    | `groupReview` | `gpt-5.6-sol`                |
+|                    | `synthesis`   | `gpt-5.6-sol`                |
+| `anthropic`        | `intent`      | `claude-sonnet-5`            |
+|                    | `fastPath`    | `claude-sonnet-5`            |
+|                    | `groupReview` | `claude-fable-5`             |
+|                    | `synthesis`   | `claude-fable-5`             |
 | `provider-default` | —             | Resolves to the `kimi`, `openai`, or `anthropic` preset from `provider`; `openai-compatible` has no preset and falls back to the top-level `model`. |
 
 ```yaml
@@ -341,14 +341,14 @@ under a built-in name merges over that preset; a new name defines a fresh
 preset whose unset stages fall back to the top-level `model`:
 
 ```yaml
-model: gpt-4.1-mini # fallback for stages a preset does not set
+model: gpt-5.6-terra # fallback for stages a preset does not set
 modelPreset: team
 modelPresets:
   team:
-    intent: gpt-4.1-mini
-    groupReview: gpt-5
+    intent: gpt-5.6-terra
+    groupReview: gpt-5.6-sol
   kimi:
-    intent: team-tuned-kimi-highspeed # overrides the built-in kimi intent
+    intent: k3-256k # overrides the built-in kimi intent
 ```
 
 Unknown preset names and unknown stage keys inside `modelPresets` fail config

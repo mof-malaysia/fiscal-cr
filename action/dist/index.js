@@ -49735,22 +49735,22 @@ const BUILTIN_MODEL_PRESET_NAMES = [
  */
 const MODEL_PRESETS = {
     kimi: {
-        intent: "kimi-for-coding-highspeed",
-        fastPath: "kimi-for-coding",
-        groupReview: "kimi-for-coding",
-        synthesis: "kimi-for-coding",
+        intent: "k3-256k",
+        fastPath: "k3-256k",
+        groupReview: "k3",
+        synthesis: "k3",
     },
     openai: {
-        intent: "gpt-5-mini",
-        fastPath: "gpt-5-mini",
-        groupReview: "gpt-5",
-        synthesis: "gpt-5",
+        intent: "gpt-5.6-terra",
+        fastPath: "gpt-5.6-terra",
+        groupReview: "gpt-5.6-sol",
+        synthesis: "gpt-5.6-sol",
     },
     anthropic: {
-        intent: "claude-haiku-4.5",
-        fastPath: "claude-haiku-4.5",
-        groupReview: "claude-sonnet-4.5",
-        synthesis: "claude-sonnet-4.5",
+        intent: "claude-sonnet-5",
+        fastPath: "claude-sonnet-5",
+        groupReview: "claude-fable-5",
+        synthesis: "claude-fable-5",
     },
 };
 /**
@@ -49838,7 +49838,7 @@ const modelStageSchema = objectType({
 const reviewConfigSchema = objectType({
     language: enumType(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
     provider: enumType(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
-    model: stringType().default("kimi-for-coding"),
+    model: stringType().default("k3"),
     /**
      * Per-stage model overrides. `intent` drives the Pass 1 intent call,
      * `fastPath` the fast-path combined call, `groupReview` the per-group file
@@ -50433,8 +50433,8 @@ const OPENAI_PRICING = {
     'gpt-5': { inputPerMillion: 1.25, outputPerMillion: 10, cachedInputPerMillion: 0.125 },
     'gpt-5.6': { inputPerMillion: 5, outputPerMillion: 30, cachedInputPerMillion: 0.5 },
     'gpt-5.6-sol': { inputPerMillion: 5, outputPerMillion: 30, cachedInputPerMillion: 0.5 },
-    'gpt-5.6-terra': { inputPerMillion: 1, outputPerMillion: 6, cachedInputPerMillion: 0.1 },
-    'gpt-5.6-luna': { inputPerMillion: 0.1, outputPerMillion: 0.6, cachedInputPerMillion: 0.01 },
+    'gpt-5.6-terra': { inputPerMillion: 2, outputPerMillion: 12, cachedInputPerMillion: 0.2 },
+    'gpt-5.6-luna': { inputPerMillion: 0.2, outputPerMillion: 1.2, cachedInputPerMillion: 0.02 },
     'gpt-5-mini': { inputPerMillion: 0.25, outputPerMillion: 2, cachedInputPerMillion: 0.025 },
     o1: { inputPerMillion: 15, outputPerMillion: 60, cachedInputPerMillion: 7.5 },
     o3: { inputPerMillion: 2, outputPerMillion: 8, cachedInputPerMillion: 0.5 },
@@ -54329,6 +54329,8 @@ const FIXED_TEMPERATURE_MODELS = new Set([
     "kimi-for-coding",
     "kimi-for-coding-highspeed",
     "kimi-k3",
+    "k3",
+    "k3-256k",
 ]);
 /**
  * OpenAI reasoning models reject any temperature other than the server default.
@@ -56027,7 +56029,7 @@ var dist = __nccwpck_require__(6159);
 const DEFAULT_CONFIG = {
     language: "en",
     provider: "kimi",
-    model: "kimi-for-coding",
+    model: "k3",
     models: { ...MODEL_PRESETS.kimi },
     experimental: false,
     review: {

@@ -15,8 +15,8 @@ describe('runtime config overrides', () => {
     applyProviderOverride(config, 'openai');
 
     expect(config.provider).toBe('openai');
-    expect(modelForRole(config, 'intent')).toBe('gpt-5-mini');
-    expect(modelForRole(config, 'groupReview')).toBe('gpt-5');
+    expect(modelForRole(config, 'intent')).toBe('gpt-5.6-terra');
+    expect(modelForRole(config, 'groupReview')).toBe('gpt-5.6-sol');
   });
 
   it('pins every stage for an explicit global model override', () => {

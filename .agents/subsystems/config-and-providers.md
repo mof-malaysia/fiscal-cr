@@ -37,9 +37,9 @@ Full preset semantics — built-in stage maps, `provider-default` mapping, custo
 
 | Preset      | `intent`                  | `fastPath`              | `groupReview`            | `synthesis`              |
 | ----------- | ------------------------- | ----------------------- | ------------------------ | ------------------------ |
-| `kimi`      | `kimi-for-coding-highspeed` | `kimi-for-coding`     | `kimi-for-coding`        | `kimi-for-coding`        |
-| `openai`    | `gpt-5-mini`              | `gpt-5-mini`            | `gpt-5`                  | `gpt-5`                  |
-| `anthropic` | `claude-haiku-4.5`        | `claude-haiku-4.5`      | `claude-sonnet-4.5`      | `claude-sonnet-4.5`      |
+| `kimi`      | `k3-256k`        | `k3-256k`     | `k3`             | `k3`             |
+| `openai`    | `gpt-5.6-terra`  | `gpt-5.6-terra` | `gpt-5.6-sol`  | `gpt-5.6-sol`  |
+| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-fable-5` | `claude-fable-5` |
 
 - **`modelPresets` custom maps** — preset name → partial per-stage object (`intent`/`fastPath`/`groupReview`/`synthesis`). An entry under a built-in name merges over that built-in (user stages win, via `resolveStageMapFor`); a new name defines a fresh preset whose unset stages fall back to the top-level `model`.
 - **Precedence** (`modelForRole`): explicit `models.<stage>` > selected preset's merged stage model > top-level `model`. The Action `model` input and App `MODEL`/`FISCALCR_MODEL` pin all stages globally (see precedence above), above everything here.
@@ -100,7 +100,7 @@ Retry-with-backoff wrapper around any provider:
 
 ## Per-model knobs (config-adjacent)
 
-- `src/pipeline/temperature.ts` — `reviewTemperature(config, preferred, model)`: explicit `config.temperature` wins; models that pin their own temperature (`kimi-for-coding`, `kimi-for-coding-highspeed`, `kimi-k3`) and OpenAI reasoning models (name prefix `o1`–`o9`/`gpt-5`) get no `temperature` field at all (server default); otherwise `preferred` (0.3). `model` is the stage model actually used for the call (from `modelForRole`), defaulting to the legacy `config.model` for callers that predate stage routing.
+- `src/pipeline/temperature.ts` — `reviewTemperature(config, preferred, model)`: explicit `config.temperature` wins; Kimi models (`k3`, `k3-256k`, legacy coding IDs) and OpenAI reasoning models (name prefix `o1`–`o9`/`gpt-5`) get no `temperature` field at all (server default); otherwise `preferred` (0.3). `model` is the stage model actually used for the call (from `modelForRole`), defaulting to the legacy `config.model` for callers that predate stage routing.
 - `src/pipeline/max-output.ts` — `reviewMaxOutputTokens(config, model)`: explicit `pipeline.maxOutputTokens` wins; Kimi models (by provider or model-name prefix) get 65536; everything else 32768. Short caps truncate structured JSON mid-generation.
 - `src/utils/tokens.ts` — `estimateTokens` (~4 chars/token, ~2 for CJK) and `calculateCost` (single flat pricing table — a documented rough estimate across providers).
 

@@ -89,10 +89,10 @@ describe('loadConfig', () => {
 
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
     expect(config.models).toEqual({
-      intent: 'kimi-for-coding-highspeed',
-      fastPath: 'kimi-for-coding',
-      groupReview: 'kimi-for-coding',
-      synthesis: 'kimi-for-coding',
+      intent: 'k3-256k',
+      fastPath: 'k3-256k',
+      groupReview: 'k3',
+      synthesis: 'k3',
     });
   });
 
@@ -245,10 +245,10 @@ describe('loadConfig', () => {
     } as any;
 
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(modelForRole(config, 'intent')).toBe('claude-haiku-4.5');
-    expect(modelForRole(config, 'fastPath')).toBe('claude-haiku-4.5');
-    expect(modelForRole(config, 'groupReview')).toBe('claude-sonnet-4.5');
-    expect(modelForRole(config, 'synthesis')).toBe('claude-sonnet-4.5');
+    expect(modelForRole(config, 'intent')).toBe('claude-sonnet-5');
+    expect(modelForRole(config, 'fastPath')).toBe('claude-sonnet-5');
+    expect(modelForRole(config, 'groupReview')).toBe('claude-fable-5');
+    expect(modelForRole(config, 'synthesis')).toBe('claude-fable-5');
   });
 
   it('resolves provider-default to the preset matching the provider', async () => {
@@ -262,10 +262,10 @@ describe('loadConfig', () => {
     } as any;
 
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(modelForRole(config, 'intent')).toBe('gpt-5-mini');
-    expect(modelForRole(config, 'fastPath')).toBe('gpt-5-mini');
-    expect(modelForRole(config, 'groupReview')).toBe('gpt-5');
-    expect(modelForRole(config, 'synthesis')).toBe('gpt-5');
+    expect(modelForRole(config, 'intent')).toBe('gpt-5.6-terra');
+    expect(modelForRole(config, 'fastPath')).toBe('gpt-5.6-terra');
+    expect(modelForRole(config, 'groupReview')).toBe('gpt-5.6-sol');
+    expect(modelForRole(config, 'synthesis')).toBe('gpt-5.6-sol');
   });
 
   it('falls back to the top-level model when provider-default has no preset for openai-compatible', async () => {
@@ -297,9 +297,9 @@ describe('loadConfig', () => {
 
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
     expect(modelForRole(config, 'intent')).toBe('custom-intent-model');
-    expect(modelForRole(config, 'fastPath')).toBe('kimi-for-coding');
-    expect(modelForRole(config, 'groupReview')).toBe('kimi-for-coding');
-    expect(modelForRole(config, 'synthesis')).toBe('kimi-for-coding');
+    expect(modelForRole(config, 'fastPath')).toBe('k3-256k');
+    expect(modelForRole(config, 'groupReview')).toBe('k3');
+    expect(modelForRole(config, 'synthesis')).toBe('k3');
   });
 
   it('accepts a user-defined preset and falls unset stages back to the top-level model', async () => {
@@ -345,9 +345,9 @@ describe('loadConfig', () => {
 
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
     expect(modelForRole(config, 'intent')).toBe('team-kimi-intent');
-    expect(modelForRole(config, 'fastPath')).toBe('kimi-for-coding');
-    expect(modelForRole(config, 'groupReview')).toBe('kimi-for-coding');
-    expect(modelForRole(config, 'synthesis')).toBe('kimi-for-coding');
+    expect(modelForRole(config, 'fastPath')).toBe('k3-256k');
+    expect(modelForRole(config, 'groupReview')).toBe('k3');
+    expect(modelForRole(config, 'synthesis')).toBe('k3');
   });
 
   it('rejects an unknown stage key inside a user preset', async () => {

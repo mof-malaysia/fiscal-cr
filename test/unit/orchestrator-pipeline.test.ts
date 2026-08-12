@@ -355,10 +355,10 @@ describe('ReviewOrchestrator pipeline routing', () => {
 
     const { calls } = llm;
     expect(calls).toHaveLength(4);
-    expect(calls[0].model).toBe('kimi-for-coding-highspeed'); // intent
-    expect(calls[1].model).toBe('kimi-for-coding'); // group
-    expect(calls[2].model).toBe('kimi-for-coding'); // group
-    expect(calls[3].model).toBe('kimi-for-coding'); // synthesis
+    expect(calls[0].model).toBe('k3-256k'); // intent
+    expect(calls[1].model).toBe('k3'); // group
+    expect(calls[2].model).toBe('k3'); // group
+    expect(calls[3].model).toBe('k3'); // synthesis
   });
 
   it('provider-default resolves the anthropic preset for every stage when the provider is anthropic', async () => {
@@ -374,10 +374,10 @@ describe('ReviewOrchestrator pipeline routing', () => {
 
     const { calls } = llm;
     expect(calls).toHaveLength(4);
-    expect(calls[0].model).toBe('claude-haiku-4.5'); // intent
-    expect(calls[1].model).toBe('claude-sonnet-4.5'); // group
-    expect(calls[2].model).toBe('claude-sonnet-4.5'); // group
-    expect(calls[3].model).toBe('claude-sonnet-4.5'); // synthesis
+    expect(calls[0].model).toBe('claude-sonnet-5'); // intent
+    expect(calls[1].model).toBe('claude-fable-5'); // group
+    expect(calls[2].model).toBe('claude-fable-5'); // group
+    expect(calls[3].model).toBe('claude-fable-5'); // synthesis
   });
 
   it('provider-default resolves the openai preset for every stage when the provider is openai', async () => {
@@ -393,10 +393,10 @@ describe('ReviewOrchestrator pipeline routing', () => {
 
     const { calls } = llm;
     expect(calls).toHaveLength(4);
-    expect(calls[0].model).toBe('gpt-5-mini'); // intent
-    expect(calls[1].model).toBe('gpt-5'); // group
-    expect(calls[2].model).toBe('gpt-5'); // group
-    expect(calls[3].model).toBe('gpt-5'); // synthesis
+    expect(calls[0].model).toBe('gpt-5.6-terra'); // intent
+    expect(calls[1].model).toBe('gpt-5.6-sol'); // group
+    expect(calls[2].model).toBe('gpt-5.6-sol'); // group
+    expect(calls[3].model).toBe('gpt-5.6-sol'); // synthesis
   });
 
   it('provider-default with an openai-compatible provider falls back to the top-level model', async () => {
@@ -429,10 +429,10 @@ describe('ReviewOrchestrator pipeline routing', () => {
 
     const { calls } = llm;
     expect(calls).toHaveLength(4);
-    expect(calls[0].model).toBe('claude-haiku-4.5'); // intent: preset value
+    expect(calls[0].model).toBe('claude-sonnet-5'); // intent: preset value
     expect(calls[1].model).toBe('custom-group-review'); // group: explicit override wins
     expect(calls[2].model).toBe('custom-group-review');
-    expect(calls[3].model).toBe('claude-sonnet-4.5'); // synthesis: preset value
+    expect(calls[3].model).toBe('claude-fable-5'); // synthesis: preset value
   });
 
   it('routes a custom modelPresets entry across every stage', async () => {

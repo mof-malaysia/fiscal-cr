@@ -250,7 +250,7 @@ describe('synthesize', () => {
       { ...cfg(), modelPreset: 'anthropic', models: {}, model: 'legacy-model' },
       new UsageTracker(),
     );
-    expect(chatCompletion.mock.calls[0][0].model).toBe('claude-sonnet-4.5');
+    expect(chatCompletion.mock.calls[0][0].model).toBe('claude-fable-5');
 
     // provider-default picks the openai preset when the provider is openai.
     await synthesize(
@@ -259,7 +259,7 @@ describe('synthesize', () => {
       { ...cfg(), provider: 'openai', modelPreset: 'provider-default', models: {}, model: 'legacy-model' },
       new UsageTracker(),
     );
-    expect(chatCompletion.mock.calls[1][0].model).toBe('gpt-5');
+    expect(chatCompletion.mock.calls[1][0].model).toBe('gpt-5.6-sol');
 
     // Explicit models.synthesis still wins over the selected preset.
     await synthesize(

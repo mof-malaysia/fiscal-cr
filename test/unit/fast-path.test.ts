@@ -151,7 +151,7 @@ describe('runFastPath', () => {
     await runFastPath(llm, context(), config, new UsageTracker());
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
-    expect(params.model).toBe('claude-haiku-4.5');
+    expect(params.model).toBe('claude-sonnet-5');
     expect(params.temperature).toBe(0.3);
     expect(params.maxTokens).toBe(32_768);
   });
@@ -174,7 +174,7 @@ describe('runFastPath', () => {
     await runFastPath(llm, context(), config, new UsageTracker());
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
-    expect(params.model).toBe('gpt-5-mini');
+    expect(params.model).toBe('gpt-5.6-terra');
     expect(params.temperature).toBeUndefined();
     expect(params.maxTokens).toBe(32_768);
   });
@@ -197,7 +197,7 @@ describe('runFastPath', () => {
     await runFastPath(llm, context(), config, new UsageTracker());
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
-    expect(params.model).toBe('kimi-for-coding');
+    expect(params.model).toBe('k3-256k');
     expect(params.temperature).toBeUndefined();
     expect(params.maxTokens).toBe(65_536);
   });

@@ -37,22 +37,22 @@ export type PartialModelStageMap = Partial<ModelStageMap>;
  */
 export const MODEL_PRESETS: Record<ConcreteBuiltinModelPreset, ModelStageMap> = {
   kimi: {
-    intent: "kimi-for-coding-highspeed",
-    fastPath: "kimi-for-coding",
-    groupReview: "kimi-for-coding",
-    synthesis: "kimi-for-coding",
+    intent: "k3-256k",
+    fastPath: "k3-256k",
+    groupReview: "k3",
+    synthesis: "k3",
   },
   openai: {
-    intent: "gpt-5-mini",
-    fastPath: "gpt-5-mini",
-    groupReview: "gpt-5",
-    synthesis: "gpt-5",
+    intent: "gpt-5.6-terra",
+    fastPath: "gpt-5.6-terra",
+    groupReview: "gpt-5.6-sol",
+    synthesis: "gpt-5.6-sol",
   },
   anthropic: {
-    intent: "claude-haiku-4.5",
-    fastPath: "claude-haiku-4.5",
-    groupReview: "claude-sonnet-4.5",
-    synthesis: "claude-sonnet-4.5",
+    intent: "claude-sonnet-5",
+    fastPath: "claude-sonnet-5",
+    groupReview: "claude-fable-5",
+    synthesis: "claude-fable-5",
   },
 };
 

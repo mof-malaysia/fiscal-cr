@@ -5,6 +5,8 @@ const FIXED_TEMPERATURE_MODELS = new Set([
   "kimi-for-coding",
   "kimi-for-coding-highspeed",
   "kimi-k3",
+  "k3",
+  "k3-256k",
 ]);
 
 /**

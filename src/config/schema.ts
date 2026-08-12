@@ -45,7 +45,7 @@ export type ModelRole = keyof z.infer<typeof modelStageSchema>;
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
   provider: z.enum(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
-  model: z.string().default("kimi-for-coding"),
+  model: z.string().default("k3"),
   /**
    * Per-stage model overrides. `intent` drives the Pass 1 intent call,
    * `fastPath` the fast-path combined call, `groupReview` the per-group file

@@ -6,7 +6,9 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 
 ## Purpose
 
-Opt-in opinionated presets: a preset pins the four pipeline stages to provider-tuned models so users don't hand-write a `models` block. Presets are **YAML-only and optional** — omitting `modelPreset` keeps the legacy single-model behavior (see [Precedence](#precedence)). `provider-default` auto-picks the preset matching the repo `provider`.
+`provider-default` auto-picks the preset matching the effective repo provider.
+The current built-ins use latest provider models: Kimi K3, OpenAI GPT-5.6, and
+Anthropic Claude Fable/Sonnet 5.
 
 ## Source files
 
@@ -20,7 +22,7 @@ Stage keys (`ModelRole`): `intent` (Pass 1 intent call), `fastPath` (fast-path c
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `model` | string | `kimi-for-coding` | Legacy top-level fallback; used when neither a stage nor a preset resolves |
+| `model` | string | `k3` | Legacy top-level fallback; used when neither a stage nor a preset resolves |
 | `models` | `{ intent?, fastPath?, groupReview?, synthesis? }` — `.strict()` | `{}` | Explicit per-stage overrides; unset stages fall through to preset → `model` |
 | `modelPreset` | string | absent | Selector: a built-in name (`provider-default`, `kimi`, `openai`, `anthropic`) or any name defined under `modelPresets` |
 | `modelPresets` | `Record<name, { intent?, fastPath?, groupReview?, synthesis? }>` — `.strict()` | absent | Custom partial stage maps; an entry under a built-in name merges over that built-in |
@@ -35,9 +37,9 @@ Exact stage maps from `MODEL_PRESETS`:
 
 | Preset | `intent` | `fastPath` | `groupReview` | `synthesis` |
 | --- | --- | --- | --- | --- |
-| `kimi` | `kimi-for-coding-highspeed` | `kimi-for-coding` | `kimi-for-coding` | `kimi-for-coding` |
-| `openai` | `gpt-5-mini` | `gpt-5-mini` | `gpt-5` | `gpt-5` |
-| `anthropic` | `claude-haiku-4.5` | `claude-haiku-4.5` | `claude-sonnet-4.5` | `claude-sonnet-4.5` |
+| `kimi` | `k3-256k` | `k3-256k` | `k3` | `k3` |
+| `openai` | `gpt-5.6-terra` | `gpt-5.6-terra` | `gpt-5.6-sol` | `gpt-5.6-sol` |
+| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-fable-5` | `claude-fable-5` |
 
 ```yaml
 # Select any built-in directly:
