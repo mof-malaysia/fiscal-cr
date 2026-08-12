@@ -250,7 +250,7 @@ describe('synthesize', () => {
       { ...cfg(), modelPreset: 'anthropic', models: {}, model: 'legacy-model' },
       new UsageTracker(),
     );
-    expect(chatCompletion.mock.calls[0][0].model).toBe('claude-fable-5');
+    expect(chatCompletion.mock.calls[0][0].model).toBe('claude-opus-5');
 
     // provider-default picks the openai preset when the provider is openai.
     await synthesize(

@@ -51,8 +51,8 @@ export const MODEL_PRESETS: Record<ConcreteBuiltinModelPreset, ModelStageMap> = 
   anthropic: {
     intent: "claude-sonnet-5",
     fastPath: "claude-sonnet-5",
-    groupReview: "claude-fable-5",
-    synthesis: "claude-fable-5",
+    groupReview: "claude-opus-5",
+    synthesis: "claude-opus-5",
   },
 };
 

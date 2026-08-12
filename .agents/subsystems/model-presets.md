@@ -39,7 +39,7 @@ Exact stage maps from `MODEL_PRESETS`:
 | --- | --- | --- | --- | --- |
 | `kimi` | `k3-256k` | `k3-256k` | `k3` | `k3` |
 | `openai` | `gpt-5.6-terra` | `gpt-5.6-terra` | `gpt-5.6-sol` | `gpt-5.6-sol` |
-| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-fable-5` | `claude-fable-5` |
+| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-opus-5` | `claude-opus-5` |
 
 ```yaml
 # Select any built-in directly:

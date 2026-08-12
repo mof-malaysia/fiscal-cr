@@ -70,7 +70,6 @@ const ANTHROPIC_PRICING: Record<string, TokenPricing> = {
   'claude-haiku-4.5': { inputPerMillion: 1, outputPerMillion: 5, cachedInputPerMillion: 0.1 },
   'claude-3.5-sonnet': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
   'claude-3-5-sonnet': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
-  'claude-fable-5': { inputPerMillion: 10, outputPerMillion: 50, cachedInputPerMillion: 1 },
 };
 
 const KIMI_K27_CODE_PRICING: TokenPricing = {

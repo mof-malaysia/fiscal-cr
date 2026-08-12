@@ -247,8 +247,8 @@ describe('loadConfig', () => {
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
     expect(modelForRole(config, 'intent')).toBe('claude-sonnet-5');
     expect(modelForRole(config, 'fastPath')).toBe('claude-sonnet-5');
-    expect(modelForRole(config, 'groupReview')).toBe('claude-fable-5');
-    expect(modelForRole(config, 'synthesis')).toBe('claude-fable-5');
+    expect(modelForRole(config, 'groupReview')).toBe('claude-opus-5');
+    expect(modelForRole(config, 'synthesis')).toBe('claude-opus-5');
   });
 
   it('resolves provider-default to the preset matching the provider', async () => {

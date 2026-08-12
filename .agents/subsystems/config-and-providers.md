@@ -39,7 +39,7 @@ Full preset semantics — built-in stage maps, `provider-default` mapping, custo
 | ----------- | ------------------------- | ----------------------- | ------------------------ | ------------------------ |
 | `kimi`      | `k3-256k`        | `k3-256k`     | `k3`             | `k3`             |
 | `openai`    | `gpt-5.6-terra`  | `gpt-5.6-terra` | `gpt-5.6-sol`  | `gpt-5.6-sol`  |
-| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-fable-5` | `claude-fable-5` |
+| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-opus-5` | `claude-opus-5` |
 
 - **`modelPresets` custom maps** — preset name → partial per-stage object (`intent`/`fastPath`/`groupReview`/`synthesis`). An entry under a built-in name merges over that built-in (user stages win, via `resolveStageMapFor`); a new name defines a fresh preset whose unset stages fall back to the top-level `model`.
 - **Precedence** (`modelForRole`): explicit `models.<stage>` > selected preset's merged stage model > top-level `model`. The Action `model` input and App `MODEL`/`FISCALCR_MODEL` pin all stages globally (see precedence above), above everything here.

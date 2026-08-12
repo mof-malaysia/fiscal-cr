@@ -375,9 +375,9 @@ describe('ReviewOrchestrator pipeline routing', () => {
     const { calls } = llm;
     expect(calls).toHaveLength(4);
     expect(calls[0].model).toBe('claude-sonnet-5'); // intent
-    expect(calls[1].model).toBe('claude-fable-5'); // group
-    expect(calls[2].model).toBe('claude-fable-5'); // group
-    expect(calls[3].model).toBe('claude-fable-5'); // synthesis
+    expect(calls[1].model).toBe('claude-opus-5'); // group
+    expect(calls[2].model).toBe('claude-opus-5'); // group
+    expect(calls[3].model).toBe('claude-opus-5'); // synthesis
   });
 
   it('provider-default resolves the openai preset for every stage when the provider is openai', async () => {
@@ -432,7 +432,7 @@ describe('ReviewOrchestrator pipeline routing', () => {
     expect(calls[0].model).toBe('claude-sonnet-5'); // intent: preset value
     expect(calls[1].model).toBe('custom-group-review'); // group: explicit override wins
     expect(calls[2].model).toBe('custom-group-review');
-    expect(calls[3].model).toBe('claude-fable-5'); // synthesis: preset value
+    expect(calls[3].model).toBe('claude-opus-5'); // synthesis: preset value
   });
 
   it('routes a custom modelPresets entry across every stage', async () => {

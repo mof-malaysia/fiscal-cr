@@ -49749,8 +49749,8 @@ const MODEL_PRESETS = {
     anthropic: {
         intent: "claude-sonnet-5",
         fastPath: "claude-sonnet-5",
-        groupReview: "claude-fable-5",
-        synthesis: "claude-fable-5",
+        groupReview: "claude-opus-5",
+        synthesis: "claude-opus-5",
     },
 };
 /**
@@ -50451,7 +50451,6 @@ const ANTHROPIC_PRICING = {
     'claude-haiku-4.5': { inputPerMillion: 1, outputPerMillion: 5, cachedInputPerMillion: 0.1 },
     'claude-3.5-sonnet': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
     'claude-3-5-sonnet': { inputPerMillion: 3, outputPerMillion: 15, cachedInputPerMillion: 0.3 },
-    'claude-fable-5': { inputPerMillion: 10, outputPerMillion: 50, cachedInputPerMillion: 1 },
 };
 const KIMI_K27_CODE_PRICING = {
     inputPerMillion: 0.95,

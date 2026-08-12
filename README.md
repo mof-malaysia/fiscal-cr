@@ -274,7 +274,7 @@ For native Anthropic Messages API support:
 
 ```yaml
 provider: anthropic
-model: claude-fable-5
+model: claude-sonnet-5
 # baseUrl: https://api.anthropic.com/v1  # optional; this is the default
 ```
 
@@ -326,8 +326,8 @@ Built-in presets and their exact stage models:
 |                    | `synthesis`   | `gpt-5.6-sol`                |
 | `anthropic`        | `intent`      | `claude-sonnet-5`            |
 |                    | `fastPath`    | `claude-sonnet-5`            |
-|                    | `groupReview` | `claude-fable-5`             |
-|                    | `synthesis`   | `claude-fable-5`             |
+|                    | `groupReview` | `claude-opus-5`              |
+|                    | `synthesis`   | `claude-opus-5`              |
 | `provider-default` | —             | Resolves to the `kimi`, `openai`, or `anthropic` preset from `provider`; `openai-compatible` has no preset and falls back to the top-level `model`. |
 
 ```yaml
