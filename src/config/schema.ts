@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  BUILTIN_MODEL_PRESET_NAMES,
+  resolvePresetName,
+  resolveStageMapFor,
+} from "./model-presets.js";
 
 /**
  * Files excluded from review by default: dependency dirs, build output, and
@@ -24,11 +29,52 @@ export const DEFAULT_EXCLUDE_PATTERNS = [
   "**/go.work.sum",
   "**/packages.lock.json", // NuGet
 ] as const;
+/** Shared strict shape for explicit stage overrides and custom preset stages. */
+export const modelStageSchema = z
+  .object({
+    intent: z.string().min(1).optional(),
+    fastPath: z.string().min(1).optional(),
+    groupReview: z.string().min(1).optional(),
+    synthesis: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type ModelRole = keyof z.infer<typeof modelStageSchema>;
+
 
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
   provider: z.enum(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
-  model: z.string().default("kimi-for-coding"),
+  model: z.string().default("k3"),
+  /**
+   * Per-stage model overrides. `intent` drives the Pass 1 intent call,
+   * `fastPath` the fast-path combined call, `groupReview` the per-group file
+   * reviews, and `synthesis` the final synthesis call. An unset stage falls
+   * back to the selected `modelPreset` stage model, then to the legacy
+   * top-level `model`, so configs that only set `model` keep working. Unknown
+   * keys are rejected (`.strict()`), so the old `big`/`small` roles fail
+   * loudly instead of silently disappearing.
+   */
+  models: modelStageSchema.default({}),
+
+  /**
+   * Selected model preset (see `src/config/model-presets.ts`). Accepts the
+   * built-in names `provider-default`, `kimi`, `openai`, `anthropic`, or any
+   * name defined under `modelPresets`. `provider-default` resolves the preset
+   * from `provider` (`kimi`/`openai`/`anthropic`); `openai-compatible` has no
+   * preset and falls through to the top-level `model`. Omitted → no preset
+   * (legacy behavior). Explicit `models.*` stages always win. Unknown preset
+   * names fail validation.
+   */
+  modelPreset: z.string().min(1).optional(),
+  /**
+   * User-defined model presets: preset name → partial per-stage model object.
+   * Entries merge over the built-in preset of the same name (user stages win);
+   * new names are selectable via `modelPreset`. Unknown stage keys are
+   * rejected (`.strict()`); unset stages fall back to the top-level `model`.
+   */
+  modelPresets: z.record(z.string().min(1), modelStageSchema).optional(),
+
   baseUrl: z.string().url().optional(),
   /** Custom User-Agent for endpoints that whitelist clients. */
   userAgent: z.string().max(200).optional(),
@@ -146,6 +192,42 @@ export const reviewConfigSchema = z.object({
       maxOutputTokens: z.number().optional(),
     })
     .default({}),
-});
+})
+  // A selected preset must be a built-in name or defined under `modelPresets`;
+  // anything else is a stale/typo'd selector and fails fast like other
+  // invalid config.
+  .superRefine((config, ctx) => {
+    if (config.modelPreset === undefined) return;
+    const knownPresets = [
+      ...BUILTIN_MODEL_PRESET_NAMES,
+      ...Object.keys(config.modelPresets ?? {}),
+    ];
+    if (!knownPresets.includes(config.modelPreset)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["modelPreset"],
+        message: `Unknown model preset "${config.modelPreset}"; use a built-in (${BUILTIN_MODEL_PRESET_NAMES.join(", ")}) or define it under modelPresets`,
+      });
+    }
+  });
 
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
+
+
+/**
+ * Resolve the model for a pipeline stage. Precedence: explicit per-stage
+ * override from `config.models` > the selected `modelPreset` stage model
+ * (built-in or user-defined, merged) > the legacy top-level `model`. With no
+ * preset selected this reduces to `config.models[role] ?? config.model`, so
+ * old configs keep their single-model behavior.
+ */
+export function modelForRole(config: ReviewConfig, role: ModelRole): string {
+  const explicit = config.models[role];
+  if (explicit !== undefined) return explicit;
+  const presetName = resolvePresetName(config);
+  const presetStage =
+    presetName === undefined
+      ? undefined
+      : resolveStageMapFor(presetName, config.modelPresets)?.[role];
+  return presetStage ?? config.model;
+}

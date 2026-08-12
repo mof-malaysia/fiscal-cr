@@ -1,19 +1,19 @@
 # Subsystem: Config & Providers
 
-Configuration resolution and the LLM provider layer. Files: `src/config/{schema,defaults,loader}.ts`, `src/providers/{interface,factory,openai-compatible,resilient}.ts`, plus per-model knobs `src/pipeline/{temperature,max-output}.ts` and error types `src/utils/errors.ts`.
+Configuration resolution and the LLM provider layer. Files: `src/config/{schema,defaults,loader,model-presets}.ts`, `src/providers/{interface,factory,openai-compatible,anthropic,resilient}.ts`, plus per-model knobs `src/pipeline/{temperature,max-output}.ts` and error types `src/utils/errors.ts`.
 
-Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS.md) for non-negotiables. Related: [review pipeline](review-pipeline.md), [GitHub integration](github-integration.md).
+Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS.md) for non-negotiables. Related: [model presets](model-presets.md), [review pipeline](review-pipeline.md), [GitHub integration](github-integration.md).
 
 ## Config precedence (highest wins)
 
-1. **Explicit Action inputs** (`action/index.ts`): `model`, `base_url`, `user_agent`, `language`, `fail_on`, `experimental` override the loaded repo config after `loadConfig`.
-2. **App env vars** (webhooks.ts / index.ts): at provider construction, `appCtx.provider ?? config.provider`, `appCtx.model ?? config.model`, `appCtx.userAgent ?? config.userAgent`; `baseUrl` env always wins (no config fallback in App mode).
+1. **Explicit Action inputs** (`action/index.ts`): `provider`, `model`, `model_params`, `base_url`, `user_agent`, `language`, `fail_on`, `experimental` override the loaded repo config after `loadConfig`. `provider` becomes effective before `provider-default` model routing; `model` is a **global override** that pins `config.model` and all four `config.models.*` stages, bypassing `modelPreset`/`models` precedence entirely.
+2. **App env vars** (`src/index.ts` → `webhooks.ts`): `applyProviderOverride` normalizes `config.provider` from `MODEL_PROVIDER`; `applyModelOverride` pins `config.model` and all four `config.models.*` stages from `MODEL`/`FISCALCR_MODEL` (same global override semantics) before provider construction; `baseUrl` env always wins (no config fallback in App mode).
 3. **Repo config** `.fiscalcr-review.yml` (path overridable via `config_path` input), fetched through the GitHub API.
-4. **Built-in defaults** — `DEFAULT_CONFIG` in `src/config/defaults.ts`, mirrored by zod schema `.default()` values.
+4. **Built-in defaults** — `DEFAULT_CONFIG` in `src/config/defaults.ts`; missing-config fallback uses `models: {}` plus `modelPreset: provider-default`, while explicit repo YAML uses zod schema defaults.
 
-- `src/config/schema.ts` — `reviewConfigSchema` (zod) is the **canonical** config definition. Shape: top-level `language` (en/zh-TW/zh-CN/ja/ko), `provider` (openai-compatible/kimi/openai/anthropic), `model`, `baseUrl`, `userAgent`, `temperature`, `experimental`; `review.{auto,aspects,minSeverity,maxAnnotations,failOn,incremental,comments}`; `files.{include,exclude,maxFileSize}`; `rules[]` (custom repo rules); `prompt.{systemAppend,reviewFocus}`; `pipeline.{enabled,concurrency,groupTokenBudget,relatedContextBudget,maxGroups,fastPathThreshold,minConfidence,maxRetries,callTimeoutMs,maxOutputTokens}`.
+- `src/config/schema.ts` — `reviewConfigSchema` (zod) is the **canonical** config definition. Shape: top-level `language` (en/zh-TW/zh-CN/ja/ko), `provider` (openai-compatible/kimi/openai/anthropic), `model` (legacy single-model fallback), `models` (per-stage `intent`/`fastPath`/`groupReview`/`synthesis`, `.strict()` so legacy `big`/`small` keys fail fast), `modelPreset` (preset selector), `modelPresets` (custom preset name → partial stage map), `baseUrl`, `userAgent`, `temperature`, `modelParams` (provider-native fields; `reasoning_effort`/`verbosity` typed, others passthrough), `experimental`; `review.{auto,aspects,minSeverity,maxAnnotations,failOn,incremental,comments}`; `files.{include,exclude,maxFileSize}`; `rules[]` (custom repo rules); `prompt.{systemAppend,reviewFocus}`; `pipeline.{enabled,concurrency,groupTokenBudget,relatedContextBudget,maxGroups,fastPathThreshold,minConfidence,maxRetries,callTimeoutMs,maxOutputTokens}`. `modelForRole(config, role)` (same file) resolves a stage model.
 - `DEFAULT_EXCLUDE_PATTERNS` is a shared const used both by the schema default and `DEFAULT_CONFIG` specifically so the two cannot drift.
-- `src/config/defaults.ts` — `DEFAULT_CONFIG`, a fully-populated `ReviewConfig` mirroring schema defaults. **Changing one without the other is a bug.**
+- `src/config/defaults.ts` — `DEFAULT_CONFIG`, which mirrors schema defaults and selects `provider-default` so missing-config stage models follow the effective provider.
 
 ## Loader (`src/config/loader.ts`)
 
@@ -23,6 +23,30 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 - **Invalid config → throws `ConfigError`** (fails fast by design, per README).
 - **Missing (404) → `DEFAULT_CONFIG`**.
 - **Other API errors → rethrown** (never silently defaulted).
+
+## Model presets & stage routing
+
+Full preset semantics — built-in stage maps, `provider-default` mapping, custom merge behavior, validation details, and the change recipe — live in the dedicated [model presets](model-presets.md) guide. Overview:
+
+`src/config/model-presets.ts` holds the built-in presets and their resolvers; `schema.ts` exposes `modelForRole(config, role)`, which every pipeline call site uses.
+
+- **Stage keys** (`ModelRole`): `intent` (Pass 1), `fastPath` (fast-path combined call), `groupReview` (Pass 2 per-group reviews), `synthesis` (Pass 3 synthesis).
+- **`modelPreset` selector** — optional; accepts a built-in name (`provider-default`, `kimi`, `openai`, `anthropic`) or any name defined under `modelPresets`. Omitted → no preset (legacy behavior: `models.<stage>` else top-level `model`).
+- **`provider-default` is a selector, not a map**: `resolvePresetName` delegates to `presetForProvider(config.provider)` (`kimi` → kimi preset, `openai` → openai, `anthropic` → anthropic). `openai-compatible` (or an unknown provider) has **no preset**, so every stage falls back to the top-level `model`.
+- **Built-in stage maps** (`MODEL_PRESETS`):
+
+| Preset      | `intent`                  | `fastPath`              | `groupReview`            | `synthesis`              |
+| ----------- | ------------------------- | ----------------------- | ------------------------ | ------------------------ |
+| `kimi`      | `k3-256k`        | `k3-256k`     | `k3`             | `k3`             |
+| `openai`    | `gpt-5.6-terra`  | `gpt-5.6-terra` | `gpt-5.6-sol`  | `gpt-5.6-sol`  |
+| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-opus-5` | `claude-opus-5` |
+
+- **`modelPresets` custom maps** — preset name → partial per-stage object (`intent`/`fastPath`/`groupReview`/`synthesis`). An entry under a built-in name merges over that built-in (user stages win, via `resolveStageMapFor`); a new name defines a fresh preset whose unset stages fall back to the top-level `model`.
+- **Precedence** (`modelForRole`): explicit `models.<stage>` > selected preset's merged stage model > top-level `model`. The Action `model` input and App `MODEL`/`FISCALCR_MODEL` pin all stages globally (see precedence above), above everything here.
+- **Validation**: unknown `modelPreset` names fail via `superRefine` (a `ConfigError`); unknown stage keys inside `models` and `modelPresets` entries are rejected by `.strict()` (the old `big`/`small` roles fail loudly instead of silently disappearing); empty names are rejected (`min(1)`).
+- **Presets are YAML-only**: there is no Action input or App env var for preset selection (README).
+- **Consumers**: `runFastPath` → `modelForRole(config, 'fastPath')`; `pass1-intent.ts` → `'intent'`; `pass2-review.ts` → `'groupReview'`; `pass3-synthesis.ts` → `'synthesis'`. Provider construction (`webhooks.ts`, `action/index.ts`) uses `modelForRole(config, 'groupReview')` — the group-review stage dominates the token budget.
+- **Tests**: preset resolution/validation in `test/unit/config-loader.test.ts` (built-in selection, `provider-default` mapping, `openai-compatible` fallback, `models.*` over preset, custom + merge-over-built-in presets, unknown preset/stage-key rejection); stage routing in `test/unit/fast-path.test.ts`, `test/unit/orchestrator-pipeline.test.ts`, `test/unit/pass3-synthesis.test.ts`.
 
 ## Provider layer
 
@@ -38,7 +62,7 @@ interface LLMProvider {
 
 ### Factory (`factory.ts`)
 
-`createLLMProvider({ apiKey, model, baseUrl?, provider, userAgent?, retry? })`:
+`createLLMProvider({ apiKey, model, baseUrl?, provider, userAgent?, modelParams?, retry? })`:
 
 - `parseProvider` validates the name against `["openai-compatible", "kimi", "openai", "anthropic"]`; unknown → `ConfigError`.
 - `openai-compatible` requires an explicit `baseUrl` (else `ConfigError`).
@@ -76,23 +100,26 @@ Retry-with-backoff wrapper around any provider:
 
 ## Per-model knobs (config-adjacent)
 
-- `src/pipeline/temperature.ts` — `reviewTemperature(config)`: explicit `config.temperature` wins; models that pin their own temperature (`kimi-for-coding`, `kimi-for-coding-highspeed`, `kimi-k3`) get no `temperature` field at all; otherwise 0.3.
-- `src/pipeline/max-output.ts` — `reviewMaxOutputTokens(config)`: explicit `pipeline.maxOutputTokens` wins; Kimi models (by provider or model-name prefix) get 65536; everything else 32768. Short caps truncate structured JSON mid-generation.
+- `src/pipeline/temperature.ts` — `reviewTemperature(config, preferred, model)`: explicit `config.temperature` wins; Kimi models (`k3`, `k3-256k`, legacy coding IDs) and OpenAI reasoning models (name prefix `o1`–`o9`/`gpt-5`) get no `temperature` field at all (server default); otherwise `preferred` (0.3). `model` is the stage model actually used for the call (from `modelForRole`), defaulting to the legacy `config.model` for callers that predate stage routing.
+- `src/pipeline/max-output.ts` — `reviewMaxOutputTokens(config, model)`: explicit `pipeline.maxOutputTokens` wins; Kimi models (by provider or model-name prefix) get 65536; everything else 32768. Short caps truncate structured JSON mid-generation.
 - `src/utils/tokens.ts` — `estimateTokens` (~4 chars/token, ~2 for CJK) and `calculateCost` (single flat pricing table — a documented rough estimate across providers).
 
 ## Invariants
 
 - Schema (`schema.ts`) and `defaults.ts` never drift; `DEFAULT_EXCLUDE_PATTERNS` exists to enforce this for the one shared list.
 - Invalid repo config fails fast; missing config defaults; unrelated API errors propagate.
+- Stage models resolve through `modelForRole` (`models.<stage>` > preset stage > top-level `model`); unknown preset names and unknown stage keys fail fast, never silently ignored.
 - Provider names are validated at construction; `openai-compatible` without `baseUrl` is a `ConfigError`, not a runtime 404.
 - Retry only on transient errors (429/5xx/timeout/network); auth and bad-request errors fail immediately.
 - JSON-format review calls always set `response_format: json_object` and a max-token cap so truncation is detectable and salvageable.
 
 ## Relevant tests
 
-- `test/unit/config-loader.test.ts` — load from custom path, missing → defaults, non-404 rethrow.
+- `test/unit/config-loader.test.ts` — load from custom path, missing → defaults, non-404 rethrow; `modelPreset`/`modelPresets` resolution and validation (built-in selection, `provider-default` mapping, `openai-compatible` fallback, `models.*` over preset, custom + merge-over-built-in presets, unknown preset/stage-key rejection).
+- `test/unit/fast-path.test.ts`, `test/unit/orchestrator-pipeline.test.ts`, `test/unit/pass3-synthesis.test.ts` — stage-model routing (`fastPath`/`intent`/`groupReview`/`synthesis`) end to end.
 - `test/unit/provider-factory.test.ts` — provider validation, baseUrl requirement, kimi preset.
 - `test/unit/openai-compatible-provider.test.ts` — request shaping, error surfacing.
+- `test/unit/anthropic-provider.test.ts` — Messages API adapter.
 - `test/unit/resilient-provider.test.ts` — retry classification, backoff, Retry-After.
 - `test/unit/temperature.test.ts`, `test/unit/max-output.test.ts` — per-model knob resolution.
 - `test/unit/tokens.test.ts` — token estimation + cost math.

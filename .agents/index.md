@@ -3,6 +3,7 @@
 Grep-friendly orientation for agents. Subsystem deep-dives:
 
 - [Review pipeline](subsystems/review-pipeline.md)
+- [Model presets](subsystems/model-presets.md)
 - [GitHub integration](subsystems/github-integration.md)
 - [Config & providers](subsystems/config-and-providers.md)
 
@@ -25,7 +26,7 @@ Both entry points funnel into the same `ReviewOrchestrator` (`src/review/orchest
 | GitHub Action | `action/index.ts` (ncc-bundled to `action/dist/index.js`) | `action.yml` (root) — `runs.main: action/dist/index.js`, node20 | Action inputs + `GITHUB_WORKSPACE` checkout |
 | Self-hosted App | `src/index.ts` → `src/app.ts` (Hono server) → `src/github/webhooks.ts` | `pnpm dev` / `pnpm start` | `.env` vars, webhook at `POST /api/webhook`, `GET /health` |
 
-Action inputs (`action/index.ts`, via `@actions/core`): `api_key` (required), `github_token`, `provider`, `model`, `base_url`, `user_agent`, `language`, `fail_on`, `config_path` (default `.fiscalcr-review.yml`), opt-in `experimental` (prompt optimizations), and opt-in `telemetry` (metrics-only Action logs). Outputs: `review_summary`, `annotations_count`, `critical_count`, `tokens_used`, `cost_estimate`.
+Action inputs (`action/index.ts`, via `@actions/core`): `api_key` (required), `github_token`, `provider`, `model` (global override — pins every pipeline stage), `model_params`, `base_url`, `user_agent`, `language`, `fail_on`, `config_path` (default `.fiscalcr-review.yml`), opt-in `experimental` (prompt optimizations), and opt-in `telemetry` (metrics-only Action logs). Outputs: `review_summary`, `annotations_count`, `critical_count`, `tokens_used`, `cost_estimate`.
 
 App env vars (`src/index.ts`, `.env.example`): `API_KEY` (or `FISCALCR_API_KEY`), `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `MODEL_PROVIDER`, `MODEL` (or `FISCALCR_MODEL`), `BASE_URL` (or `FISCALCR_BASE_URL`), `LLM_USER_AGENT`, `PORT` (3000), `LOG_LEVEL`.
 
@@ -38,7 +39,7 @@ App env vars (`src/index.ts`, `.env.example`): `API_KEY` (or `FISCALCR_API_KEY`)
 | `src/review/` | Orchestrator + scope decision + diff analysis + file filtering/sourcing + summary builder |
 | `src/pipeline/` | Fast path + multi-pass pipeline (intent → group review → synthesis), prompts, response schemas, grouping, usage tracking, per-model output/temperature resolution |
 | `src/github/` | Octokit/GitHub API layer: webhooks, checks, PR context, comments, review state, fingerprints, threads |
-| `src/config/` | Zod schema (canonical), defaults, repo-config loader |
+| `src/config/` | Zod schema (canonical), defaults, repo-config loader, model presets (`model-presets.ts`) |
 | `src/providers/` | `LLMProvider` interface, factory, OpenAI-compatible adapter, resilient (retry) decorator |
 | `src/types/` | `review.ts` — shared domain types (`ReviewResult`, `ReviewAnnotation`, `PullRequestContext`, …) |
 | `src/utils/` | logger, errors, tokens, JSON extraction/repair, concurrency limiter |
@@ -68,8 +69,9 @@ App env vars (`src/index.ts`, `.env.example`): `API_KEY` (or `FISCALCR_API_KEY`)
 | Finding fingerprints | `src/github/fingerprint.ts` |
 | Thread resolution | `src/github/threads.ts` |
 | Webhook triggers & commands | `src/github/webhooks.ts` |
-| Config | `src/config/{schema,defaults,loader}.ts` |
-| Providers | `src/providers/{interface,factory,openai-compatible,resilient}.ts` |
+| Config | `src/config/{schema,defaults,loader,model-presets}.ts` |
+| Model presets / stage model routing | `src/config/model-presets.ts`, `src/config/schema.ts` (`modelForRole`) — see [model presets](subsystems/model-presets.md) |
+| Providers | `src/providers/{interface,factory,openai-compatible,anthropic,resilient}.ts` |
 
 ## Core runtime flows
 
@@ -138,7 +140,9 @@ See [subsystems/config-and-providers.md](subsystems/config-and-providers.md) and
 
 Precedence (highest wins): explicit Action inputs / App env vars → repo `.fiscalcr-review.yml` → built-in defaults (`src/config/defaults.ts` / zod schema `.default()`). `src/config/schema.ts` is canonical; `defaults.ts` mirrors it (the shared `DEFAULT_EXCLUDE_PATTERNS` const exists specifically to prevent drift).
 
-Providers are OpenAI-compatible via one adapter (`src/providers/openai-compatible.ts`), selected by `src/providers/factory.ts`, wrapped in retry/backoff by `src/providers/resilient.ts`. `kimi` is a preset with a built-in base URL; `openai-compatible` requires an explicit `base_url`.
+Models resolve per pipeline stage via `modelForRole` (`schema.ts` + `model-presets.ts`): explicit `models.<stage>` > selected `modelPreset` stage model > top-level `model`. Presets (`modelPreset` selector, `modelPresets` custom maps) are YAML-only — no Action input or App env var selects one — and the Action `model` input / App `MODEL`/`FISCALCR_MODEL` pin all stages globally. See [model presets](subsystems/model-presets.md) for the built-in stage mappings and full preset semantics.
+
+Providers: one OpenAI-compatible adapter (`src/providers/openai-compatible.ts`) plus a native Anthropic Messages adapter (`src/providers/anthropic.ts`), selected by `src/providers/factory.ts`, wrapped in retry/backoff by `src/providers/resilient.ts`. `kimi` is a preset with a built-in base URL; `openai-compatible` requires an explicit `base_url`.
 
 GitHub state is persisted in a hidden marker inside one sticky summary comment per PR — no external storage, identical in both modes. Findings are fingerprinted (`src/github/fingerprint.ts`) so the same issue is never posted twice, even across full re-reviews or after a human deletes a bot comment.
 
@@ -149,7 +153,7 @@ Vitest (`test/unit/*.test.ts`, globals enabled, node env). Fixture repo: `test/f
 | Area | Test file(s) | Covers |
 | --- | --- | --- |
 | Orchestration lifecycle | `orchestrator-lifecycle.test.ts` | sticky first run, delta dedupe, fix push, skip run, forceFull, legacy mode |
-| Pipeline routing | `orchestrator-pipeline.test.ts` | fast-path vs multi-pass selection, failed-group tolerance, kill-switch, failure propagation |
+| Pipeline routing | `orchestrator-pipeline.test.ts` | fast-path vs multi-pass selection, stage-model routing (see [model presets](subsystems/model-presets.md)), failed-group tolerance, kill-switch, failure propagation |
 | Scope decision | `delta.test.ts` | full/delta/skip cases incl. base change, force-push, caps |
 | Grouping | `grouper.test.ts` | hint seeding, clustering, bin-packing, test-file migration, overflow |
 | Pass 3 / scoring | `pass3-synthesis.test.ts` | `validateAndRankFindings`, `deterministicScore`, `synthesize` pruning |
@@ -162,8 +166,8 @@ Vitest (`test/unit/*.test.ts`, globals enabled, node env). Fixture repo: `test/f
 | Fingerprints | `fingerprint.test.ts` | normalization, stability, markers |
 | Sticky state | `review-state.test.ts` | marker roundtrip, FIFO caps, load/save lifecycle |
 | Threads | `threads.test.ts` | listing, outdated resolution, degradation |
-| Providers | `provider-factory.test.ts`, `openai-compatible-provider.test.ts`, `resilient-provider.test.ts` | factory validation, adapter HTTP, retry/backoff |
-| Config | `config-loader.test.ts` | load, missing→defaults, invalid/errors |
+| Providers | `provider-factory.test.ts`, `openai-compatible-provider.test.ts`, `anthropic-provider.test.ts`, `resilient-provider.test.ts` | factory validation, adapter HTTP, retry/backoff |
+| Config | `config-loader.test.ts` | load, missing→defaults, invalid/errors, `modelPreset`/`modelPresets` resolution + validation (stage routing: `fast-path`/`orchestrator-pipeline`/`pass3-synthesis` tests) |
 | Misc utils | `tokens.test.ts`, `concurrency.test.ts`, `temperature.test.ts`, `max-output.test.ts` | token/cost math, limiter, per-model knobs |
 
 ## Commands
@@ -183,6 +187,7 @@ Vitest (`test/unit/*.test.ts`, globals enabled, node env). Fixture repo: `test/f
 ## Common change recipes
 
 - **Add a config option**: `src/config/schema.ts` (zod field + default) → `src/config/defaults.ts` (mirror) → consume where relevant (usually `prompts.ts` or `orchestrator.ts`) → test in `config-loader.test.ts` / the affected module's test. Schema and defaults must stay in sync.
+- **Add or change a model preset / stage model**: touch the schema (`src/config/schema.ts`: `modelPreset`/`modelPresets` zod fields + the `modelForRole` resolver) and the resolver helpers (`src/config/model-presets.ts`: `MODEL_PRESETS` stage maps, `presetForProvider`, `resolvePresetName`/`resolveStageMapFor`) → preset resolution/validation tests in `config-loader.test.ts` and stage-routing tests in `fast-path.test.ts` / `orchestrator-pipeline.test.ts` / `pass3-synthesis.test.ts`. Unknown preset names and unknown stage keys must keep failing validation. Full recipe: [model presets](subsystems/model-presets.md).
 - **Add an LLM call stage**: new file under `src/pipeline/`, prompt builders in `prompts.ts`, response parser in `schemas.ts`, wire into `orchestrator.runReview` or an existing pass, track usage with `UsageTracker`.
 - **Add severity/category**: update `src/types/review.ts` enums, `pipeline/schemas.ts` `findingSchema`, severity maps (`checks.ts`, `comments.ts`, `review-state.ts`), prompt rubric in `prompts.ts`, and the `SEVERITY_RE` in `threads.ts`.
 - **Change the sticky lifecycle**: `orchestrator.publishSticky` + `review-state.ts` (bump marker version `v1` if `ReviewState` shape changes) + `comments.ts` posting logic.
@@ -199,5 +204,6 @@ Vitest (`test/unit/*.test.ts`, globals enabled, node env). Fixture repo: `test/f
 
 - [README.md](../README.md) — user-facing docs: setup, configuration reference, "how it works".
 - [Subsystem: review pipeline](subsystems/review-pipeline.md)
+- [Subsystem: model presets](subsystems/model-presets.md)
 - [Subsystem: GitHub integration](subsystems/github-integration.md)
 - [Subsystem: config & providers](subsystems/config-and-providers.md)

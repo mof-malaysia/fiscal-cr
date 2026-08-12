@@ -1,5 +1,6 @@
 import type { PullRequestContext } from '../types/review.js';
 import type { ReviewConfig } from '../config/schema.js';
+import { modelForRole } from '../config/schema.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { buildIntentSystemPrompt, buildIntentUserPrompt } from './prompts.js';
 import { parseIntentResponse, type IntentResult } from './schemas.js';
@@ -8,7 +9,7 @@ import type { UsageTracker } from './usage.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Pass 1: one small, fast call that understands what the PR is trying to do.
+ * Pass 1: one lightweight, fast call that understands what the PR is trying to do.
  * Failure is never fatal — the pipeline proceeds without hints.
  */
 export async function runIntentPass(
@@ -18,6 +19,7 @@ export async function runIntentPass(
   usage: UsageTracker,
 ): Promise<IntentResult | null> {
   try {
+    const model = modelForRole(config, 'intent');
     const messages = [
       { role: 'system' as const, content: buildIntentSystemPrompt(config) },
       { role: 'user' as const, content: buildIntentUserPrompt(ctx) },
@@ -26,12 +28,14 @@ export async function runIntentPass(
     usage.startCall();
     const response = await llm.chatCompletion({
       messages,
+      model,
       responseFormat: { type: 'json_object' },
       maxTokens: 2_048,
-      temperature: reviewTemperature(config),
+      temperature: reviewTemperature(config, 0.3, model),
       timeoutMs: 60_000,
     });
     usage.add(response.usage, {
+      model,
       stage: 'intent',
       messages,
       maxOutputTokens: 2_048,

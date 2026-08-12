@@ -2,6 +2,8 @@ import type { Octokit } from '@octokit/rest';
 import type { Webhooks } from '@octokit/webhooks';
 import { ReviewOrchestrator } from '../review/orchestrator.js';
 import { loadConfig } from '../config/loader.js';
+import { modelForRole } from '../config/schema.js';
+import { applyModelOverride, applyProviderOverride } from '../config/overrides.js';
 import { createLLMProvider } from '../providers/factory.js';
 import { logger } from '../utils/logger.js';
 
@@ -15,6 +17,7 @@ interface AppContext {
 }
 
 type FiscalCRCommand = 'review' | 'help' | 'unknown';
+
 
 export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
   // Auto-review on PR opened, new commits pushed, reopened, or marked ready
@@ -39,6 +42,8 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       logger.info({ owner, repo, pullNumber, action: payload.action }, 'PR event received');
 
       const config = await loadConfig(octokit, owner, repo);
+      applyProviderOverride(config, appCtx.provider);
+      applyModelOverride(config, appCtx.model);
 
       if (isDraft && !config.review.auto.drafts) {
         logger.info({ pullNumber }, 'Skipping draft PR');
@@ -53,7 +58,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       const llm = createLLMProvider({
         apiKey: appCtx.apiKey,
         provider: appCtx.provider ?? config.provider,
-        model: appCtx.model ?? config.model,
+        model: modelForRole(config, 'groupReview'),
         baseUrl: appCtx.baseUrl ?? config.baseUrl,
         userAgent: appCtx.userAgent ?? config.userAgent,
         modelParams: config.modelParams,
@@ -62,7 +67,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       const orchestrator = new ReviewOrchestrator(octokit, llm, config, {
         pricingContext: {
           provider: appCtx.provider ?? config.provider,
-          model: appCtx.model ?? config.model,
+          model: modelForRole(config, 'groupReview'),
           baseUrl: appCtx.baseUrl ?? config.baseUrl,
         },
       });
@@ -89,10 +94,12 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
 
     if (command === 'review') {
       const config = await loadConfig(octokit, owner, repo);
+      applyProviderOverride(config, appCtx.provider);
+      applyModelOverride(config, appCtx.model);
       const llm = createLLMProvider({
         apiKey: appCtx.apiKey,
         provider: appCtx.provider ?? config.provider,
-        model: appCtx.model ?? config.model,
+        model: modelForRole(config, 'groupReview'),
         baseUrl: appCtx.baseUrl ?? config.baseUrl,
         userAgent: appCtx.userAgent ?? config.userAgent,
         modelParams: config.modelParams,
@@ -107,7 +114,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       const orchestrator = new ReviewOrchestrator(octokit, llm, config, {
         pricingContext: {
           provider: appCtx.provider ?? config.provider,
-          model: appCtx.model ?? config.model,
+          model: modelForRole(config, 'groupReview'),
           baseUrl: appCtx.baseUrl ?? config.baseUrl,
         },
       });
@@ -147,6 +154,8 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     const headSha = payload.pull_request.head.sha;
 
     const config = await loadConfig(octokit, owner, repo);
+    applyProviderOverride(config, appCtx.provider);
+    applyModelOverride(config, appCtx.model);
     if (!config.review.auto.onReviewRequest) return;
 
     logger.info({ owner, repo, pullNumber }, 'Review requested');
@@ -154,7 +163,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     const llm = createLLMProvider({
       apiKey: appCtx.apiKey,
       provider: appCtx.provider ?? config.provider,
-      model: appCtx.model ?? config.model,
+      model: modelForRole(config, 'groupReview'),
       baseUrl: appCtx.baseUrl ?? config.baseUrl,
       userAgent: appCtx.userAgent ?? config.userAgent,
       modelParams: config.modelParams,
@@ -163,7 +172,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     const orchestrator = new ReviewOrchestrator(octokit, llm, config, {
       pricingContext: {
         provider: appCtx.provider ?? config.provider,
-        model: appCtx.model ?? config.model,
+        model: modelForRole(config, 'groupReview'),
         baseUrl: appCtx.baseUrl ?? config.baseUrl,
       },
     });

@@ -121,10 +121,11 @@ export class AnthropicProvider implements LLMProvider {
       system.push('Respond with a single valid JSON object. Do not use Markdown fences.');
     }
 
+    const model = params.model ?? this.model;
     const body = {
-      // Operator passthrough is the base layer; managed fields below win.
+      // Operator passthrough is the base layer; managed fields below always win.
       ...this.modelParams,
-      model: this.model,
+      model,
       messages,
       max_tokens: params.maxTokens ?? 4_096,
       ...(system.length > 0 && { system: system.join('\n\n') }),
@@ -147,7 +148,7 @@ export class AnthropicProvider implements LLMProvider {
       const errorBody = await res.text().catch(() => '');
       const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
       logger.warn(
-        { status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet },
+        { status: res.status, model, baseUrl: this.baseUrl, body: snippet },
         'LLM API request rejected',
       );
       throw new LLMApiError(
@@ -170,7 +171,7 @@ export class AnthropicProvider implements LLMProvider {
 
     logger.info(
       {
-        model: this.model,
+        model,
         baseUrl: this.baseUrl,
         promptTokens: input,
         completionTokens: usage?.output_tokens ?? 0,

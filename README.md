@@ -62,7 +62,7 @@ jobs:
 | `api_key`      | Yes      | —                               | LLM API key                                                       |
 | `github_token` | No       | `${{ github.token }}`           | GitHub token for API access                                       |
 | `provider`     | No       | Repo config or built-in default | `openai-compatible`, `kimi`, `openai`, or `anthropic`          |
-| `model`        | No       | Repo config or built-in default | Model name override                                               |
+| `model`        | No       | Repo config or built-in default | Model name; global override for every stage                      |
 | `base_url`     | No       | Repo config                     | Provider base URL override                                        |
 | `user_agent`   | No       | `fiscalcr/1.0`                  | Custom User-Agent for endpoints that whitelist clients (see note) |
 | `language`     | No       | Repo config or built-in default | Review language override                                          |
@@ -85,6 +85,12 @@ jobs:
 
 - Repo config is loaded from `.fiscalcr-review.yml` by default.
 - Action inputs override repo config only when you explicitly provide them.
+- Model presets (`modelPreset` selector, `modelPresets` custom maps) are
+  configured in the repo's `.fiscalcr-review.yml`; there is no Action input
+  for preset selection. The `model` input remains a global override and wins
+  over every pipeline stage, including stages a preset would select. A
+  `provider` input override also becomes effective for `provider-default`
+  selection, so stage models match the provider used for API calls.
 - `openai-compatible` requires an explicit `base_url`.
 - `anthropic` uses the native Messages API and defaults to
   `https://api.anthropic.com/v1`; its API key is sent in `x-api-key`.
@@ -143,7 +149,7 @@ pnpm dev
 | `API_KEY`               | Yes      | Provider API key                            |
 | `FISCALCR_API_KEY`      | Optional | Alternate API key env name                  |
 | `MODEL_PROVIDER`        | Optional | Provider name (`openai-compatible`, `kimi`, `openai`, or `anthropic`) |
-| `MODEL`                 | Optional | Model name                                  |
+| `MODEL`                 | Optional | Model name; global override for every stage |
 | `BASE_URL`              | Optional | Operator-controlled base URL                |
 | `LLM_USER_AGENT`        | Optional | Custom User-Agent for whitelisted endpoints |
 | `GITHUB_APP_ID`         | Yes      | GitHub App ID                               |
@@ -151,6 +157,14 @@ pnpm dev
 | `GITHUB_WEBHOOK_SECRET` | Yes      | Webhook secret                              |
 | `PORT`                  | No       | Server port, default `3000`                 |
 | `LOG_LEVEL`             | No       | Log level, default `info`                   |
+
+Model presets (`modelPreset` selector, `modelPresets` custom maps) are
+configured per repo in `.fiscalcr-review.yml`; there is no App-level env var
+for preset selection. `MODEL` (alias `FISCALCR_MODEL`) remains a global
+override that wins over every pipeline stage, including preset-derived
+models. `MODEL_PROVIDER` overrides the effective provider and therefore changes
+which preset `provider-default` selects; stage models match the provider used
+for API calls.
 
 ### Comment commands
 
@@ -175,7 +189,17 @@ Create `.fiscalcr-review.yml` in your repository root:
 ```yaml
 language: en
 provider: openai-compatible
-model: kimi-for-coding-highspeed
+model: gpt-5.6-terra
+modelPreset: openai # optional; built-in or custom preset — explicit models.* stages win (see "Model presets")
+# modelPresets: # optional; custom named presets, selectable via modelPreset
+#   fast:
+#     intent: gpt-5.6-terra
+#     groupReview: gpt-5.6-sol
+models:
+  intent: gpt-5.6-terra
+  fastPath: gpt-5.6-terra
+  groupReview: gpt-5.6-sol
+  synthesis: gpt-5.6-sol
 baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
 experimental: false # opt in to prompt optimizations that may change between releases
@@ -250,12 +274,89 @@ For native Anthropic Messages API support:
 
 ```yaml
 provider: anthropic
-model: claude-sonnet-4.5
+model: claude-sonnet-5
 # baseUrl: https://api.anthropic.com/v1  # optional; this is the default
 ```
 
 
 If the configured file is not found, FiscalCR falls back to built-in defaults. Invalid configs fail fast instead of being silently ignored.
+
+### Model stages
+
+FiscalCR configures a model per pipeline stage under `models`:
+
+| Key                    | Stage                                                                 |
+| ---------------------- | --------------------------------------------------------------------- |
+| `models.intent`        | Pass 1 intent/walkthrough/grouping call                               |
+| `models.fastPath`      | Fast-path combined call (PRs under `pipeline.fastPathThreshold`)      |
+| `models.groupReview`   | Pass 2 per-group file reviews                                         |
+| `models.synthesis`     | Pass 3 final synthesis merging group summaries into one review        |
+
+An unset stage falls back to the selected `modelPreset` stage model (see
+[Model presets](#model-presets)), then to the top-level `model`, so configs
+that only set `model` keep their single-model behavior — including configs
+with no `models` block at all. Built-in Kimi defaults are `k3-256k` for
+`intent` and `fastPath`, and `k3` for `groupReview` and `synthesis`. With no
+config file all stages use these defaults. Unknown keys under `models` (such
+as the legacy `big`/`small` roles) are rejected, so a stale config fails fast
+instead of silently ignoring a stage.
+Repo `models.*` values override the selected preset's stage models and the
+built-in defaults; an unset stage falls back to the preset stage model, then
+to the top-level repo `model`. An explicit `model` input on the GitHub Action
+or `MODEL`/`FISCALCR_MODEL` in App mode overrides all stages globally.
+
+### Model presets
+
+Instead of listing every stage under `models`, select an opinionated preset
+with `modelPreset`. Presets are YAML-only and optional for explicit repo
+configs: omitting `modelPreset` keeps legacy behavior (`models.*` stage, else
+the top-level `model`), while missing config uses the provider-aware fallback.
+
+Built-in presets and their exact stage models:
+
+| Preset             | Stage         | Model                         |
+| ------------------ | ------------- | ----------------------------- |
+| `kimi`             | `intent`      | `k3-256k`                    |
+|                    | `fastPath`    | `k3-256k`                    |
+|                    | `groupReview` | `k3`                         |
+|                    | `synthesis`   | `k3`                         |
+| `openai`           | `intent`      | `gpt-5.6-terra`              |
+|                    | `fastPath`    | `gpt-5.6-terra`              |
+|                    | `groupReview` | `gpt-5.6-sol`                |
+|                    | `synthesis`   | `gpt-5.6-sol`                |
+| `anthropic`        | `intent`      | `claude-sonnet-5`            |
+|                    | `fastPath`    | `claude-sonnet-5`            |
+|                    | `groupReview` | `claude-opus-5`              |
+|                    | `synthesis`   | `claude-opus-5`              |
+| `provider-default` | —             | Resolves to the `kimi`, `openai`, or `anthropic` preset from `provider`; `openai-compatible` has no preset and falls back to the top-level `model`. |
+
+```yaml
+provider: anthropic
+modelPreset: anthropic
+```
+
+You can also define your own presets under `modelPresets` (preset name →
+partial per-stage object) and select them by name with `modelPreset`. An entry
+under a built-in name merges over that preset; a new name defines a fresh
+preset whose unset stages fall back to the top-level `model`:
+
+```yaml
+model: gpt-5.6-terra # fallback for stages a preset does not set
+modelPreset: team
+modelPresets:
+  team:
+    intent: gpt-5.6-terra
+    groupReview: gpt-5.6-sol
+  kimi:
+    intent: k3-256k # overrides the built-in kimi intent
+```
+
+Unknown preset names and unknown stage keys inside `modelPresets` fail config
+validation.
+
+Precedence: explicit `models.<stage>` > the selected preset's stage model >
+the top-level `model`. An explicit `model` input on the GitHub Action or
+`MODEL`/`FISCALCR_MODEL` in App mode still overrides every stage globally.
 
 ## How it works
 
@@ -263,7 +364,7 @@ If the configured file is not found, FiscalCR falls back to built-in defaults. I
 PR Event -> Extract Context -> Filter Files
   ├── Fast path (small PR): one combined LLM call (intent + walkthrough + findings)
   └── Full pipeline (large PR):
-        Pass 1: PR intent, walkthrough, grouping hints   (1 small call)
+        Pass 1: PR intent, walkthrough, grouping hints   (1 intent call)
         Pass 2: parallel per-group file reviews          (N calls)
         Pass 3: validate/dedupe/rank + synthesis         (1 call, skipped for 1 group)
   -> Publish Check Run + PR review
@@ -274,11 +375,11 @@ PR Event -> Extract Context -> Filter Files
 1. Create a GitHub Check Run
 2. Extract PR metadata, diff, and changed files (local checkout in Action mode, parallel API otherwise)
 3. Filter files by include/exclude rules
-4. PRs under `pipeline.fastPathThreshold` tokens take the fast path: a single combined call
+4. PRs under `pipeline.fastPathThreshold` tokens take the fast path: a single combined call on the `fastPath` stage model
 5. Larger PRs run the multi-pass pipeline:
-   - **Pass 1 — intent**: a small call summarizes the PR's intent, produces a file walkthrough, and suggests file groupings. Failure here is non-fatal.
-   - **Pass 2 — group reviews**: files are deterministically grouped (hints → directory clustering → bin-packing to `groupTokenBudget`) and reviewed in parallel. In Action mode each group also sees unchanged files it imports (`relatedContextBudget`). One failed group does not fail the review.
-   - **Pass 3 — synthesis**: code-side validation drops findings on lines outside the diff, filters by confidence, dedupes, and ranks; a final call merges group summaries into one review (skipped when there is only one group).
+   - **Pass 1 — intent**: an `intent` stage call summarizes the PR's intent, produces a file walkthrough, and suggests file groupings. Failure here is non-fatal.
+   - **Pass 2 — group reviews**: files are deterministically grouped (hints → directory clustering → bin-packing to `groupTokenBudget`) and reviewed in parallel with the `groupReview` stage model. In Action mode each group also sees unchanged files it imports (`relatedContextBudget`). One failed group does not fail the review.
+   - **Pass 3 — synthesis**: code-side validation drops findings on lines outside the diff, filters by confidence, dedupes, and ranks; a final `synthesis` stage call merges group summaries into one review (skipped when there is only one group).
 6. Every LLM call goes through retry/backoff/timeout handling with `max_tokens` enforced
 7. Update the Check Run and PR review summary (intent, walkthrough table, findings, token usage)
 

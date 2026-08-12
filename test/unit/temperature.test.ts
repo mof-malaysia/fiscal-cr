@@ -10,12 +10,19 @@ describe('reviewTemperature', () => {
     expect(reviewTemperature(config, 0.5)).toBe(0.5);
   });
 
-  it('omits temperature entirely for models that pin their own (kimi-for-coding)', () => {
-    const config = { ...DEFAULT_CONFIG, model: 'kimi-for-coding' };
-    expect(reviewTemperature(config)).toBeUndefined();
+  it('omits temperature entirely for kimi preset models that pin their own', () => {
+    for (const model of ['kimi-for-coding', 'kimi-for-coding-highspeed']) {
+      expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBeUndefined();
+    }
   });
 
-  it('omits temperature for OpenAI reasoning models (o-series, gpt-5)', () => {
+  it('keeps the preferred temperature for Anthropic preset models', () => {
+    for (const model of ['claude-haiku-4.5', 'claude-sonnet-4.5']) {
+      expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBe(0.3);
+    }
+  });
+
+  it('omits temperature for OpenAI preset models (o-series, gpt-5)', () => {
     for (const model of ['o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-5-mini']) {
       expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBeUndefined();
     }

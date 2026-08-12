@@ -10,6 +10,7 @@ Router for this repo. Full walkthrough: [`index.md`](index.md). Subsystem deep-d
 | Review pipeline, grouping, scoring, dedupe, fast path | [`subsystems/review-pipeline.md`](subsystems/review-pipeline.md) |
 | Webhooks, checks, reviews, sticky state, fingerprints, threads | [`subsystems/github-integration.md`](subsystems/github-integration.md) |
 | Config precedence, providers, retries | [`subsystems/config-and-providers.md`](subsystems/config-and-providers.md) |
+| Model presets, stage model routing, custom model maps | [`subsystems/model-presets.md`](subsystems/model-presets.md) |
 | Finding which file to change | [`index.md`](index.md#task-to-path-routing) |
 | Adding or changing tests | [`index.md`](index.md#testing-map) |
 | Command / build / release mechanics | [`index.md`](index.md#commands) |

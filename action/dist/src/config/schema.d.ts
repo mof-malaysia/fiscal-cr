@@ -6,10 +6,85 @@ import { z } from "zod";
  * Shared by the schema default and DEFAULT_CONFIG so the two never drift.
  */
 export declare const DEFAULT_EXCLUDE_PATTERNS: readonly ["**/node_modules/**", "**/dist/**", "**/build/**", "**/*.min.*", "**/*.lock", "**/*.lockb", "**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/bun.lockb", "**/go.sum", "**/go.work.sum", "**/packages.lock.json"];
-export declare const reviewConfigSchema: z.ZodObject<{
+/** Shared strict shape for explicit stage overrides and custom preset stages. */
+export declare const modelStageSchema: z.ZodObject<{
+    intent: z.ZodOptional<z.ZodString>;
+    fastPath: z.ZodOptional<z.ZodString>;
+    groupReview: z.ZodOptional<z.ZodString>;
+    synthesis: z.ZodOptional<z.ZodString>;
+}, "strict", z.ZodTypeAny, {
+    intent?: string | undefined;
+    fastPath?: string | undefined;
+    groupReview?: string | undefined;
+    synthesis?: string | undefined;
+}, {
+    intent?: string | undefined;
+    fastPath?: string | undefined;
+    groupReview?: string | undefined;
+    synthesis?: string | undefined;
+}>;
+export type ModelRole = keyof z.infer<typeof modelStageSchema>;
+export declare const reviewConfigSchema: z.ZodEffects<z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
     provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi", "openai", "anthropic"]>>;
     model: z.ZodDefault<z.ZodString>;
+    /**
+     * Per-stage model overrides. `intent` drives the Pass 1 intent call,
+     * `fastPath` the fast-path combined call, `groupReview` the per-group file
+     * reviews, and `synthesis` the final synthesis call. An unset stage falls
+     * back to the selected `modelPreset` stage model, then to the legacy
+     * top-level `model`, so configs that only set `model` keep working. Unknown
+     * keys are rejected (`.strict()`), so the old `big`/`small` roles fail
+     * loudly instead of silently disappearing.
+     */
+    models: z.ZodDefault<z.ZodObject<{
+        intent: z.ZodOptional<z.ZodString>;
+        fastPath: z.ZodOptional<z.ZodString>;
+        groupReview: z.ZodOptional<z.ZodString>;
+        synthesis: z.ZodOptional<z.ZodString>;
+    }, "strict", z.ZodTypeAny, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }>>;
+    /**
+     * Selected model preset (see `src/config/model-presets.ts`). Accepts the
+     * built-in names `provider-default`, `kimi`, `openai`, `anthropic`, or any
+     * name defined under `modelPresets`. `provider-default` resolves the preset
+     * from `provider` (`kimi`/`openai`/`anthropic`); `openai-compatible` has no
+     * preset and falls through to the top-level `model`. Omitted → no preset
+     * (legacy behavior). Explicit `models.*` stages always win. Unknown preset
+     * names fail validation.
+     */
+    modelPreset: z.ZodOptional<z.ZodString>;
+    /**
+     * User-defined model presets: preset name → partial per-stage model object.
+     * Entries merge over the built-in preset of the same name (user stages win);
+     * new names are selectable via `modelPreset`. Unknown stage keys are
+     * rejected (`.strict()`); unset stages fall back to the top-level `model`.
+     */
+    modelPresets: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodObject<{
+        intent: z.ZodOptional<z.ZodString>;
+        fastPath: z.ZodOptional<z.ZodString>;
+        groupReview: z.ZodOptional<z.ZodString>;
+        synthesis: z.ZodOptional<z.ZodString>;
+    }, "strict", z.ZodTypeAny, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }>>>;
     baseUrl: z.ZodOptional<z.ZodString>;
     /** Custom User-Agent for endpoints that whitelist clients. */
     userAgent: z.ZodOptional<z.ZodString>;
@@ -248,6 +323,12 @@ export declare const reviewConfigSchema: z.ZodObject<{
     provider: "openai-compatible" | "kimi" | "openai" | "anthropic";
     model: string;
     language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
+    models: {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    };
     experimental: boolean;
     review: {
         auto: {
@@ -307,6 +388,13 @@ export declare const reviewConfigSchema: z.ZodObject<{
         callTimeoutMs: number;
         maxOutputTokens?: number | undefined;
     };
+    modelPreset?: string | undefined;
+    modelPresets?: Record<string, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }> | undefined;
     baseUrl?: string | undefined;
     userAgent?: string | undefined;
     temperature?: number | undefined;
@@ -318,6 +406,185 @@ export declare const reviewConfigSchema: z.ZodObject<{
     provider?: "openai-compatible" | "kimi" | "openai" | "anthropic" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
+    models?: {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    } | undefined;
+    modelPreset?: string | undefined;
+    modelPresets?: Record<string, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }> | undefined;
+    baseUrl?: string | undefined;
+    userAgent?: string | undefined;
+    temperature?: number | undefined;
+    modelParams?: z.objectInputType<{
+        reasoning_effort: z.ZodOptional<z.ZodEnum<["minimal", "low", "medium", "high"]>>;
+        verbosity: z.ZodOptional<z.ZodEnum<["low", "medium", "high"]>>;
+    }, z.ZodTypeAny, "passthrough"> | undefined;
+    experimental?: boolean | undefined;
+    review?: {
+        auto?: {
+            enabled?: boolean | undefined;
+            onOpen?: boolean | undefined;
+            onPush?: boolean | undefined;
+            onReviewRequest?: boolean | undefined;
+            drafts?: boolean | undefined;
+        } | undefined;
+        aspects?: {
+            bugs?: boolean | undefined;
+            security?: boolean | undefined;
+            performance?: boolean | undefined;
+            style?: boolean | undefined;
+            bestPractices?: boolean | undefined;
+            documentation?: boolean | undefined;
+            testing?: boolean | undefined;
+        } | undefined;
+        minSeverity?: "critical" | "warning" | "suggestion" | "nitpick" | undefined;
+        maxAnnotations?: number | undefined;
+        failOn?: "critical" | "warning" | "never" | undefined;
+        incremental?: {
+            enabled?: boolean | undefined;
+            maxDeltaFiles?: number | undefined;
+        } | undefined;
+        comments?: {
+            mode?: "sticky" | "legacy" | undefined;
+            dedupe?: boolean | undefined;
+            resolveOutdated?: boolean | undefined;
+            maxOpenComments?: number | undefined;
+        } | undefined;
+    } | undefined;
+    files?: {
+        include?: string[] | undefined;
+        exclude?: string[] | undefined;
+        maxFileSize?: number | undefined;
+    } | undefined;
+    rules?: {
+        name: string;
+        description: string;
+        filePattern?: string | undefined;
+        severity?: "critical" | "warning" | "suggestion" | undefined;
+    }[] | undefined;
+    prompt?: {
+        systemAppend?: string | undefined;
+        reviewFocus?: string | undefined;
+    } | undefined;
+    pipeline?: {
+        enabled?: boolean | undefined;
+        concurrency?: number | undefined;
+        groupTokenBudget?: number | undefined;
+        relatedContextBudget?: number | undefined;
+        maxGroups?: number | undefined;
+        fastPathThreshold?: number | undefined;
+        minConfidence?: number | undefined;
+        maxRetries?: number | undefined;
+        callTimeoutMs?: number | undefined;
+        maxOutputTokens?: number | undefined;
+    } | undefined;
+}>, {
+    provider: "openai-compatible" | "kimi" | "openai" | "anthropic";
+    model: string;
+    language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
+    models: {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    };
+    experimental: boolean;
+    review: {
+        auto: {
+            enabled: boolean;
+            onOpen: boolean;
+            onPush: boolean;
+            onReviewRequest: boolean;
+            drafts: boolean;
+        };
+        aspects: {
+            bugs: boolean;
+            security: boolean;
+            performance: boolean;
+            style: boolean;
+            bestPractices: boolean;
+            documentation: boolean;
+            testing: boolean;
+        };
+        minSeverity: "critical" | "warning" | "suggestion" | "nitpick";
+        maxAnnotations: number;
+        failOn: "critical" | "warning" | "never";
+        incremental: {
+            enabled: boolean;
+            maxDeltaFiles: number;
+        };
+        comments: {
+            mode: "sticky" | "legacy";
+            dedupe: boolean;
+            resolveOutdated: boolean;
+            maxOpenComments: number;
+        };
+    };
+    files: {
+        include: string[];
+        exclude: string[];
+        maxFileSize: number;
+    };
+    rules: {
+        name: string;
+        description: string;
+        severity: "critical" | "warning" | "suggestion";
+        filePattern?: string | undefined;
+    }[];
+    prompt: {
+        systemAppend?: string | undefined;
+        reviewFocus?: string | undefined;
+    };
+    pipeline: {
+        enabled: boolean;
+        concurrency: number;
+        groupTokenBudget: number;
+        relatedContextBudget: number;
+        maxGroups: number;
+        fastPathThreshold: number;
+        minConfidence: number;
+        maxRetries: number;
+        callTimeoutMs: number;
+        maxOutputTokens?: number | undefined;
+    };
+    modelPreset?: string | undefined;
+    modelPresets?: Record<string, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }> | undefined;
+    baseUrl?: string | undefined;
+    userAgent?: string | undefined;
+    temperature?: number | undefined;
+    modelParams?: z.objectOutputType<{
+        reasoning_effort: z.ZodOptional<z.ZodEnum<["minimal", "low", "medium", "high"]>>;
+        verbosity: z.ZodOptional<z.ZodEnum<["low", "medium", "high"]>>;
+    }, z.ZodTypeAny, "passthrough"> | undefined;
+}, {
+    provider?: "openai-compatible" | "kimi" | "openai" | "anthropic" | undefined;
+    model?: string | undefined;
+    language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
+    models?: {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    } | undefined;
+    modelPreset?: string | undefined;
+    modelPresets?: Record<string, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }> | undefined;
     baseUrl?: string | undefined;
     userAgent?: string | undefined;
     temperature?: number | undefined;
@@ -386,4 +653,12 @@ export declare const reviewConfigSchema: z.ZodObject<{
     } | undefined;
 }>;
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
+/**
+ * Resolve the model for a pipeline stage. Precedence: explicit per-stage
+ * override from `config.models` > the selected `modelPreset` stage model
+ * (built-in or user-defined, merged) > the legacy top-level `model`. With no
+ * preset selected this reduces to `config.models[role] ?? config.model`, so
+ * old configs keep their single-model behavior.
+ */
+export declare function modelForRole(config: ReviewConfig, role: ModelRole): string;
 //# sourceMappingURL=schema.d.ts.map

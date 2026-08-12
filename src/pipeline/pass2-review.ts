@@ -1,5 +1,6 @@
 import type { PullRequestContext, ReviewAnnotation } from '../types/review.js';
 import type { ReviewConfig } from '../config/schema.js';
+import { modelForRole } from '../config/schema.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { pLimit } from '../utils/concurrency.js';
 import { buildGroupSystemPrompt, buildGroupUserPrompt } from './prompts.js';
@@ -40,7 +41,8 @@ export async function runReviewPass(
   const systemPrompt = buildGroupSystemPrompt(config);
   const changedPaths = new Set(ctx.changedFiles.map((f) => f.filename));
   const limit = pLimit(config.pipeline.concurrency);
-  const maxOutputTokens = reviewMaxOutputTokens(config);
+  const model = modelForRole(config, 'groupReview');
+  const maxOutputTokens = reviewMaxOutputTokens(config, model);
 
   return Promise.all(
     groups.map((group, groupIndex) =>
@@ -67,12 +69,14 @@ export async function runReviewPass(
           usage.startCall();
           const response = await llm.chatCompletion({
             messages,
+            model,
             responseFormat: { type: 'json_object' },
             maxTokens: maxOutputTokens,
-            temperature: reviewTemperature(config),
+            temperature: reviewTemperature(config, 0.3, model),
             timeoutMs: config.pipeline.callTimeoutMs,
           });
           usage.add(response.usage, {
+            model,
             stage: 'group-review',
             messages,
             maxOutputTokens,

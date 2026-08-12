@@ -3,6 +3,8 @@ import * as github from "@actions/github";
 import { ReviewOrchestrator } from "../src/review/orchestrator.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
+import { modelForRole } from "../src/config/schema.js";
+import { applyModelOverride, applyProviderOverride } from "../src/config/overrides.js";
 import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
@@ -60,9 +62,8 @@ async function run(): Promise<void> {
     if (failOnInput) {
       config.review.failOn = failOnInput;
     }
-    if (modelInput) {
-      config.model = modelInput;
-    }
+    applyProviderOverride(config, providerInput);
+    applyModelOverride(config, modelInput);
     if (baseUrlInput) {
       config.baseUrl = baseUrlInput;
     }
@@ -97,7 +98,7 @@ async function run(): Promise<void> {
     const llm = createLLMProvider({
       apiKey,
       provider: providerInput || config.provider,
-      model: config.model,
+      model: modelForRole(config, "groupReview"),
       baseUrl: config.baseUrl,
       userAgent: config.userAgent,
       modelParams: config.modelParams,
@@ -114,7 +115,7 @@ async function run(): Promise<void> {
         telemetry,
         pricingContext: {
           provider: providerInput || config.provider,
-          model: config.model,
+          model: modelForRole(config, "groupReview"),
           baseUrl: config.baseUrl,
         },
       },
@@ -151,7 +152,7 @@ async function run(): Promise<void> {
       "cost_estimate",
       (result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {
         provider: config.provider,
-        model: config.model,
+        model: modelForRole(config, "groupReview"),
         baseUrl: config.baseUrl,
       })).toFixed(4),
     );

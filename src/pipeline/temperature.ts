@@ -5,6 +5,8 @@ const FIXED_TEMPERATURE_MODELS = new Set([
   "kimi-for-coding",
   "kimi-for-coding-highspeed",
   "kimi-k3",
+  "k3",
+  "k3-256k",
 ]);
 
 /**
@@ -20,13 +22,18 @@ function isReasoningModel(model: string): boolean {
  * Resolve the temperature for a review call: an explicit config value wins;
  * models that pin their own temperature get none at all (the server default
  * applies); everything else uses the pipeline's preferred low temperature.
+ *
+ * `model` is the model actually used for this call (a stage model when the
+ * caller resolved one); it defaults to the legacy single `config.model` so
+ * callers that predate stage routing keep their behavior.
  */
 export function reviewTemperature(
   config: ReviewConfig,
   preferred = 0.3,
+  model: string = config.model,
 ): number | undefined {
   if (config.temperature !== undefined) return config.temperature;
-  if (FIXED_TEMPERATURE_MODELS.has(config.model)) return undefined;
-  if (isReasoningModel(config.model)) return undefined;
+  if (FIXED_TEMPERATURE_MODELS.has(model)) return undefined;
+  if (isReasoningModel(model)) return undefined;
   return preferred;
 }

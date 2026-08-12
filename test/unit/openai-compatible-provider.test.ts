@@ -170,6 +170,45 @@ describe('OpenAICompatibleProvider', () => {
     expect(result.finishReason).toBe('length');
   });
 
+  it('sends a per-call model override in the request payload', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      }),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'constructor-model',
+      baseUrl: 'https://api.example.com/v1',
+    });
+    await provider.chatCompletion({
+      messages: [{ role: 'user', content: 'hi' }],
+      model: 'fast-model',
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.model).toBe('fast-model');
+  });
+
+  it('uses the constructor model when no per-call override is given', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      }),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'k',
+      model: 'constructor-model',
+      baseUrl: 'https://api.example.com/v1',
+    });
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.model).toBe('constructor-model');
+  });
+
   it('sends the default User-Agent and client name', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {

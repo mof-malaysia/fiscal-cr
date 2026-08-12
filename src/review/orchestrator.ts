@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import type { ReviewConfig } from '../config/schema.js';
+import { modelForRole, type ReviewConfig } from '../config/schema.js';
 import type { PullRequestContext, ReviewAnnotation, ReviewResult, Severity } from '../types/review.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { extractPullRequestContext } from '../github/pulls.js';
@@ -29,7 +29,7 @@ import { countBySeverity, deterministicScore } from '../pipeline/pass3-synthesis
 import { runReviewPipeline } from '../pipeline/run-review.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
-import { resolvePricingAsync, type PricingContext, type PricingResolution } from '../utils/pricing.js';
+import { resolvePricingAsync, type PricingContext } from '../utils/pricing.js';
 import { roundCost } from '../utils/tokens.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -227,11 +227,27 @@ export class ReviewOrchestrator {
           : undefined;
       const pricingContext = this.options.pricingContext ?? {
         provider: this.config.provider,
-        model: this.config.model,
         baseUrl: this.config.baseUrl,
       };
-      const pricingResolution: PricingResolution = await resolvePricingAsync(pricingContext);
-      const usage = new UsageTracker(this.options.telemetry, pricingContext, pricingResolution);
+      const stageModels = [
+        modelForRole(this.config, 'intent'),
+        modelForRole(this.config, 'fastPath'),
+        modelForRole(this.config, 'groupReview'),
+        modelForRole(this.config, 'synthesis'),
+      ];
+      const pricingEntries = await Promise.all(
+        [...new Set(stageModels)].map(async (model) => [
+          model,
+          await resolvePricingAsync({ ...pricingContext, model }),
+        ] as const),
+      );
+      const pricingResolutions = new Map(pricingEntries);
+      const pricingResolution = pricingResolutions.get(stageModels[2])!;
+      const usage = new UsageTracker(
+        this.options.telemetry,
+        pricingContext,
+        pricingResolutions,
+      );
       const result = await runReviewPipeline(this.llm, prContext, this.config, usage, {
         workspaceRoot: this.options.workspaceRoot,
         deltaHint,

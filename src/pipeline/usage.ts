@@ -57,6 +57,7 @@ export type TelemetrySink = (event: TelemetryEvent) => void | PromiseLike<void>;
 
 export interface LLMCallTelemetry {
   stage: TelemetryStage;
+  model?: string;
   messages: ChatMessage[];
   maxOutputTokens: number;
   durationMs: number;
@@ -72,26 +73,35 @@ const SAFE_FINISH_REASONS = new Set<TelemetryFinishReason>([
   'tool_calls',
   'function_call',
 ]);
-
-function safeFinishReason(value: string | undefined): TelemetryFinishReason | undefined {
-  if (value === undefined) return undefined;
-  return SAFE_FINISH_REASONS.has(value as TelemetryFinishReason)
-    ? (value as TelemetryFinishReason)
-    : 'other';
-}
-
 /** Aggregates token usage and provider-specific cost across all pipeline LLM calls. */
 export class UsageTracker {
   private totals: LLMTokenUsage = { input: 0, output: 0, cached: 0 };
   private callCount = 0;
+  private totalCostUsd = 0;
   private readonly pricing: PricingResolution;
+  private readonly pricingContext: PricingContext;
+  private readonly pricingByModel: Map<string, PricingResolution>;
 
   constructor(
     private readonly telemetry?: TelemetrySink,
     pricingContext: PricingContext = {},
-    pricingResolution?: PricingResolution,
+    pricingResolutions?: ReadonlyMap<string, PricingResolution>,
   ) {
-    this.pricing = pricingResolution ?? resolvePricing(pricingContext);
+    this.pricingContext = pricingContext;
+    this.pricing = resolvePricing(pricingContext);
+    this.pricingByModel = new Map(pricingResolutions);
+    if (this.pricing.model && !this.pricingByModel.has(this.pricing.model)) {
+      this.pricingByModel.set(this.pricing.model, this.pricing);
+    }
+  }
+
+  private pricingForModel(model?: string): PricingResolution {
+    if (!model) return this.pricing;
+    const cached = this.pricingByModel.get(model);
+    if (cached) return cached;
+    const resolved = resolvePricing({ ...this.pricingContext, model });
+    this.pricingByModel.set(model, resolved);
+    return resolved;
   }
 
   startCall(): void {
@@ -102,6 +112,8 @@ export class UsageTracker {
     this.totals.input += usage.input;
     this.totals.output += usage.output;
     this.totals.cached += usage.cached;
+    const pricing = this.pricingForModel(call?.model);
+    this.totalCostUsd += calculateCostWithPricing(usage, pricing.pricing);
     if (call && this.telemetry) {
       const finishReason = safeFinishReason(call.finishReason);
       this.emit({
@@ -116,15 +128,14 @@ export class UsageTracker {
         inputTokens: usage.input,
         outputTokens: usage.output,
         cachedTokens: usage.cached,
-        estimatedCostUsd: calculateCostWithPricing(usage, this.pricing.pricing),
-        pricingSource: this.pricing.source,
+        estimatedCostUsd: calculateCostWithPricing(usage, pricing.pricing),
+        pricingSource: pricing.source,
         maxOutputTokens: call.maxOutputTokens,
         durationMs: Math.max(0, call.durationMs),
         ...(finishReason === undefined ? {} : { finishReason }),
       });
     }
   }
-
   emit(event: TelemetryEvent): void {
     try {
       const result = this.telemetry?.(event);
@@ -143,10 +154,17 @@ export class UsageTracker {
   }
 
   cost(): number {
-    return calculateCostWithPricing(this.totals, this.pricing.pricing);
+    return this.totalCostUsd;
   }
 
   pricingInfo(): PricingResolution {
     return this.pricing;
   }
+}
+
+function safeFinishReason(value: string | undefined): TelemetryFinishReason | undefined {
+  if (value === undefined) return undefined;
+  return SAFE_FINISH_REASONS.has(value as TelemetryFinishReason)
+    ? (value as TelemetryFinishReason)
+    : 'other';
 }
