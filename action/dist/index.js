@@ -55270,25 +55270,19 @@ class ReviewOrchestrator {
     }
 }
 
-;// CONCATENATED MODULE: ./src/providers/openai-compatible.ts
+;// CONCATENATED MODULE: ./src/providers/anthropic.ts
 
 
-/**
- * Keys the pipeline owns and must not accept from operator-supplied modelParams:
- * request identity/managed fields, the token caps (either spelling — a stray
- * one re-triggers the max_tokens 400), and streaming (the parser is non-stream).
- */
 const RESERVED_MODEL_PARAM_KEYS = new Set([
     'model',
     'messages',
-    'temperature',
+    'system',
     'max_tokens',
     'max_completion_tokens',
+    'temperature',
     'response_format',
     'stream',
-    'stream_options',
 ]);
-/** Drop reserved keys from operator-supplied modelParams, warning on any drop. */
 function sanitizeModelParams(params) {
     if (!params)
         return {};
@@ -55306,6 +55300,152 @@ function sanitizeModelParams(params) {
     return clean;
 }
 function parseRetryAfter(header) {
+    if (!header)
+        return undefined;
+    const seconds = Number(header);
+    if (Number.isFinite(seconds))
+        return Math.max(0, seconds * 1_000);
+    const date = Date.parse(header);
+    if (!Number.isNaN(date))
+        return Math.max(0, date - Date.now());
+    return undefined;
+}
+function textFromResponse(data) {
+    return (data.content ?? [])
+        .filter((block) => block.type === 'text' && typeof block.text === 'string')
+        .map((block) => block.text)
+        .join('');
+}
+/** Native adapter for Anthropic's Messages API. */
+class AnthropicProvider {
+    apiKey;
+    model;
+    baseUrl;
+    userAgent;
+    modelParams;
+    constructor(config) {
+        this.apiKey = config.apiKey;
+        this.model = config.model;
+        if (!config.baseUrl) {
+            throw new ConfigError('Anthropic provider requires a baseUrl');
+        }
+        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+        this.userAgent = config.userAgent;
+        this.modelParams = sanitizeModelParams(config.modelParams);
+    }
+    async chatCompletion(params) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? 300_000);
+        try {
+            return await this.performCompletionRequest(params, controller.signal);
+        }
+        finally {
+            clearTimeout(timer);
+        }
+    }
+    async performCompletionRequest(params, signal) {
+        const system = params.messages
+            .filter((message) => message.role === 'system')
+            .map((message) => message.content)
+            .filter((content) => content.length > 0);
+        const messages = params.messages
+            .filter((message) => message.role !== 'system')
+            .map(({ role, content }) => ({ role, content }));
+        // The Messages API has no response_format equivalent. Preserve the shared
+        // JSON contract through an explicit system instruction instead.
+        if (params.responseFormat?.type === 'json_object') {
+            system.push('Respond with a single valid JSON object. Do not use Markdown fences.');
+        }
+        const body = {
+            // Operator passthrough is the base layer; managed fields below win.
+            ...this.modelParams,
+            model: this.model,
+            messages,
+            max_tokens: params.maxTokens ?? 4_096,
+            ...(system.length > 0 && { system: system.join('\n\n') }),
+            ...(params.temperature !== undefined && { temperature: params.temperature }),
+        };
+        const res = await fetch(`${this.baseUrl}/messages`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Api-Key': this.apiKey,
+                'anthropic-version': '2023-06-01',
+                'User-Agent': this.userAgent ?? 'fiscalcr/1.0',
+            },
+            body: JSON.stringify(body),
+            signal,
+        });
+        if (!res.ok) {
+            const errorBody = await res.text().catch(() => '');
+            const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+            logger.warn({ status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
+            throw new LLMApiError(`Anthropic API error: ${res.status} ${res.statusText}${snippet ? ` — ${snippet}` : ''}`, res.status, errorBody, parseRetryAfter(res.headers.get('retry-after')));
+        }
+        const data = (await res.json());
+        const usage = data.usage;
+        const cached = (usage?.cache_read_input_tokens ?? 0) +
+            (usage?.cache_creation_input_tokens ?? 0);
+        const input = (usage?.input_tokens ?? 0) + cached;
+        const finishReason = data.stop_reason === 'max_tokens'
+            ? 'length'
+            : data.stop_reason ?? undefined;
+        logger.info({
+            model: this.model,
+            baseUrl: this.baseUrl,
+            promptTokens: input,
+            completionTokens: usage?.output_tokens ?? 0,
+            cachedTokens: usage?.cache_read_input_tokens ?? 0,
+            finishReason,
+        }, 'LLM API call completed');
+        return {
+            content: textFromResponse(data),
+            usage: {
+                input,
+                output: usage?.output_tokens ?? 0,
+                cached: usage?.cache_read_input_tokens ?? 0,
+            },
+            finishReason,
+        };
+    }
+}
+
+;// CONCATENATED MODULE: ./src/providers/openai-compatible.ts
+
+
+/**
+ * Keys the pipeline owns and must not accept from operator-supplied modelParams:
+ * request identity/managed fields, the token caps (either spelling — a stray
+ * one re-triggers the max_tokens 400), and streaming (the parser is non-stream).
+ */
+const openai_compatible_RESERVED_MODEL_PARAM_KEYS = new Set([
+    'model',
+    'messages',
+    'temperature',
+    'max_tokens',
+    'max_completion_tokens',
+    'response_format',
+    'stream',
+    'stream_options',
+]);
+/** Drop reserved keys from operator-supplied modelParams, warning on any drop. */
+function openai_compatible_sanitizeModelParams(params) {
+    if (!params)
+        return {};
+    const clean = {};
+    const dropped = [];
+    for (const [key, value] of Object.entries(params)) {
+        if (openai_compatible_RESERVED_MODEL_PARAM_KEYS.has(key))
+            dropped.push(key);
+        else
+            clean[key] = value;
+    }
+    if (dropped.length > 0) {
+        logger.warn({ dropped }, 'Ignoring reserved keys in modelParams; use the dedicated config knobs instead');
+    }
+    return clean;
+}
+function openai_compatible_parseRetryAfter(header) {
     if (!header)
         return undefined;
     const seconds = Number(header);
@@ -55340,7 +55480,7 @@ class OpenAICompatibleProvider {
         this.timeout = config.timeout ?? 300_000;
         this.userAgent = config.userAgent;
         this.completionTokenParam = config.completionTokenParam ?? 'max_tokens';
-        this.modelParams = sanitizeModelParams(config.modelParams);
+        this.modelParams = openai_compatible_sanitizeModelParams(config.modelParams);
     }
     async chatCompletion(params) {
         const controller = new AbortController();
@@ -55381,7 +55521,7 @@ class OpenAICompatibleProvider {
             // Surface the endpoint's own message — a bare "400 Bad Request" is undiagnosable.
             const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
             logger.warn({ status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
-            throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}${snippet ? ` — ${snippet}` : ''}`, res.status, errorBody, parseRetryAfter(res.headers.get('retry-after')));
+            throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}${snippet ? ` — ${snippet}` : ''}`, res.status, errorBody, openai_compatible_parseRetryAfter(res.headers.get('retry-after')));
         }
         const data = (await res.json());
         const content = data.choices?.[0]?.message?.content ?? '';
@@ -55469,13 +55609,14 @@ function sleep(ms) {
 
 
 
-const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi", "openai"];
+
+const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi", "openai", "anthropic"];
 const KIMI_API_BASE_URL = "https://api.kimi.com/coding/v1";
 const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
+const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com/v1";
 /**
- * Per-provider construction defaults for the shared OpenAI-compatible adapter.
- * A missing `baseUrl` means the operator must supply one explicitly
- * (openai-compatible); the others default to their vendor endpoint.
+ * Per-provider construction defaults. OpenAI-compatible, OpenAI, and Kimi use
+ * the shared Chat Completions adapter; Anthropic uses its native Messages API.
  */
 const PROVIDER_DEFAULTS = {
     "openai-compatible": {},
@@ -55484,6 +55625,7 @@ const PROVIDER_DEFAULTS = {
         completionTokenParam: "max_completion_tokens",
     },
     kimi: { baseUrl: KIMI_API_BASE_URL },
+    anthropic: { baseUrl: ANTHROPIC_API_BASE_URL },
 };
 function parseProvider(provider) {
     if (SUPPORTED_PROVIDERS.includes(provider)) {
@@ -55494,12 +55636,18 @@ function parseProvider(provider) {
 function createLLMProvider(config) {
     const provider = parseProvider(config.provider);
     const defaults = PROVIDER_DEFAULTS[provider];
-    // All providers share the OpenAI-compatible adapter, differing only in their
-    // base-URL default and token-cap field. Adding a non-compatible provider
-    // (e.g., Anthropic) is straightforward — swap the adapter in a new branch.
     const baseUrl = config.baseUrl ?? defaults.baseUrl;
     if (!baseUrl) {
         throw new ConfigError(`Missing baseUrl for provider "${provider}". Configure an operator-controlled BASE_URL.`);
+    }
+    if (provider === "anthropic") {
+        return new ResilientProvider(new AnthropicProvider({
+            apiKey: config.apiKey,
+            model: config.model,
+            baseUrl,
+            userAgent: config.userAgent,
+            modelParams: config.modelParams,
+        }), config.retry);
     }
     const inner = new OpenAICompatibleProvider({
         apiKey: config.apiKey,
@@ -55542,7 +55690,7 @@ const DEFAULT_EXCLUDE_PATTERNS = [
 ];
 const reviewConfigSchema = objectType({
     language: enumType(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
-    provider: enumType(["openai-compatible", "kimi", "openai"]).default("kimi"),
+    provider: enumType(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
     model: stringType().default("kimi-for-coding"),
     baseUrl: stringType().url().optional(),
     /** Custom User-Agent for endpoints that whitelist clients. */
@@ -55550,11 +55698,9 @@ const reviewConfigSchema = objectType({
     /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
     temperature: numberType().min(0).max(2).optional(),
     /**
-     * Extra OpenAI request fields merged into every LLM call. Typed fields are
+     * Provider-native request fields merged into every LLM call. Typed fields are
      * validated; all other keys pass through verbatim (future-proof). Pipeline-
-     * managed keys (model/messages/temperature/token caps/response_format/stream)
-     * are stripped by the provider — use `temperature`/`pipeline.maxOutputTokens`
-     * for those instead.
+     * managed keys are stripped by the selected provider adapter.
      */
     modelParams: objectType({
         reasoning_effort: enumType(["minimal", "low", "medium", "high"]).optional(),

@@ -11,9 +11,7 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 3. **Repo config** `.fiscalcr-review.yml` (path overridable via `config_path` input), fetched through the GitHub API.
 4. **Built-in defaults** — `DEFAULT_CONFIG` in `src/config/defaults.ts`, mirrored by zod schema `.default()` values.
 
-## Schema & defaults
-
-- `src/config/schema.ts` — `reviewConfigSchema` (zod) is the **canonical** config definition. Shape: top-level `language` (en/zh-TW/zh-CN/ja/ko), `provider` (openai-compatible/kimi), `model`, `baseUrl`, `userAgent`, `temperature`, `experimental`; `review.{auto,aspects,minSeverity,maxAnnotations,failOn,incremental,comments}`; `files.{include,exclude,maxFileSize}`; `rules[]` (custom repo rules); `prompt.{systemAppend,reviewFocus}`; `pipeline.{enabled,concurrency,groupTokenBudget,relatedContextBudget,maxGroups,fastPathThreshold,minConfidence,maxRetries,callTimeoutMs,maxOutputTokens}`.
+- `src/config/schema.ts` — `reviewConfigSchema` (zod) is the **canonical** config definition. Shape: top-level `language` (en/zh-TW/zh-CN/ja/ko), `provider` (openai-compatible/kimi/openai/anthropic), `model`, `baseUrl`, `userAgent`, `temperature`, `experimental`; `review.{auto,aspects,minSeverity,maxAnnotations,failOn,incremental,comments}`; `files.{include,exclude,maxFileSize}`; `rules[]` (custom repo rules); `prompt.{systemAppend,reviewFocus}`; `pipeline.{enabled,concurrency,groupTokenBudget,relatedContextBudget,maxGroups,fastPathThreshold,minConfidence,maxRetries,callTimeoutMs,maxOutputTokens}`.
 - `DEFAULT_EXCLUDE_PATTERNS` is a shared const used both by the schema default and `DEFAULT_CONFIG` specifically so the two cannot drift.
 - `src/config/defaults.ts` — `DEFAULT_CONFIG`, a fully-populated `ReviewConfig` mirroring schema defaults. **Changing one without the other is a bug.**
 
@@ -42,18 +40,31 @@ interface LLMProvider {
 
 `createLLMProvider({ apiKey, model, baseUrl?, provider, userAgent?, retry? })`:
 
-- `parseProvider` validates the name against `["openai-compatible", "kimi"]`; unknown → `ConfigError`.
+- `parseProvider` validates the name against `["openai-compatible", "kimi", "openai", "anthropic"]`; unknown → `ConfigError`.
 - `openai-compatible` requires an explicit `baseUrl` (else `ConfigError`).
 - `kimi` is a preset: default base URL `https://api.kimi.com/coding/v1` when none given.
-- Both resolve to `OpenAICompatibleProvider`; the result is always wrapped in `ResilientProvider` (comment: adding non-compatible providers like Anthropic is straightforward).
+- `openai` is a preset: default base URL `https://api.openai.com/v1` and
+  `max_completion_tokens`.
+- `anthropic` is a preset: default base URL `https://api.anthropic.com/v1` and
+  uses the native `/messages` API adapter.
+- All providers are wrapped in `ResilientProvider`.
 
 ### OpenAI-compatible adapter (`openai-compatible.ts`)
-
 - `fetch POST {baseUrl}/chat/completions` with `Authorization: Bearer`, `User-Agent: fiscalcr/1.0` (or the configured `userAgent`; when a custom UA is set the `X-Client-Name: fiscalcr` header is omitted so the request carries one identity).
 - Request body conditionally includes `temperature` (omitted when undefined — some models reject any non-default temperature), `max_tokens`, `response_format`.
 - Timeout via `AbortController` (default 300s, per-call `timeoutMs` override).
 - Non-2xx → `LLMApiError` carrying status, endpoint body snippet, and parsed `Retry-After` (seconds or HTTP-date).
 - Usage mapped from `prompt_tokens` / `completion_tokens` / `cached_tokens`.
+
+### Anthropic adapter (`anthropic.ts`)
+
+- `POST {baseUrl}/messages` with `x-api-key` and `anthropic-version: 2023-06-01`.
+- Moves `system` messages to the top-level `system` field; only user/assistant
+  messages are sent in the Messages API conversation.
+- Converts `input_tokens`, cache reads/writes, and `output_tokens` into the
+  normalized usage contract; `max_tokens` maps to `finishReason: 'length'`.
+- Anthropic has no shared `response_format` field, so JSON calls receive an
+  explicit JSON-only system instruction.
 
 ### Resilient decorator (`resilient.ts`)
 

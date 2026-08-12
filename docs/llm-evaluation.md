@@ -37,7 +37,7 @@ Secure usage:
 
 - Export the key in your shell; never paste it into chat, commit it, or pass it
   on the command line. The harness reads `API_KEY` (fallbacks
-  `FISCALCR_API_KEY`, then `KIMI_API_KEY`) from the environment only and never
+  `FISCALCR_API_KEY`, `ANTHROPIC_API_KEY`, then `KIMI_API_KEY`) from the environment only and never
   prints or logs it.
 - A root `.env` is auto-loaded when present, so `make eval-llm` needs no manual
   exports. Already-exported variables win over `.env`. `.env` is gitignored —
@@ -182,9 +182,11 @@ actionability, and usefulness — which automated metrics do not measure.
 | Variable             | Default            | Notes                                             |
 | -------------------- | ------------------ | ------------------------------------------------- |
 | `API_KEY`            | — (live only)      | Falls back to `FISCALCR_API_KEY`, then `KIMI_API_KEY` |
-| `MODEL_PROVIDER`     | `kimi`             | `kimi` or `openai-compatible`                     |
+| `MODEL_PROVIDER`     | `kimi`             | `kimi`, `openai-compatible`, `openai`, or `anthropic` |
 | `MODEL`              | `kimi-for-coding`  | Falls back to `KIMI_MODEL`, then the default      |
 | `KIMI_MODEL`         | `kimi-for-coding`  | Kimi model override, e.g. `kimi-k2.5`             |
+| `ANTHROPIC_API_KEY` | —                  | Anthropic-specific API key fallback                |
+| `ANTHROPIC_MODEL`   | —                  | Anthropic-specific model fallback                  |
 | `BASE_URL`           | provider default   | Falls back to `FISCALCR_BASE_URL`                 |
 | `LLM_USER_AGENT`     | —                  | Optional custom User-Agent for whitelisting       |
 | `EVAL_SUITE`         | `smoke`            | `smoke` (3 cases) or `full` (11 cases)            |

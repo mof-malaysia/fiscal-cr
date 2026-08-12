@@ -27,7 +27,7 @@ export const DEFAULT_EXCLUDE_PATTERNS = [
 
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
-  provider: z.enum(["openai-compatible", "kimi", "openai"]).default("kimi"),
+  provider: z.enum(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
   model: z.string().default("kimi-for-coding"),
   baseUrl: z.string().url().optional(),
   /** Custom User-Agent for endpoints that whitelist clients. */
@@ -35,11 +35,9 @@ export const reviewConfigSchema = z.object({
   /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
   temperature: z.number().min(0).max(2).optional(),
   /**
-   * Extra OpenAI request fields merged into every LLM call. Typed fields are
+   * Provider-native request fields merged into every LLM call. Typed fields are
    * validated; all other keys pass through verbatim (future-proof). Pipeline-
-   * managed keys (model/messages/temperature/token caps/response_format/stream)
-   * are stripped by the provider — use `temperature`/`pipeline.maxOutputTokens`
-   * for those instead.
+   * managed keys are stripped by the selected provider adapter.
    */
   modelParams: z
     .object({

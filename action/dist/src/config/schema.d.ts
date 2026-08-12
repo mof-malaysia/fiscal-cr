@@ -8,7 +8,7 @@ import { z } from "zod";
 export declare const DEFAULT_EXCLUDE_PATTERNS: readonly ["**/node_modules/**", "**/dist/**", "**/build/**", "**/*.min.*", "**/*.lock", "**/*.lockb", "**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/bun.lockb", "**/go.sum", "**/go.work.sum", "**/packages.lock.json"];
 export declare const reviewConfigSchema: z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
-    provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi", "openai"]>>;
+    provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi", "openai", "anthropic"]>>;
     model: z.ZodDefault<z.ZodString>;
     baseUrl: z.ZodOptional<z.ZodString>;
     /** Custom User-Agent for endpoints that whitelist clients. */
@@ -16,11 +16,9 @@ export declare const reviewConfigSchema: z.ZodObject<{
     /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
     temperature: z.ZodOptional<z.ZodNumber>;
     /**
-     * Extra OpenAI request fields merged into every LLM call. Typed fields are
+     * Provider-native request fields merged into every LLM call. Typed fields are
      * validated; all other keys pass through verbatim (future-proof). Pipeline-
-     * managed keys (model/messages/temperature/token caps/response_format/stream)
-     * are stripped by the provider — use `temperature`/`pipeline.maxOutputTokens`
-     * for those instead.
+     * managed keys are stripped by the selected provider adapter.
      */
     modelParams: z.ZodOptional<z.ZodObject<{
         reasoning_effort: z.ZodOptional<z.ZodEnum<["minimal", "low", "medium", "high"]>>;
@@ -247,7 +245,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
         maxOutputTokens?: number | undefined;
     }>>;
 }, "strip", z.ZodTypeAny, {
-    provider: "openai-compatible" | "kimi" | "openai";
+    provider: "openai-compatible" | "kimi" | "openai" | "anthropic";
     model: string;
     language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
     experimental: boolean;
@@ -317,7 +315,7 @@ export declare const reviewConfigSchema: z.ZodObject<{
         verbosity: z.ZodOptional<z.ZodEnum<["low", "medium", "high"]>>;
     }, z.ZodTypeAny, "passthrough"> | undefined;
 }, {
-    provider?: "openai-compatible" | "kimi" | "openai" | undefined;
+    provider?: "openai-compatible" | "kimi" | "openai" | "anthropic" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
     baseUrl?: string | undefined;

@@ -15,19 +15,19 @@ inputs:
     required: false
     default: ${{ github.token }}
   provider:
-    description: 'Model provider: openai-compatible, kimi, or openai'
+    description: 'Model provider: openai-compatible, kimi, openai, or anthropic'
     required: false
   model:
     description: 'Model to use (overrides repo config when provided)'
     required: false
   base_url:
-    description: 'Base URL for the OpenAI-compatible provider API'
+    description: 'Provider base URL override; Anthropic defaults to api.anthropic.com/v1'
     required: false
   user_agent:
     description: 'Custom User-Agent header for endpoints that whitelist clients'
     required: false
   model_params:
-    description: 'Extra OpenAI request fields as a JSON object (e.g. {"reasoning_effort":"high"}). Merged into every model call.'
+    description: 'Provider-native request fields as a JSON object, merged into every model call'
     required: false
   language:
     description: 'Review comment language (overrides repo config when provided)'
