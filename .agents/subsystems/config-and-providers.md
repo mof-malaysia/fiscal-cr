@@ -2,7 +2,7 @@
 
 Configuration resolution and the LLM provider layer. Files: `src/config/{schema,defaults,loader,model-presets}.ts`, `src/providers/{interface,factory,openai-compatible,anthropic,resilient}.ts`, plus per-model knobs `src/pipeline/{temperature,max-output}.ts` and error types `src/utils/errors.ts`.
 
-Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS.md) for non-negotiables. Related: [review pipeline](review-pipeline.md), [GitHub integration](github-integration.md).
+Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS.md) for non-negotiables. Related: [model presets](model-presets.md), [review pipeline](review-pipeline.md), [GitHub integration](github-integration.md).
 
 ## Config precedence (highest wins)
 
@@ -25,6 +25,8 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 - **Other API errors → rethrown** (never silently defaulted).
 
 ## Model presets & stage routing
+
+Full preset semantics — built-in stage maps, `provider-default` mapping, custom merge behavior, validation details, and the change recipe — live in the dedicated [model presets](model-presets.md) guide. Overview:
 
 `src/config/model-presets.ts` holds the built-in presets and their resolvers; `schema.ts` exposes `modelForRole(config, role)`, which every pipeline call site uses.
 

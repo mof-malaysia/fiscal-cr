@@ -2,7 +2,7 @@
 
 The orchestration core shared by both entry points. Files: `src/review/orchestrator.ts`, `src/review/delta.ts`, `src/pipeline/*`, plus supporting `src/review/{diff-analyzer,file-filter,file-source}.ts` and `src/utils/tokens.ts`.
 
-Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS.md) for non-negotiables. Related: [GitHub integration](github-integration.md), [config & providers](config-and-providers.md).
+Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS.md) for non-negotiables. Related: [model presets](model-presets.md), [GitHub integration](github-integration.md), [config & providers](config-and-providers.md).
 
 ## Responsibilities
 
@@ -25,7 +25,7 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 
 ## Review execution (`orchestrator.runReview`)
 
-Token budget: `estimateTokens(patches) + estimateTokens(contents)` over changed files. Every LLM call below is routed to its stage model by `modelForRole(config, <stage>)` — explicit `models.<stage>` > selected `modelPreset` stage > top-level `model` (see [config & providers](config-and-providers.md)).
+Token budget: `estimateTokens(patches) + estimateTokens(contents)` over changed files. Every LLM call below is routed to its stage model by `modelForRole(config, <stage>)` — explicit `models.<stage>` > selected `modelPreset` stage > top-level `model` (see [model presets](model-presets.md) for stage routing).
 
 - **Fast path** (`src/pipeline/fast-path.ts`): when `!pipeline.enabled` (kill-switch) or total < `pipeline.fastPathThreshold` — one combined LLM call on the `fastPath` stage model (intent + summary + score + walkthrough + findings), parsed by `parseFastPathResponse`, passed through the same `validateAndRankFindings` gate as the pipeline. Truncated output (`finishReason === 'length'`) is salvaged via `repairTruncatedJson` and warns.
 - **Multi-pass pipeline**:
