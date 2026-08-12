@@ -154,6 +154,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     const headSha = payload.pull_request.head.sha;
 
     const config = await loadConfig(octokit, owner, repo);
+    applyProviderOverride(config, appCtx.provider);
     applyModelOverride(config, appCtx.model);
     if (!config.review.auto.onReviewRequest) return;
 
