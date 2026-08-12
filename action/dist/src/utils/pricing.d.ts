@@ -9,7 +9,7 @@ export interface TokenPricing {
     outputPerMillion: number;
     cachedInputPerMillion: number;
 }
-export type PricingSource = 'exact' | 'family' | 'fallback';
+export type PricingSource = 'exact' | 'family' | 'remote' | 'fallback';
 export interface PricingContext {
     provider?: string;
     model?: string;
@@ -26,6 +26,12 @@ export interface PricingResolution {
 export declare const FALLBACK_TOKEN_PRICING: TokenPricing;
 /** Resolve a local pricing snapshot for a provider/model pair. */
 export declare function resolvePricing(context?: PricingContext): PricingResolution;
+/**
+ * Resolve pricing asynchronously, consulting OpenRouter only for an unknown
+ * model. The remote result is cached briefly so a review does not repeatedly
+ * pay the metadata lookup latency.
+ */
+export declare function resolvePricingAsync(context?: PricingContext): Promise<PricingResolution>;
 export declare function calculateCostWithPricing(usage: {
     input: number;
     output: number;

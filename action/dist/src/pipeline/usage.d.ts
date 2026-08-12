@@ -55,7 +55,7 @@ export declare class UsageTracker {
     private totals;
     private callCount;
     private readonly pricing;
-    constructor(telemetry?: TelemetrySink | undefined, pricingContext?: PricingContext);
+    constructor(telemetry?: TelemetrySink | undefined, pricingContext?: PricingContext, pricingResolution?: PricingResolution);
     startCall(): void;
     add(usage: LLMTokenUsage, call?: LLMCallTelemetry): void;
     emit(event: TelemetryEvent): void;

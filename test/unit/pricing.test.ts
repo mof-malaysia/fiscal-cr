@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   calculateCostWithPricing,
   FALLBACK_TOKEN_PRICING,
   resolvePricing,
+  resolvePricingAsync,
 } from '../../src/utils/pricing.js';
 
 describe('resolvePricing', () => {
@@ -24,6 +25,26 @@ describe('resolvePricing', () => {
       matchedModel: 'claude-sonnet-4.5',
     });
   });
+  it('resolves the GPT-5.6 Luna, Terra, Sol, and Claude 5 families', () => {
+    expect(resolvePricing({ provider: 'openai', model: 'gpt-5.6-luna-20260709' })).toMatchObject({
+      source: 'family',
+      matchedModel: 'gpt-5.6-luna',
+      pricing: { inputPerMillion: 0.1, outputPerMillion: 0.6 },
+    });
+    expect(resolvePricing({ provider: 'openai', model: 'gpt-5.6-terra-20260709' })).toMatchObject({
+      source: 'family',
+      matchedModel: 'gpt-5.6-terra',
+      pricing: { inputPerMillion: 1, outputPerMillion: 6 },
+    });
+    expect(resolvePricing({ provider: 'openai', model: 'gpt-5.6-sol-20260709' })).toMatchObject({
+      source: 'family',
+      matchedModel: 'gpt-5.6-sol',
+    });
+    expect(resolvePricing({ provider: 'anthropic', model: 'claude-opus-5-20260723' })).toMatchObject({
+      source: 'family',
+      matchedModel: 'claude-opus-5',
+    });
+  });
 
   it('uses OpenRouter pricing for an OpenRouter endpoint', () => {
     expect(resolvePricing({
@@ -38,6 +59,65 @@ describe('resolvePricing', () => {
       source: 'fallback',
       pricing: FALLBACK_TOKEN_PRICING,
     });
+  });
+});
+
+describe('resolvePricingAsync', () => {
+  it('fetches and caches an unknown OpenRouter model price', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        id: 'vendor/future-model',
+        pricing: {
+          prompt: '0.000003',
+          completion: '0.000012',
+          input_cache_read: '0.0000003',
+        },
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const context = {
+      provider: 'openai-compatible',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'vendor/future-model',
+    };
+    const first = await resolvePricingAsync(context);
+    const second = await resolvePricingAsync(context);
+
+    expect(first).toMatchObject({
+      source: 'remote',
+      matchedModel: 'vendor/future-model',
+      pricing: {
+        inputPerMillion: 3,
+        outputPerMillion: 12,
+        cachedInputPerMillion: 0.3,
+      },
+    });
+    expect(second).toEqual(first);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/model/vendor/future-model',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it('falls back when the OpenRouter lookup is unavailable', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolvePricingAsync({
+      provider: 'openai-compatible',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'vendor/unavailable-model',
+    });
+
+    expect(result.source).toBe('fallback');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 });
 

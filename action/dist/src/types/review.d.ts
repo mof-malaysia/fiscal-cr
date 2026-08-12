@@ -29,7 +29,7 @@ export interface ReviewResult {
     /** Provider/model-aware estimated cost when pricing metadata is available. */
     costEstimate?: {
         usd: number;
-        source: 'exact' | 'family' | 'fallback';
+        source: 'exact' | 'family' | 'remote' | 'fallback';
         provider?: string;
         model?: string;
         matchedModel?: string;

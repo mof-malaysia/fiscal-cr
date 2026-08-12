@@ -300,12 +300,14 @@ the same PR don't race each other's state.
 
 ## Cost model
 
-FiscalCR uses a local provider/model pricing snapshot to estimate API cost.
-Known direct-provider families currently include OpenAI, Anthropic, and Kimi
-Open Platform models. OpenRouter model IDs use OpenRouter-specific entries when
-the configured endpoint is OpenRouter.
+FiscalCR uses a provider/model pricing snapshot to estimate API cost.
+Known direct-provider families include OpenAI GPT-5.6 Luna, Terra, and Sol,
+Anthropic Claude 5, and Kimi Open Platform models. OpenRouter model IDs use
+OpenRouter-specific entries when the configured endpoint is OpenRouter.
 
-Unknown models and custom endpoints use the legacy fallback estimate:
+For an unknown OpenRouter model, FiscalCR queries the public OpenRouter model
+endpoint, caches the result for one hour, and falls back if the lookup fails.
+Unknown models and custom endpoints otherwise use the legacy fallback estimate:
 
 | Token type   | Rate              |
 | ------------ | ----------------- |
@@ -313,10 +315,12 @@ Unknown models and custom endpoints use the legacy fallback estimate:
 | Output       | $1.90 / 1M tokens |
 | Cached input | $0.10 / 1M tokens |
 
-The estimate is local and never fetched during a review. It is approximate:
-vendor pricing, routing, discounts, long-context tiers, batch/priority modes,
-and subscription quotas can differ. The displayed pricing source identifies
-whether the estimate used an exact model, a model family, or the fallback.
+Pricing lookup is best-effort and can add up to two seconds before a review
+starts for an uncached OpenRouter model. It is approximate: vendor pricing,
+routing, discounts, long-context tiers, batch/priority modes, and subscription
+quotas can differ. The displayed pricing source identifies whether the
+estimate used an exact model, a model family, a remote OpenRouter lookup, or
+the fallback.
 
 ## Architecture
 

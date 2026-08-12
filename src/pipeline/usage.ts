@@ -89,8 +89,9 @@ export class UsageTracker {
   constructor(
     private readonly telemetry?: TelemetrySink,
     pricingContext: PricingContext = {},
+    pricingResolution?: PricingResolution,
   ) {
-    this.pricing = resolvePricing(pricingContext);
+    this.pricing = pricingResolution ?? resolvePricing(pricingContext);
   }
 
   startCall(): void {

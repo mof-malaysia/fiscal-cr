@@ -29,7 +29,7 @@ import { countBySeverity, deterministicScore } from '../pipeline/pass3-synthesis
 import { runReviewPipeline } from '../pipeline/run-review.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
-import { resolvePricing, type PricingContext } from '../utils/pricing.js';
+import { resolvePricingAsync, type PricingContext, type PricingResolution } from '../utils/pricing.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -174,14 +174,15 @@ export class ReviewOrchestrator {
         model: this.config.model,
         baseUrl: this.config.baseUrl,
       };
-      const usage = new UsageTracker(this.options.telemetry, pricingContext);
+      const pricingResolution: PricingResolution = await resolvePricingAsync(pricingContext);
+      const usage = new UsageTracker(this.options.telemetry, pricingContext, pricingResolution);
       const result = await runReviewPipeline(this.llm, prContext, this.config, usage, {
         workspaceRoot: this.options.workspaceRoot,
         deltaHint,
       });
       result.costEstimate = {
         usd: usage.cost(),
-        ...resolvePricing(pricingContext),
+        ...pricingResolution,
       };
 
       // Step 6: Publish (sticky lifecycle or legacy stacked review)

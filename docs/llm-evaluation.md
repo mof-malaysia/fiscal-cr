@@ -282,11 +282,16 @@ best-effort with fixed git arguments and nulled on failure.
 
 ## Pricing estimates
 
-FiscalCR resolves a local provider/model pricing snapshot for cost estimates.
-Known direct-provider model families include OpenAI, Anthropic, and Kimi Open
-Platform models; OpenRouter model IDs use OpenRouter-specific rates when the
-configured endpoint is OpenRouter. Unknown models and custom endpoints use the
-legacy fallback estimate and are marked as `fallback` in telemetry metadata.
+FiscalCR resolves a provider/model pricing snapshot for cost estimates.
+Known direct-provider model families include OpenAI GPT-5.6 Luna, Terra, and
+Sol, Anthropic Claude 5, and Kimi Open Platform models; OpenRouter model IDs
+use OpenRouter-specific rates when the configured endpoint is OpenRouter.
+Unknown OpenRouter models receive a best-effort lookup from the public
+OpenRouter model endpoint, cached for one hour. Other unknown models use the
+legacy fallback estimate.
 
-Pricing is not fetched during a review, so it cannot delay or fail a review.
-Rates can change; update the local registry when vendor pricing changes.
+Pricing lookup has a two-second timeout and cannot fail a review; a failed
+lookup returns the fallback estimate. Telemetry marks estimates as `exact`,
+`family`, `remote`, or `fallback`. Rates can change, and long-context tiers,
+routing, discounts, batch/priority modes, and subscription quotas can make
+the estimate differ from the actual bill.
