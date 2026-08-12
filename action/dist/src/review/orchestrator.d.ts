@@ -3,6 +3,7 @@ import type { ReviewConfig } from '../config/schema.js';
 import type { ReviewResult } from '../types/review.js';
 import type { LLMProvider } from '../providers/interface.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
+import { type PricingContext } from '../utils/pricing.js';
 interface ReviewParams {
     owner: string;
     repo: string;
@@ -16,6 +17,8 @@ export interface OrchestratorOptions {
     workspaceRoot?: string;
     /** Optional metrics-only event sink. Prompt and repository content are never included. */
     telemetry?: TelemetrySink;
+    /** Effective provider/model used by the provider factory, including App overrides. */
+    pricingContext?: PricingContext;
 }
 export declare class ReviewOrchestrator {
     private octokit;

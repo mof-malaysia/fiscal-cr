@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTokens, calculateCost } from '../../src/utils/tokens.js';
+import { estimateTokens, calculateCost, roundCost } from '../../src/utils/tokens.js';
 
 describe('estimateTokens', () => {
   it('should estimate English text tokens (~4 chars/token)', () => {
@@ -23,6 +23,13 @@ describe('estimateTokens', () => {
 
   it('should handle empty string', () => {
     expect(estimateTokens('')).toBe(0);
+  });
+});
+
+describe('roundCost', () => {
+  it('rounds costs to four decimal places', () => {
+    expect(roundCost(0.023456789123)).toBe(0.0235);
+    expect(roundCost(2.29)).toBe(2.29);
   });
 });
 

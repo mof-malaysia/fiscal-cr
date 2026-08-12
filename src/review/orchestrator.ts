@@ -29,7 +29,8 @@ import { countBySeverity, deterministicScore } from '../pipeline/pass3-synthesis
 import { runReviewPipeline } from '../pipeline/run-review.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
-import { calculateCost } from '../utils/tokens.js';
+import { resolvePricingAsync, type PricingContext, type PricingResolution } from '../utils/pricing.js';
+import { roundCost } from '../utils/tokens.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -41,12 +42,13 @@ interface ReviewParams {
   /** Review the whole PR even when a delta would suffice (@fiscalcr review). */
   forceFull?: boolean;
 }
-
 export interface OrchestratorOptions {
   /** Local checkout root (Action mode). Enables disk reads instead of API fetches. */
   workspaceRoot?: string;
   /** Optional metrics-only event sink. Prompt and repository content are never included. */
   telemetry?: TelemetrySink;
+  /** Effective provider/model used by the provider factory, including App overrides. */
+  pricingContext?: PricingContext;
 }
 
 function conclusionFor(
@@ -168,11 +170,21 @@ export class ReviewOrchestrator {
         scope.mode === 'delta' && scope.sinceSha
           ? `### Incremental Review\nOnly files changed since commit \`${scope.sinceSha.slice(0, 7)}\` are included. Focus on lines changed since that commit; findings on other files are tracked separately.`
           : undefined;
-      const usage = new UsageTracker(this.options.telemetry);
+      const pricingContext = this.options.pricingContext ?? {
+        provider: this.config.provider,
+        model: this.config.model,
+        baseUrl: this.config.baseUrl,
+      };
+      const pricingResolution: PricingResolution = await resolvePricingAsync(pricingContext);
+      const usage = new UsageTracker(this.options.telemetry, pricingContext, pricingResolution);
       const result = await runReviewPipeline(this.llm, prContext, this.config, usage, {
         workspaceRoot: this.options.workspaceRoot,
         deltaHint,
       });
+      result.costEstimate = {
+        usd: roundCost(usage.cost()),
+        ...pricingResolution,
+      };
 
       // Step 6: Publish (sticky lifecycle or legacy stacked review)
       if (!sticky) {
@@ -407,7 +419,7 @@ export class ReviewOrchestrator {
         at: new Date().toISOString().slice(0, 10),
         scope: scope.mode === 'delta' ? 'delta' : 'full',
         newFindings: newAnnotations.length,
-        cost: calculateCost(result.tokensUsed).toString(),
+        cost: result.costEstimate?.usd.toFixed(4) ?? '0',
       }),
     };
     await saveStickyComment(this.octokit, {

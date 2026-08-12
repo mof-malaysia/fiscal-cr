@@ -279,3 +279,30 @@ best-effort with fixed git arguments and nulled on failure.
 - Vacuous-truth conventions apply when a case has no predictions or no gold.
 - Blind human review is manual and time-consuming; sample or stratify rather
   than scoring every pair.
+
+## Pricing estimates
+
+FiscalCR resolves a provider/model pricing snapshot for cost estimates.
+Known direct-provider model families include OpenAI GPT-5.6 Luna, Terra, and
+Sol, Anthropic Claude 5, and Kimi Open Platform models; OpenRouter model IDs
+use OpenRouter-specific rates when the configured endpoint is OpenRouter.
+Unknown OpenRouter models receive a best-effort lookup from the public model
+endpoint, cached for one hour. Other unknown models use the legacy fallback
+estimate.
+
+Current Kimi Open Platform snapshot rates (USD per 1M tokens):
+
+| Model | Cache hit | Cache miss | Output |
+| --- | ---: | ---: | ---: |
+| `kimi-k3` | $0.30 | $3.00 | $15.00 |
+| `kimi-k2.7-code` | $0.19 | $0.95 | $4.00 |
+| `kimi-k2.7-code-highspeed` | $0.38 | $1.90 | $8.00 |
+| `kimi-k2.6` | $0.16 | $0.95 | $4.00 |
+
+Legacy `kimi-k2.7` and `kimi-k2-7` IDs use the K2.7 Code rate.
+
+Pricing lookup has a two-second timeout and cannot fail a review; a failed
+lookup returns the fallback estimate. Telemetry marks estimates as `exact`,
+`family`, `remote`, or `fallback`. Rates can change, and long-context tiers,
+routing, discounts, batch/priority modes, and subscription quotas can make
+the estimate differ from the actual bill.

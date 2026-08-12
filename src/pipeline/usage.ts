@@ -1,7 +1,8 @@
+import type { PricingContext, PricingResolution, PricingSource } from '../utils/pricing.js';
+import { calculateCostWithPricing, resolvePricing } from '../utils/pricing.js';
 import type { LLMTokenUsage } from '../providers/interface.js';
 import type { ChatMessage } from '../types/review.js';
 import { estimateTokens } from '../utils/tokens.js';
-
 export type TelemetryStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path';
 export type TelemetryFinishReason =
   | 'stop'
@@ -10,7 +11,6 @@ export type TelemetryFinishReason =
   | 'tool_calls'
   | 'function_call'
   | 'other';
-
 export interface LLMCallTelemetryEvent {
   type: 'llm_call';
   stage: TelemetryStage;
@@ -20,6 +20,8 @@ export interface LLMCallTelemetryEvent {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  estimatedCostUsd: number;
+  pricingSource: PricingSource;
   maxOutputTokens: number;
   durationMs: number;
   finishReason?: TelemetryFinishReason;
@@ -35,13 +37,14 @@ export interface StageResultTelemetryEvent {
   groups?: number;
   hotspots?: number;
 }
-
 export interface ReviewCompletedTelemetryEvent {
   type: 'review_completed';
   calls: number;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  estimatedCostUsd: number;
+  pricingSource: PricingSource;
   annotations: number;
 }
 
@@ -77,12 +80,19 @@ function safeFinishReason(value: string | undefined): TelemetryFinishReason | un
     : 'other';
 }
 
-/** Aggregates token usage and call counts across all pipeline LLM calls. */
+/** Aggregates token usage and provider-specific cost across all pipeline LLM calls. */
 export class UsageTracker {
   private totals: LLMTokenUsage = { input: 0, output: 0, cached: 0 };
   private callCount = 0;
+  private readonly pricing: PricingResolution;
 
-  constructor(private readonly telemetry?: TelemetrySink) {}
+  constructor(
+    private readonly telemetry?: TelemetrySink,
+    pricingContext: PricingContext = {},
+    pricingResolution?: PricingResolution,
+  ) {
+    this.pricing = pricingResolution ?? resolvePricing(pricingContext);
+  }
 
   startCall(): void {
     this.callCount++;
@@ -106,6 +116,8 @@ export class UsageTracker {
         inputTokens: usage.input,
         outputTokens: usage.output,
         cachedTokens: usage.cached,
+        estimatedCostUsd: calculateCostWithPricing(usage, this.pricing.pricing),
+        pricingSource: this.pricing.source,
         maxOutputTokens: call.maxOutputTokens,
         durationMs: Math.max(0, call.durationMs),
         ...(finishReason === undefined ? {} : { finishReason }),
@@ -128,5 +140,13 @@ export class UsageTracker {
 
   calls(): number {
     return this.callCount;
+  }
+
+  cost(): number {
+    return calculateCostWithPricing(this.totals, this.pricing.pricing);
+  }
+
+  pricingInfo(): PricingResolution {
+    return this.pricing;
   }
 }

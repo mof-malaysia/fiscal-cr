@@ -1,3 +1,4 @@
+import type { PricingContext, PricingResolution, PricingSource } from '../utils/pricing.js';
 import type { LLMTokenUsage } from '../providers/interface.js';
 import type { ChatMessage } from '../types/review.js';
 export type TelemetryStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path';
@@ -11,6 +12,8 @@ export interface LLMCallTelemetryEvent {
     inputTokens: number;
     outputTokens: number;
     cachedTokens: number;
+    estimatedCostUsd: number;
+    pricingSource: PricingSource;
     maxOutputTokens: number;
     durationMs: number;
     finishReason?: TelemetryFinishReason;
@@ -31,6 +34,8 @@ export interface ReviewCompletedTelemetryEvent {
     inputTokens: number;
     outputTokens: number;
     cachedTokens: number;
+    estimatedCostUsd: number;
+    pricingSource: PricingSource;
     annotations: number;
 }
 export type TelemetryEvent = LLMCallTelemetryEvent | StageResultTelemetryEvent | ReviewCompletedTelemetryEvent;
@@ -44,16 +49,19 @@ export interface LLMCallTelemetry {
     fileCount?: number;
     finishReason?: string;
 }
-/** Aggregates token usage and call counts across all pipeline LLM calls. */
+/** Aggregates token usage and provider-specific cost across all pipeline LLM calls. */
 export declare class UsageTracker {
     private readonly telemetry?;
     private totals;
     private callCount;
-    constructor(telemetry?: TelemetrySink | undefined);
+    private readonly pricing;
+    constructor(telemetry?: TelemetrySink | undefined, pricingContext?: PricingContext, pricingResolution?: PricingResolution);
     startCall(): void;
     add(usage: LLMTokenUsage, call?: LLMCallTelemetry): void;
     emit(event: TelemetryEvent): void;
     total(): LLMTokenUsage;
     calls(): number;
+    cost(): number;
+    pricingInfo(): PricingResolution;
 }
 //# sourceMappingURL=usage.d.ts.map

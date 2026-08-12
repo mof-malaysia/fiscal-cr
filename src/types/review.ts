@@ -38,6 +38,14 @@ export interface ReviewResult {
     output: number;
     cached: number;
   };
+  /** Provider/model-aware estimated cost when pricing metadata is available. */
+  costEstimate?: {
+    usd: number;
+    source: 'exact' | 'family' | 'remote' | 'fallback';
+    provider?: string;
+    model?: string;
+    matchedModel?: string;
+  };
   /** One-line-per-file walkthrough table (multi-pass pipeline output). */
   walkthrough?: WalkthroughEntry[];
   /** Short description of what the PR is trying to do. */

@@ -300,8 +300,27 @@ the same PR don't race each other's state.
 
 ## Cost model
 
-The cost estimate uses a single set of token pricing constants for a rough
-estimate across providers.
+FiscalCR uses a provider/model pricing snapshot to estimate API cost.
+Known direct-provider families include OpenAI GPT-5.6 Luna, Terra, and Sol,
+Anthropic Claude 5, and Kimi Open Platform models. OpenRouter model IDs use
+OpenRouter-specific entries when the configured endpoint is OpenRouter.
+
+For an unknown OpenRouter model, FiscalCR queries the public model endpoint,
+caches the result for one hour, and falls back to the local snapshot if the
+lookup fails.
+
+Kimi Open Platform snapshot rates:
+
+| Model                         | Input cache hit | Input cache miss | Output |
+| ----------------------------- | --------------- | ---------------- | ------ |
+| `kimi-k3`                     | $0.30           | $3.00            | $15.00 |
+| `kimi-k2.7-code`              | $0.19           | $0.95            | $4.00  |
+| `kimi-k2.7-code-highspeed`    | $0.38           | $1.90            | $8.00  |
+| `kimi-k2.6`                   | $0.16           | $0.95            | $4.00  |
+
+Legacy `kimi-k2.7` and `kimi-k2-7` IDs resolve to the K2.7 Code rate.
+
+Unknown models and custom endpoints otherwise use the legacy fallback estimate:
 
 | Token type   | Rate              |
 | ------------ | ----------------- |
@@ -309,7 +328,12 @@ estimate across providers.
 | Output       | $1.90 / 1M tokens |
 | Cached input | $0.10 / 1M tokens |
 
-Provider-specific pricing tables are a reasonable follow-up.
+Pricing lookup is best-effort and can add up to two seconds before a review
+starts for an uncached OpenRouter model. It is approximate: vendor pricing,
+routing, discounts, long-context tiers, batch/priority modes, and subscription
+quotas can differ. The displayed pricing source identifies whether the
+estimate used an exact model, a model family, a remote OpenRouter lookup, or
+the fallback.
 
 ## Architecture
 

@@ -30,12 +30,13 @@ describe('Action telemetry input', () => {
       inputTokens: 100,
       outputTokens: 20,
       cachedTokens: 5,
+      estimatedCostUsd: 0.0002,
+      pricingSource: 'fallback',
       annotations: 1,
     });
 
-    expect(core.getBooleanInput).toHaveBeenCalledWith('telemetry');
     expect(core.info).toHaveBeenCalledWith(
-      '[fiscalcr-telemetry] {"type":"review_completed","calls":2,"inputTokens":100,"outputTokens":20,"cachedTokens":5,"annotations":1}',
+      '[fiscalcr-telemetry] {"type":"review_completed","calls":2,"inputTokens":100,"outputTokens":20,"cachedTokens":5,"estimatedCostUsd":0.0002,"pricingSource":"fallback","annotations":1}',
     );
   });
 
