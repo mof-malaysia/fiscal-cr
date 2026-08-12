@@ -305,8 +305,9 @@ Known direct-provider families include OpenAI GPT-5.6 Luna, Terra, and Sol,
 Anthropic Claude 5, and Kimi Open Platform models. OpenRouter model IDs use
 OpenRouter-specific entries when the configured endpoint is OpenRouter.
 
-For an unknown OpenRouter model, FiscalCR queries the public OpenRouter model
-endpoint, caches the result for one hour, and falls back if the lookup fails.
+For an unknown OpenRouter model, FiscalCR queries the public model endpoint,
+caches the result for one hour, and falls back to the local snapshot if the
+lookup fails.
 Unknown models and custom endpoints otherwise use the legacy fallback estimate:
 
 | Token type   | Rate              |

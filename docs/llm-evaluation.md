@@ -286,9 +286,9 @@ FiscalCR resolves a provider/model pricing snapshot for cost estimates.
 Known direct-provider model families include OpenAI GPT-5.6 Luna, Terra, and
 Sol, Anthropic Claude 5, and Kimi Open Platform models; OpenRouter model IDs
 use OpenRouter-specific rates when the configured endpoint is OpenRouter.
-Unknown OpenRouter models receive a best-effort lookup from the public
-OpenRouter model endpoint, cached for one hour. Other unknown models use the
-legacy fallback estimate.
+Unknown OpenRouter models receive a best-effort lookup from the public model
+endpoint, cached for one hour. Other unknown models use the legacy fallback
+estimate.
 
 Pricing lookup has a two-second timeout and cannot fail a review; a failed
 lookup returns the fallback estimate. Telemetry marks estimates as `exact`,

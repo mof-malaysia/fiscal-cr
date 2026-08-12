@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   calculateCostWithPricing,
   FALLBACK_TOKEN_PRICING,
@@ -61,6 +61,9 @@ describe('resolvePricing', () => {
     });
   });
 });
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('resolvePricingAsync', () => {
   it('fetches and caches an unknown OpenRouter model price', async () => {
@@ -71,6 +74,12 @@ describe('resolvePricingAsync', () => {
           prompt: '0.000003',
           completion: '0.000012',
           input_cache_read: '0.0000003',
+          overrides: [{
+            min_prompt_tokens: 272_000,
+            prompt: '0.000006',
+            completion: '0.000024',
+            input_cache_read: '0.0000006',
+          }],
         },
       },
     }), {
@@ -94,6 +103,12 @@ describe('resolvePricingAsync', () => {
         inputPerMillion: 3,
         outputPerMillion: 12,
         cachedInputPerMillion: 0.3,
+        tiers: [{
+          minPromptTokens: 272_000,
+          inputPerMillion: 6,
+          outputPerMillion: 24,
+          cachedInputPerMillion: 0.6,
+        }],
       },
     });
     expect(second).toEqual(first);
@@ -102,7 +117,6 @@ describe('resolvePricingAsync', () => {
       'https://openrouter.ai/api/v1/model/vendor/future-model',
       expect.objectContaining({ headers: { Accept: 'application/json' } }),
     );
-    vi.unstubAllGlobals();
   });
 
   it('falls back when the OpenRouter lookup is unavailable', async () => {
@@ -117,7 +131,23 @@ describe('resolvePricingAsync', () => {
 
     expect(result.source).toBe('fallback');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    vi.unstubAllGlobals();
+  });
+  it('rejects malformed OpenRouter prices instead of treating them as free', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        id: 'vendor/malformed-model',
+        pricing: { prompt: '', completion: null },
+      },
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolvePricingAsync({
+      provider: 'openai-compatible',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'vendor/malformed-model',
+    });
+
+    expect(result.source).toBe('fallback');
   });
 });
 
@@ -128,4 +158,20 @@ describe('calculateCostWithPricing', () => {
       { inputPerMillion: 2, outputPerMillion: 8, cachedInputPerMillion: 0.5 },
     )).toBeCloseTo(1.2 + 0.2 + 0.8, 8);
   });
+  it('uses the highest matching long-context tier', () => {
+    expect(calculateCostWithPricing(
+      { input: 300_000, output: 100_000, cached: 100_000 },
+      {
+        inputPerMillion: 3,
+        outputPerMillion: 12,
+        cachedInputPerMillion: 0.3,
+        tiers: [{
+          minPromptTokens: 272_000,
+          inputPerMillion: 6,
+          outputPerMillion: 24,
+          cachedInputPerMillion: 0.6,
+        }],
+      },
+    )).toBeCloseTo(3.66, 8);
+});
 });

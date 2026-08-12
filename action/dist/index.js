@@ -50174,31 +50174,21 @@ const KIMI_PRICING = {
     'kimi-k2.7': { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.19 },
     'kimi-k2-7': { inputPerMillion: 0.95, outputPerMillion: 4, cachedInputPerMillion: 0.19 },
 };
-/**
- * OpenRouter prices are maintained separately because routing/markup can make
- * them differ from the upstream vendor's direct API price.
- */
-const OPENROUTER_PRICING = {
-    'openai/gpt-4.1': OPENAI_PRICING['gpt-4.1'],
-    'openai/gpt-4.1-mini': OPENAI_PRICING['gpt-4.1-mini'],
-    'openai/gpt-4.1-nano': OPENAI_PRICING['gpt-4.1-nano'],
-    'openai/gpt-4o': OPENAI_PRICING['gpt-4o'],
-    'openai/gpt-4o-mini': OPENAI_PRICING['gpt-4o-mini'],
-    'openai/gpt-5': OPENAI_PRICING['gpt-5'],
-    'openai/gpt-5-mini': OPENAI_PRICING['gpt-5-mini'],
-    'openai/gpt-5.6': OPENAI_PRICING['gpt-5.6'],
-    'openai/gpt-5.6-sol': OPENAI_PRICING['gpt-5.6-sol'],
-    'openai/gpt-5.6-terra': OPENAI_PRICING['gpt-5.6-terra'],
-    'openai/gpt-5.6-luna': OPENAI_PRICING['gpt-5.6-luna'],
-    'openai/o3': OPENAI_PRICING.o3,
-    'openai/o4-mini': OPENAI_PRICING['o4-mini'],
-    'anthropic/claude-opus-4.5': ANTHROPIC_PRICING['claude-opus-4.5'],
-    'anthropic/claude-opus-5': ANTHROPIC_PRICING['claude-opus-5'],
-    'anthropic/claude-sonnet-4.5': ANTHROPIC_PRICING['claude-sonnet-4.5'],
-    'anthropic/claude-sonnet-5': ANTHROPIC_PRICING['claude-sonnet-5'],
-    'anthropic/claude-haiku-4.5': ANTHROPIC_PRICING['claude-haiku-4.5'],
-    'anthropic/claude-fable-5': ANTHROPIC_PRICING['claude-fable-5'],
+const PROVIDER_PRICING = {
+    openai: OPENAI_PRICING,
+    anthropic: ANTHROPIC_PRICING,
+    kimi: KIMI_PRICING,
 };
+function lookupOpenRouter(model) {
+    const [provider, ...modelParts] = normalizedModel(model).split('/');
+    const table = PROVIDER_PRICING[provider];
+    if (!table || modelParts.length === 0)
+        return undefined;
+    const result = lookup(table, modelParts.join('/'));
+    return result
+        ? { ...result, matchedModel: `${provider}/${result.matchedModel}` }
+        : undefined;
+}
 function normalizedModel(model) {
     return model.trim().toLowerCase().replace(/:free$|:thinking$|:online$/, '');
 }
@@ -50234,13 +50224,27 @@ function openRouterModelUrl(baseUrl, model) {
         return undefined;
     }
 }
+const pricePerTokenSchema = unionType([
+    numberType().finite().nonnegative(),
+    stringType()
+        .trim()
+        .min(1)
+        .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0)
+        .transform(Number),
+]);
 const OPENROUTER_RESPONSE_SCHEMA = objectType({
     data: objectType({
         id: stringType().optional(),
         pricing: objectType({
-            prompt: coerce.number().finite().nonnegative(),
-            completion: coerce.number().finite().nonnegative(),
-            input_cache_read: coerce.number().finite().nonnegative().optional(),
+            prompt: pricePerTokenSchema,
+            completion: pricePerTokenSchema,
+            input_cache_read: pricePerTokenSchema.optional(),
+            overrides: arrayType(objectType({
+                min_prompt_tokens: numberType().int().positive(),
+                prompt: pricePerTokenSchema,
+                completion: pricePerTokenSchema,
+                input_cache_read: pricePerTokenSchema.optional(),
+            }).passthrough()).optional(),
         }).passthrough(),
     }).passthrough(),
 }).passthrough();
@@ -50248,14 +50252,22 @@ function parseOpenRouterPricing(payload) {
     const parsed = OPENROUTER_RESPONSE_SCHEMA.safeParse(payload);
     if (!parsed.success)
         return undefined;
+    const { pricing } = parsed.data.data;
+    const tiers = pricing.overrides?.map((override) => ({
+        minPromptTokens: override.min_prompt_tokens,
+        inputPerMillion: override.prompt * 1_000_000,
+        outputPerMillion: override.completion * 1_000_000,
+        cachedInputPerMillion: (override.input_cache_read ?? 0) * 1_000_000,
+    }));
     const matchedModel = parsed.data.data.id
         ? normalizedModel(parsed.data.data.id)
         : undefined;
     return {
         pricing: {
-            inputPerMillion: parsed.data.data.pricing.prompt * 1_000_000,
-            outputPerMillion: parsed.data.data.pricing.completion * 1_000_000,
-            cachedInputPerMillion: (parsed.data.data.pricing.input_cache_read ?? 0) * 1_000_000,
+            inputPerMillion: pricing.prompt * 1_000_000,
+            outputPerMillion: pricing.completion * 1_000_000,
+            cachedInputPerMillion: (pricing.input_cache_read ?? 0) * 1_000_000,
+            ...(tiers && tiers.length > 0 ? { tiers } : {}),
         },
         matchedModel,
     };
@@ -50264,39 +50276,29 @@ function parseOpenRouterPricing(payload) {
 function resolvePricing(context = {}) {
     const provider = context.provider?.trim().toLowerCase();
     const model = context.model?.trim();
-    const tableAndModel = model && (provider === 'openrouter' || isOpenRouter(context.baseUrl))
-        ? lookup(OPENROUTER_PRICING, model)
-        : model && provider === 'openai'
-            ? lookup(OPENAI_PRICING, model)
-            : model && provider === 'anthropic'
-                ? lookup(ANTHROPIC_PRICING, model)
-                : model && provider === 'kimi'
-                    ? lookup(KIMI_PRICING, model)
-                    : undefined;
-    if (tableAndModel) {
-        return { ...tableAndModel, provider, model };
-    }
-    return {
-        pricing: FALLBACK_TOKEN_PRICING,
-        source: 'fallback',
-        provider,
-        model,
-    };
+    const routerPricing = model && (provider === 'openrouter' || isOpenRouter(context.baseUrl))
+        ? lookupOpenRouter(model)
+        : undefined;
+    const providerTable = provider ? PROVIDER_PRICING[provider] : undefined;
+    const localPricing = routerPricing ?? (model && providerTable ? lookup(providerTable, model) : undefined);
+    if (localPricing)
+        return { ...localPricing, provider, model };
+    return { pricing: FALLBACK_TOKEN_PRICING, source: 'fallback', provider, model };
 }
 /**
- * Resolve pricing asynchronously, consulting OpenRouter only for an unknown
- * model. The remote result is cached briefly so a review does not repeatedly
- * pay the metadata lookup latency.
+ * Resolve pricing asynchronously, looking up unknown OpenRouter models and
+ * falling back to the local snapshot on failure.
  */
 async function resolvePricingAsync(context = {}) {
     const local = resolvePricing(context);
-    if (local.source !== 'fallback' || !context.model)
+    if (local.source !== 'fallback'
+        || !context.model
+        || !isOpenRouter(context.baseUrl))
         return local;
     const endpoint = openRouterModelUrl(context.baseUrl, context.model);
     if (!endpoint)
         return local;
-    const cacheKey = normalizedModel(context.model);
-    const cached = openRouterPricingCache.get(cacheKey);
+    const cached = openRouterPricingCache.get(endpoint);
     if (cached && cached.expiresAt > Date.now())
         return cached.resolution;
     try {
@@ -50314,9 +50316,9 @@ async function resolvePricingAsync(context = {}) {
             source: 'remote',
             provider: context.provider?.trim().toLowerCase(),
             model: context.model.trim(),
-            matchedModel: remote.matchedModel ?? cacheKey,
+            matchedModel: remote.matchedModel ?? normalizedModel(context.model),
         };
-        openRouterPricingCache.set(cacheKey, {
+        openRouterPricingCache.set(endpoint, {
             expiresAt: Date.now() + OPENROUTER_CACHE_TTL_MS,
             resolution,
         });
@@ -50326,11 +50328,19 @@ async function resolvePricingAsync(context = {}) {
         return local;
     }
 }
+function pricingForUsage(usage, pricing) {
+    return pricing.tiers?.reduce((selected, tier) => {
+        if (usage.input < tier.minPromptTokens)
+            return selected;
+        return !selected || tier.minPromptTokens > selected.minPromptTokens ? tier : selected;
+    }, undefined) ?? pricing;
+}
 function calculateCostWithPricing(usage, pricing) {
+    const rates = pricingForUsage(usage, pricing);
     const uncachedInput = Math.max(0, usage.input - usage.cached);
-    return ((uncachedInput / 1_000_000) * pricing.inputPerMillion +
-        (usage.cached / 1_000_000) * pricing.cachedInputPerMillion +
-        (usage.output / 1_000_000) * pricing.outputPerMillion);
+    return ((uncachedInput / 1_000_000) * rates.inputPerMillion +
+        (usage.cached / 1_000_000) * rates.cachedInputPerMillion +
+        (usage.output / 1_000_000) * rates.outputPerMillion);
 }
 
 ;// CONCATENATED MODULE: ./src/utils/tokens.ts
