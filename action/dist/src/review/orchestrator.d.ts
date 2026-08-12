@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import type { ReviewConfig } from '../config/schema.js';
+import { type ReviewConfig } from '../config/schema.js';
 import type { ReviewResult } from '../types/review.js';
 import type { LLMProvider } from '../providers/interface.js';
 import type { TelemetrySink } from '../pipeline/usage.js';

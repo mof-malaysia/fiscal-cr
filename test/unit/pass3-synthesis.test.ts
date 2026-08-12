@@ -14,6 +14,7 @@ import type {
   ReviewAnnotation,
 } from '../../src/types/review.js';
 import type { GroupReviewOutcome } from '../../src/pipeline/pass2-review.js';
+import type { ChatCompletionParams } from '../../src/providers/interface.js';
 
 // Patch where new-file lines 1-3 exist in the diff.
 const PATCH = '@@ -1,2 +1,3 @@\n line one\n+line two\n+line three';
@@ -200,5 +201,34 @@ describe('synthesize', () => {
     expect(result.score).toBe(deterministicScore(countBySeverity(findings)));
     expect(result.walkthrough).toEqual([{ path: 'src/a.ts', summary: 'w' }]);
     expect(result.annotations).toEqual(findings);
+  });
+
+  it('routes the synthesis call to the synthesis stage model, falling back to the top-level model', async () => {
+    const chatCompletion = vi.fn(async (params: ChatCompletionParams) => ({
+      content: JSON.stringify({ summary: 'S', score: 70, walkthrough: [], nearDuplicates: [], likelyFalsePositives: [] }),
+      usage: { input: 1, output: 1, cached: 0 },
+    }));
+    const input = {
+      ctx: ctx([changedFile('src/a.ts')]),
+      intent: null,
+      outcomes: [outcome('a', []), outcome('b', [])],
+      findings: [],
+    };
+
+    await synthesize(
+      { chatCompletion },
+      input,
+      { ...cfg(), models: { synthesis: 'synthesis-stage-model' } },
+      new UsageTracker(),
+    );
+    expect(chatCompletion.mock.calls[0][0].model).toBe('synthesis-stage-model');
+
+    await synthesize(
+      { chatCompletion },
+      input,
+      { ...cfg(), models: {}, model: 'legacy-model' },
+      new UsageTracker(),
+    );
+    expect(chatCompletion.mock.calls[1][0].model).toBe('legacy-model');
   });
 });

@@ -45504,427 +45504,6 @@ var __webpack_exports__ = {};
 var core = __nccwpck_require__(6966);
 // EXTERNAL MODULE: ./node_modules/.pnpm/@actions+github@6.0.1/node_modules/@actions/github/lib/github.js
 var github = __nccwpck_require__(4903);
-;// CONCATENATED MODULE: external "node:fs/promises"
-const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs/promises");
-// EXTERNAL MODULE: external "node:path"
-var external_node_path_ = __nccwpck_require__(6760);
-;// CONCATENATED MODULE: ./src/utils/concurrency.ts
-function pLimit(concurrency) {
-    if (concurrency < 1 || !Number.isFinite(concurrency)) {
-        throw new RangeError(`concurrency must be a positive number, got ${concurrency}`);
-    }
-    let active = 0;
-    const queue = [];
-    const next = () => {
-        active--;
-        queue.shift()?.();
-    };
-    return (task) => new Promise((resolve, reject) => {
-        const run = () => {
-            active++;
-            task().then(resolve, reject).finally(next);
-        };
-        if (active < concurrency) {
-            run();
-        }
-        else {
-            queue.push(run);
-        }
-    });
-}
-
-// EXTERNAL MODULE: ./node_modules/.pnpm/pino@9.14.0/node_modules/pino/pino.js
-var pino = __nccwpck_require__(9284);
-var pino_default = /*#__PURE__*/__nccwpck_require__.n(pino);
-;// CONCATENATED MODULE: ./src/utils/logger.ts
-
-const logger = pino_default()({
-    level: process.env.LOG_LEVEL ?? 'info',
-    transport: process.env.NODE_ENV === 'development'
-        ? { target: 'pino-pretty', options: { colorize: true } }
-        : undefined,
-});
-
-;// CONCATENATED MODULE: ./src/review/file-source.ts
-
-
-
-
-const API_FETCH_CONCURRENCY = 8;
-class ApiFileSource {
-    octokit;
-    owner;
-    repo;
-    ref;
-    isLocal = false;
-    constructor(octokit, owner, repo, ref) {
-        this.octokit = octokit;
-        this.owner = owner;
-        this.repo = repo;
-        this.ref = ref;
-    }
-    async getContents(paths, maxFileSize) {
-        const contents = new Map();
-        const limit = pLimit(API_FETCH_CONCURRENCY);
-        await Promise.all(paths.map((path) => limit(async () => {
-            try {
-                const { data } = await this.octokit.repos.getContent({
-                    owner: this.owner,
-                    repo: this.repo,
-                    path,
-                    ref: this.ref,
-                });
-                if ('content' in data && data.encoding === 'base64') {
-                    const content = Buffer.from(data.content, 'base64').toString('utf-8');
-                    if (content.length <= maxFileSize && !content.includes('\u0000')) {
-                        contents.set(path, content);
-                    }
-                }
-            }
-            catch (err) {
-                logger.debug({ file: path, err }, 'Could not fetch file content');
-            }
-        })));
-        return contents;
-    }
-}
-/**
- * Reads from the local checkout. Note: actions/checkout checks out the PR
- * *merge* commit by default, not the head SHA — close enough for review
- * context. Paths that fail to read locally fall back to the API source.
- */
-class LocalFileSource {
-    workspaceRoot;
-    fallback;
-    isLocal = true;
-    constructor(workspaceRoot, fallback) {
-        this.workspaceRoot = workspaceRoot;
-        this.fallback = fallback;
-    }
-    async getContents(paths, maxFileSize) {
-        const contents = new Map();
-        const missing = [];
-        await Promise.all(paths.map(async (path) => {
-            const resolved = this.resolveSafe(path);
-            if (!resolved)
-                return;
-            try {
-                const content = await (0,promises_namespaceObject.readFile)(resolved, 'utf-8');
-                if (content.length <= maxFileSize && !content.includes('\u0000')) {
-                    contents.set(path, content);
-                }
-            }
-            catch {
-                missing.push(path);
-            }
-        }));
-        if (missing.length > 0 && this.fallback) {
-            logger.debug({ count: missing.length }, 'Falling back to API for unreadable files');
-            const fromApi = await this.fallback.getContents(missing, maxFileSize);
-            for (const [path, content] of fromApi)
-                contents.set(path, content);
-        }
-        return contents;
-    }
-    /** Reject absolute paths and traversal outside the workspace. */
-    resolveSafe(path) {
-        if ((0,external_node_path_.isAbsolute)(path))
-            return null;
-        const resolved = (0,external_node_path_.normalize)((0,external_node_path_.join)(this.workspaceRoot, path));
-        if (!resolved.startsWith((0,external_node_path_.normalize)(this.workspaceRoot) + external_node_path_.sep))
-            return null;
-        return resolved;
-    }
-}
-
-;// CONCATENATED MODULE: ./src/github/pulls.ts
-
-
-async function extractPullRequestContext(octokit, owner, repo, pullNumber, config, options = {}) {
-    // Fetch PR metadata
-    const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
-    // Fetch changed files list
-    let files = [];
-    let page = 1;
-    while (true) {
-        const { data } = await octokit.pulls.listFiles({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            per_page: 100,
-            page,
-        });
-        if (data.length === 0)
-            break;
-        for (const f of data) {
-            files.push({
-                filename: f.filename,
-                status: f.status,
-                additions: f.additions,
-                deletions: f.deletions,
-                patch: f.patch,
-            });
-        }
-        if (data.length < 100)
-            break;
-        page++;
-    }
-    if (options.pathFilter) {
-        const allowed = new Set(options.pathFilter);
-        files = files.filter((f) => allowed.has(f.filename));
-    }
-    // Fetch the unified diff
-    const { data: diff } = await octokit.pulls.get({
-        owner,
-        repo,
-        pull_number: pullNumber,
-        mediaType: { format: 'diff' },
-    });
-    // Fetch full file contents (head version) via the configured source —
-    // local checkout in Action mode, parallel API calls otherwise.
-    const source = options.fileSource ?? new ApiFileSource(octokit, owner, repo, pr.head.sha);
-    const contentPaths = files
-        .filter((f) => f.status !== 'removed')
-        .map((f) => f.filename);
-    const fileContents = await source.getContents(contentPaths, config.files.maxFileSize);
-    logger.info({
-        filesCount: files.length,
-        fileContentsCount: fileContents.size,
-        diffLength: diff.length,
-        localSource: source.isLocal,
-    }, 'PR context extracted');
-    return {
-        owner,
-        repo,
-        pullNumber,
-        baseSha: pr.base.sha,
-        headSha: pr.head.sha,
-        title: pr.title,
-        body: pr.body ?? '',
-        diff: diff,
-        changedFiles: files,
-        fileContents,
-    };
-}
-
-;// CONCATENATED MODULE: ./src/github/checks.ts
-
-const SEVERITY_TO_LEVEL = {
-    critical: 'failure',
-    warning: 'warning',
-    suggestion: 'notice',
-    nitpick: 'notice',
-};
-const MAX_ANNOTATIONS_PER_REQUEST = 50;
-async function createCheckRun(octokit, params) {
-    const { data } = await octokit.checks.create({
-        owner: params.owner,
-        repo: params.repo,
-        name: params.name ?? 'FiscalCR Code Review',
-        head_sha: params.headSha,
-        status: 'in_progress',
-        started_at: new Date().toISOString(),
-    });
-    logger.info({ checkRunId: data.id }, 'Check run created');
-    return data.id;
-}
-async function completeCheckRun(octokit, params) {
-    const { owner, repo, checkRunId, conclusion, summary, annotations } = params;
-    // GitHub API limits annotations to 50 per request — batch them
-    const batches = [];
-    for (let i = 0; i < annotations.length; i += MAX_ANNOTATIONS_PER_REQUEST) {
-        batches.push(annotations.slice(i, i + MAX_ANNOTATIONS_PER_REQUEST));
-    }
-    // First update includes the summary
-    await octokit.checks.update({
-        owner,
-        repo,
-        check_run_id: checkRunId,
-        status: 'completed',
-        conclusion,
-        completed_at: new Date().toISOString(),
-        ...(params.externalId ? { external_id: params.externalId } : {}),
-        output: {
-            title: conclusion === 'success' ? 'No critical issues found' : 'Issues found',
-            summary,
-            annotations: (batches[0] ?? []).map(toCheckAnnotation),
-        },
-    });
-    // Subsequent batches of annotations
-    for (let i = 1; i < batches.length; i++) {
-        await octokit.checks.update({
-            owner,
-            repo,
-            check_run_id: checkRunId,
-            output: {
-                title: conclusion === 'success' ? 'No critical issues found' : 'Issues found',
-                summary,
-                annotations: batches[i].map(toCheckAnnotation),
-            },
-        });
-    }
-    logger.info({ checkRunId, conclusion, annotationCount: annotations.length }, 'Check run completed');
-}
-function toCheckAnnotation(a) {
-    return {
-        path: a.path,
-        start_line: a.startLine,
-        end_line: a.endLine,
-        annotation_level: SEVERITY_TO_LEVEL[a.severity],
-        title: `[${a.severity}] ${a.title}`,
-        message: a.body,
-        raw_details: a.suggestedFix ?? undefined,
-    };
-}
-
-;// CONCATENATED MODULE: ./src/review/diff-analyzer.ts
-/**
- * Parses unified diff format and maps source line numbers to GitHub diff positions.
- *
- * GitHub's PR Review Comment API requires a "position" in the diff, not a source line number.
- * The position is the line number in the diff (starting from 1), counting only lines
- * that are visible in the diff view (hunk headers, context lines, additions, deletions).
- */
-/**
- * Parse a file's patch (unified diff) into structured hunks.
- */
-function parsePatch(patch) {
-    const lines = patch.split('\n');
-    const hunks = [];
-    let currentHunk = null;
-    let position = 0;
-    let oldLine = 0;
-    let newLine = 0;
-    for (const line of lines) {
-        // Hunk header: @@ -oldStart,oldCount +newStart,newCount @@
-        const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-        if (hunkMatch) {
-            position++;
-            const hunk = {
-                oldStart: parseInt(hunkMatch[1], 10),
-                oldCount: parseInt(hunkMatch[2] ?? '1', 10),
-                newStart: parseInt(hunkMatch[3], 10),
-                newCount: parseInt(hunkMatch[4] ?? '1', 10),
-                lines: [],
-            };
-            oldLine = hunk.oldStart;
-            newLine = hunk.newStart;
-            hunk.lines.push({
-                type: 'hunk-header',
-                content: line,
-                position,
-            });
-            hunks.push(hunk);
-            currentHunk = hunk;
-            continue;
-        }
-        if (!currentHunk)
-            continue;
-        position++;
-        if (line.startsWith('+')) {
-            currentHunk.lines.push({
-                type: 'addition',
-                content: line.slice(1),
-                newLine,
-                position,
-            });
-            newLine++;
-        }
-        else if (line.startsWith('-')) {
-            currentHunk.lines.push({
-                type: 'deletion',
-                content: line.slice(1),
-                oldLine,
-                position,
-            });
-            oldLine++;
-        }
-        else if (line.startsWith(' ') || line === '') {
-            currentHunk.lines.push({
-                type: 'context',
-                content: line.slice(1),
-                oldLine,
-                newLine,
-                position,
-            });
-            oldLine++;
-            newLine++;
-        }
-    }
-    return hunks;
-}
-/**
- * Convert a source file line number (1-indexed) to a GitHub diff position.
- * Returns the position for the RIGHT side (new file) of the diff.
- */
-/**
- * All NEW-side line numbers in a patch that can host a PR review comment
- * (additions and context lines — the RIGHT side of the diff view).
- */
-function commentableLines(patch) {
-    const lines = new Set();
-    for (const hunk of parsePatch(patch)) {
-        for (const line of hunk.lines) {
-            if ((line.type === 'addition' || line.type === 'context') && line.newLine !== undefined) {
-                lines.add(line.newLine);
-            }
-        }
-    }
-    return lines;
-}
-function lineToDiffPosition(patch, targetLine) {
-    const hunks = parsePatch(patch);
-    for (const hunk of hunks) {
-        for (const line of hunk.lines) {
-            if (line.type === 'hunk-header')
-                continue;
-            if ((line.type === 'addition' || line.type === 'context') &&
-                line.newLine === targetLine) {
-                return { position: line.position, found: true };
-            }
-        }
-    }
-    return { position: 0, found: false };
-}
-
-// EXTERNAL MODULE: external "node:crypto"
-var external_node_crypto_ = __nccwpck_require__(7598);
-;// CONCATENATED MODULE: ./src/github/fingerprint.ts
-
-const FP_MARKER_RE = /<!-- fiscalcr:fp:v1:([0-9a-f]{16}) -->/;
-/**
- * Normalize a finding title so the fingerprint survives cosmetic drift between
- * runs: casing, whitespace, backticks, and shifting numbers (line references,
- * counts) must not produce a "new" finding.
- */
-function normalizeTitle(title) {
-    return title
-        .toLowerCase()
-        .replace(/`/g, '')
-        .replace(/\d+/g, '#')
-        .replace(/[^a-z#À-￿]+/gu, ' ')
-        .trim();
-}
-/**
- * Stable identity for a finding across review runs. Deliberately excludes
- * line numbers and body text — both shift between pushes while the underlying
- * issue stays the same.
- */
-function fingerprintAnnotation(a) {
-    return (0,external_node_crypto_.createHash)('sha256')
-        .update(`${a.path}\0${a.category}\0${normalizeTitle(a.title)}`)
-        .digest('hex')
-        .slice(0, 16);
-}
-/** Hidden marker appended to every inline comment we post. */
-function fingerprintMarker(fingerprint) {
-    return `<!-- fiscalcr:fp:v1:${fingerprint} -->`;
-}
-/** Extract the fingerprint from a previously posted comment body, if any. */
-function extractFingerprint(commentBody) {
-    return commentBody.match(FP_MARKER_RE)?.[1] ?? null;
-}
-
 ;// CONCATENATED MODULE: ./node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/util.js
 var util;
 (function (util) {
@@ -50131,6 +49710,575 @@ const coerce = {
 
 const NEVER = (/* unused pure expression or super */ null && (INVALID));
 
+;// CONCATENATED MODULE: ./src/config/schema.ts
+
+/**
+ * Files excluded from review by default: dependency dirs, build output, and
+ * lockfiles/generated manifests. These are machine-generated, often huge, and
+ * carry no review value while consuming a large share of the token budget.
+ * Shared by the schema default and DEFAULT_CONFIG so the two never drift.
+ */
+const DEFAULT_EXCLUDE_PATTERNS = [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    // Minified bundles.
+    "**/*.min.*",
+    // Lockfiles / generated dependency manifests, across ecosystems.
+    "**/*.lock", // Cargo.lock, composer.lock, Gemfile.lock, poetry.lock, Podfile.lock, flake.lock, …
+    "**/*.lockb", // bun.lockb
+    "**/package-lock.json",
+    "**/npm-shrinkwrap.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/bun.lockb",
+    "**/go.sum",
+    "**/go.work.sum",
+    "**/packages.lock.json", // NuGet
+];
+const reviewConfigSchema = objectType({
+    language: enumType(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
+    provider: enumType(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
+    model: stringType().default("kimi-for-coding"),
+    /**
+     * Per-stage model overrides. `intent` drives the Pass 1 intent call,
+     * `fastPath` the fast-path combined call, `groupReview` the per-group file
+     * reviews, and `synthesis` the final synthesis call. An unset stage falls
+     * back to the legacy top-level `model`, so configs that only set `model`
+     * keep working. Unknown keys are rejected (`.strict()`), so the old
+     * `big`/`small` roles fail loudly instead of silently disappearing.
+     */
+    models: objectType({
+        intent: stringType().min(1).optional(),
+        fastPath: stringType().min(1).optional(),
+        groupReview: stringType().min(1).optional(),
+        synthesis: stringType().min(1).optional(),
+    })
+        .strict()
+        .default({}),
+    baseUrl: stringType().url().optional(),
+    /** Custom User-Agent for endpoints that whitelist clients. */
+    userAgent: stringType().max(200).optional(),
+    /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
+    temperature: numberType().min(0).max(2).optional(),
+    /**
+     * Provider-native request fields merged into every LLM call. Typed fields are
+     * validated; all other keys pass through verbatim (future-proof). Pipeline-
+     * managed keys are stripped by the selected provider adapter.
+     */
+    modelParams: objectType({
+        reasoning_effort: enumType(["minimal", "low", "medium", "high"]).optional(),
+        verbosity: enumType(["low", "medium", "high"]).optional(),
+    })
+        .passthrough()
+        .optional(),
+    /** Enables opt-in prompt optimizations that may change between releases. */
+    experimental: booleanType().default(false),
+    review: objectType({
+        auto: objectType({
+            enabled: booleanType().default(true),
+            onOpen: booleanType().default(true),
+            onPush: booleanType().default(true),
+            onReviewRequest: booleanType().default(true),
+            drafts: booleanType().default(false),
+        })
+            .default({}),
+        aspects: objectType({
+            bugs: booleanType().default(true),
+            security: booleanType().default(true),
+            performance: booleanType().default(true),
+            style: booleanType().default(true),
+            bestPractices: booleanType().default(true),
+            documentation: booleanType().default(false),
+            testing: booleanType().default(false),
+        })
+            .default({}),
+        minSeverity: enumType(["critical", "warning", "suggestion", "nitpick"])
+            .default("suggestion"),
+        maxAnnotations: numberType().min(1).max(100).default(30),
+        failOn: enumType(["critical", "warning", "never"]).default("critical"),
+        incremental: objectType({
+            enabled: booleanType().default(true),
+            /** Deltas touching more files than this fall back to a full review. */
+            maxDeltaFiles: numberType().min(1).max(299).default(150),
+        })
+            .default({}),
+        comments: objectType({
+            /** 'sticky': one updated summary + incremental reviews. 'legacy': stack a full review per run. */
+            mode: enumType(["sticky", "legacy"]).default("sticky"),
+            dedupe: booleanType().default(true),
+            resolveOutdated: booleanType().default(true),
+            /** Cumulative inline-comment cap; overflow demotes to check-run annotations. */
+            maxOpenComments: numberType().min(1).default(100),
+        })
+            .default({}),
+    })
+        .default({}),
+    files: objectType({
+        include: arrayType(stringType()).default(["**/*"]),
+        exclude: arrayType(stringType()).default([...DEFAULT_EXCLUDE_PATTERNS]),
+        maxFileSize: numberType().default(100_000),
+    })
+        .default({}),
+    rules: arrayType(objectType({
+        name: stringType(),
+        description: stringType(),
+        filePattern: stringType().optional(),
+        severity: enumType(["critical", "warning", "suggestion"])
+            .default("warning"),
+    }))
+        .default([]),
+    prompt: objectType({
+        systemAppend: stringType().max(2000).optional(),
+        reviewFocus: stringType().max(500).optional(),
+    })
+        .default({}),
+    pipeline: objectType({
+        /** false → single-call review regardless of PR size (legacy behavior). */
+        enabled: booleanType().default(true),
+        concurrency: numberType().min(1).max(8).default(3),
+        groupTokenBudget: numberType().min(8_000).default(40_000),
+        relatedContextBudget: numberType().min(0).default(15_000),
+        maxGroups: numberType().min(1).max(20).default(8),
+        fastPathThreshold: numberType().default(25_000),
+        minConfidence: numberType().min(0).max(1).default(0.6),
+        maxRetries: numberType().min(0).max(5).default(3),
+        callTimeoutMs: numberType().default(120_000),
+        // Unset → resolved per model (Kimi gets a larger cap). See reviewMaxOutputTokens.
+        maxOutputTokens: numberType().optional(),
+    })
+        .default({}),
+});
+/**
+ * Resolve the model for a pipeline stage. Prefers the per-stage override from
+ * `config.models`, falling back to the legacy top-level `model` so old configs
+ * keep their single-model behavior.
+ */
+function modelForRole(config, role) {
+    return config.models[role] ?? config.model;
+}
+
+;// CONCATENATED MODULE: external "node:fs/promises"
+const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs/promises");
+// EXTERNAL MODULE: external "node:path"
+var external_node_path_ = __nccwpck_require__(6760);
+;// CONCATENATED MODULE: ./src/utils/concurrency.ts
+function pLimit(concurrency) {
+    if (concurrency < 1 || !Number.isFinite(concurrency)) {
+        throw new RangeError(`concurrency must be a positive number, got ${concurrency}`);
+    }
+    let active = 0;
+    const queue = [];
+    const next = () => {
+        active--;
+        queue.shift()?.();
+    };
+    return (task) => new Promise((resolve, reject) => {
+        const run = () => {
+            active++;
+            task().then(resolve, reject).finally(next);
+        };
+        if (active < concurrency) {
+            run();
+        }
+        else {
+            queue.push(run);
+        }
+    });
+}
+
+// EXTERNAL MODULE: ./node_modules/.pnpm/pino@9.14.0/node_modules/pino/pino.js
+var pino = __nccwpck_require__(9284);
+var pino_default = /*#__PURE__*/__nccwpck_require__.n(pino);
+;// CONCATENATED MODULE: ./src/utils/logger.ts
+
+const logger = pino_default()({
+    level: process.env.LOG_LEVEL ?? 'info',
+    transport: process.env.NODE_ENV === 'development'
+        ? { target: 'pino-pretty', options: { colorize: true } }
+        : undefined,
+});
+
+;// CONCATENATED MODULE: ./src/review/file-source.ts
+
+
+
+
+const API_FETCH_CONCURRENCY = 8;
+class ApiFileSource {
+    octokit;
+    owner;
+    repo;
+    ref;
+    isLocal = false;
+    constructor(octokit, owner, repo, ref) {
+        this.octokit = octokit;
+        this.owner = owner;
+        this.repo = repo;
+        this.ref = ref;
+    }
+    async getContents(paths, maxFileSize) {
+        const contents = new Map();
+        const limit = pLimit(API_FETCH_CONCURRENCY);
+        await Promise.all(paths.map((path) => limit(async () => {
+            try {
+                const { data } = await this.octokit.repos.getContent({
+                    owner: this.owner,
+                    repo: this.repo,
+                    path,
+                    ref: this.ref,
+                });
+                if ('content' in data && data.encoding === 'base64') {
+                    const content = Buffer.from(data.content, 'base64').toString('utf-8');
+                    if (content.length <= maxFileSize && !content.includes('\u0000')) {
+                        contents.set(path, content);
+                    }
+                }
+            }
+            catch (err) {
+                logger.debug({ file: path, err }, 'Could not fetch file content');
+            }
+        })));
+        return contents;
+    }
+}
+/**
+ * Reads from the local checkout. Note: actions/checkout checks out the PR
+ * *merge* commit by default, not the head SHA — close enough for review
+ * context. Paths that fail to read locally fall back to the API source.
+ */
+class LocalFileSource {
+    workspaceRoot;
+    fallback;
+    isLocal = true;
+    constructor(workspaceRoot, fallback) {
+        this.workspaceRoot = workspaceRoot;
+        this.fallback = fallback;
+    }
+    async getContents(paths, maxFileSize) {
+        const contents = new Map();
+        const missing = [];
+        await Promise.all(paths.map(async (path) => {
+            const resolved = this.resolveSafe(path);
+            if (!resolved)
+                return;
+            try {
+                const content = await (0,promises_namespaceObject.readFile)(resolved, 'utf-8');
+                if (content.length <= maxFileSize && !content.includes('\u0000')) {
+                    contents.set(path, content);
+                }
+            }
+            catch {
+                missing.push(path);
+            }
+        }));
+        if (missing.length > 0 && this.fallback) {
+            logger.debug({ count: missing.length }, 'Falling back to API for unreadable files');
+            const fromApi = await this.fallback.getContents(missing, maxFileSize);
+            for (const [path, content] of fromApi)
+                contents.set(path, content);
+        }
+        return contents;
+    }
+    /** Reject absolute paths and traversal outside the workspace. */
+    resolveSafe(path) {
+        if ((0,external_node_path_.isAbsolute)(path))
+            return null;
+        const resolved = (0,external_node_path_.normalize)((0,external_node_path_.join)(this.workspaceRoot, path));
+        if (!resolved.startsWith((0,external_node_path_.normalize)(this.workspaceRoot) + external_node_path_.sep))
+            return null;
+        return resolved;
+    }
+}
+
+;// CONCATENATED MODULE: ./src/github/pulls.ts
+
+
+async function extractPullRequestContext(octokit, owner, repo, pullNumber, config, options = {}) {
+    // Fetch PR metadata
+    const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
+    // Fetch changed files list
+    let files = [];
+    let page = 1;
+    while (true) {
+        const { data } = await octokit.pulls.listFiles({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            per_page: 100,
+            page,
+        });
+        if (data.length === 0)
+            break;
+        for (const f of data) {
+            files.push({
+                filename: f.filename,
+                status: f.status,
+                additions: f.additions,
+                deletions: f.deletions,
+                patch: f.patch,
+            });
+        }
+        if (data.length < 100)
+            break;
+        page++;
+    }
+    if (options.pathFilter) {
+        const allowed = new Set(options.pathFilter);
+        files = files.filter((f) => allowed.has(f.filename));
+    }
+    // Fetch the unified diff
+    const { data: diff } = await octokit.pulls.get({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        mediaType: { format: 'diff' },
+    });
+    // Fetch full file contents (head version) via the configured source —
+    // local checkout in Action mode, parallel API calls otherwise.
+    const source = options.fileSource ?? new ApiFileSource(octokit, owner, repo, pr.head.sha);
+    const contentPaths = files
+        .filter((f) => f.status !== 'removed')
+        .map((f) => f.filename);
+    const fileContents = await source.getContents(contentPaths, config.files.maxFileSize);
+    logger.info({
+        filesCount: files.length,
+        fileContentsCount: fileContents.size,
+        diffLength: diff.length,
+        localSource: source.isLocal,
+    }, 'PR context extracted');
+    return {
+        owner,
+        repo,
+        pullNumber,
+        baseSha: pr.base.sha,
+        headSha: pr.head.sha,
+        title: pr.title,
+        body: pr.body ?? '',
+        diff: diff,
+        changedFiles: files,
+        fileContents,
+    };
+}
+
+;// CONCATENATED MODULE: ./src/github/checks.ts
+
+const SEVERITY_TO_LEVEL = {
+    critical: 'failure',
+    warning: 'warning',
+    suggestion: 'notice',
+    nitpick: 'notice',
+};
+const MAX_ANNOTATIONS_PER_REQUEST = 50;
+async function createCheckRun(octokit, params) {
+    const { data } = await octokit.checks.create({
+        owner: params.owner,
+        repo: params.repo,
+        name: params.name ?? 'FiscalCR Code Review',
+        head_sha: params.headSha,
+        status: 'in_progress',
+        started_at: new Date().toISOString(),
+    });
+    logger.info({ checkRunId: data.id }, 'Check run created');
+    return data.id;
+}
+async function completeCheckRun(octokit, params) {
+    const { owner, repo, checkRunId, conclusion, summary, annotations } = params;
+    // GitHub API limits annotations to 50 per request — batch them
+    const batches = [];
+    for (let i = 0; i < annotations.length; i += MAX_ANNOTATIONS_PER_REQUEST) {
+        batches.push(annotations.slice(i, i + MAX_ANNOTATIONS_PER_REQUEST));
+    }
+    // First update includes the summary
+    await octokit.checks.update({
+        owner,
+        repo,
+        check_run_id: checkRunId,
+        status: 'completed',
+        conclusion,
+        completed_at: new Date().toISOString(),
+        ...(params.externalId ? { external_id: params.externalId } : {}),
+        output: {
+            title: conclusion === 'success' ? 'No critical issues found' : 'Issues found',
+            summary,
+            annotations: (batches[0] ?? []).map(toCheckAnnotation),
+        },
+    });
+    // Subsequent batches of annotations
+    for (let i = 1; i < batches.length; i++) {
+        await octokit.checks.update({
+            owner,
+            repo,
+            check_run_id: checkRunId,
+            output: {
+                title: conclusion === 'success' ? 'No critical issues found' : 'Issues found',
+                summary,
+                annotations: batches[i].map(toCheckAnnotation),
+            },
+        });
+    }
+    logger.info({ checkRunId, conclusion, annotationCount: annotations.length }, 'Check run completed');
+}
+function toCheckAnnotation(a) {
+    return {
+        path: a.path,
+        start_line: a.startLine,
+        end_line: a.endLine,
+        annotation_level: SEVERITY_TO_LEVEL[a.severity],
+        title: `[${a.severity}] ${a.title}`,
+        message: a.body,
+        raw_details: a.suggestedFix ?? undefined,
+    };
+}
+
+;// CONCATENATED MODULE: ./src/review/diff-analyzer.ts
+/**
+ * Parses unified diff format and maps source line numbers to GitHub diff positions.
+ *
+ * GitHub's PR Review Comment API requires a "position" in the diff, not a source line number.
+ * The position is the line number in the diff (starting from 1), counting only lines
+ * that are visible in the diff view (hunk headers, context lines, additions, deletions).
+ */
+/**
+ * Parse a file's patch (unified diff) into structured hunks.
+ */
+function parsePatch(patch) {
+    const lines = patch.split('\n');
+    const hunks = [];
+    let currentHunk = null;
+    let position = 0;
+    let oldLine = 0;
+    let newLine = 0;
+    for (const line of lines) {
+        // Hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+        const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+        if (hunkMatch) {
+            position++;
+            const hunk = {
+                oldStart: parseInt(hunkMatch[1], 10),
+                oldCount: parseInt(hunkMatch[2] ?? '1', 10),
+                newStart: parseInt(hunkMatch[3], 10),
+                newCount: parseInt(hunkMatch[4] ?? '1', 10),
+                lines: [],
+            };
+            oldLine = hunk.oldStart;
+            newLine = hunk.newStart;
+            hunk.lines.push({
+                type: 'hunk-header',
+                content: line,
+                position,
+            });
+            hunks.push(hunk);
+            currentHunk = hunk;
+            continue;
+        }
+        if (!currentHunk)
+            continue;
+        position++;
+        if (line.startsWith('+')) {
+            currentHunk.lines.push({
+                type: 'addition',
+                content: line.slice(1),
+                newLine,
+                position,
+            });
+            newLine++;
+        }
+        else if (line.startsWith('-')) {
+            currentHunk.lines.push({
+                type: 'deletion',
+                content: line.slice(1),
+                oldLine,
+                position,
+            });
+            oldLine++;
+        }
+        else if (line.startsWith(' ') || line === '') {
+            currentHunk.lines.push({
+                type: 'context',
+                content: line.slice(1),
+                oldLine,
+                newLine,
+                position,
+            });
+            oldLine++;
+            newLine++;
+        }
+    }
+    return hunks;
+}
+/**
+ * Convert a source file line number (1-indexed) to a GitHub diff position.
+ * Returns the position for the RIGHT side (new file) of the diff.
+ */
+/**
+ * All NEW-side line numbers in a patch that can host a PR review comment
+ * (additions and context lines — the RIGHT side of the diff view).
+ */
+function commentableLines(patch) {
+    const lines = new Set();
+    for (const hunk of parsePatch(patch)) {
+        for (const line of hunk.lines) {
+            if ((line.type === 'addition' || line.type === 'context') && line.newLine !== undefined) {
+                lines.add(line.newLine);
+            }
+        }
+    }
+    return lines;
+}
+function lineToDiffPosition(patch, targetLine) {
+    const hunks = parsePatch(patch);
+    for (const hunk of hunks) {
+        for (const line of hunk.lines) {
+            if (line.type === 'hunk-header')
+                continue;
+            if ((line.type === 'addition' || line.type === 'context') &&
+                line.newLine === targetLine) {
+                return { position: line.position, found: true };
+            }
+        }
+    }
+    return { position: 0, found: false };
+}
+
+// EXTERNAL MODULE: external "node:crypto"
+var external_node_crypto_ = __nccwpck_require__(7598);
+;// CONCATENATED MODULE: ./src/github/fingerprint.ts
+
+const FP_MARKER_RE = /<!-- fiscalcr:fp:v1:([0-9a-f]{16}) -->/;
+/**
+ * Normalize a finding title so the fingerprint survives cosmetic drift between
+ * runs: casing, whitespace, backticks, and shifting numbers (line references,
+ * counts) must not produce a "new" finding.
+ */
+function normalizeTitle(title) {
+    return title
+        .toLowerCase()
+        .replace(/`/g, '')
+        .replace(/\d+/g, '#')
+        .replace(/[^a-z#À-￿]+/gu, ' ')
+        .trim();
+}
+/**
+ * Stable identity for a finding across review runs. Deliberately excludes
+ * line numbers and body text — both shift between pushes while the underlying
+ * issue stays the same.
+ */
+function fingerprintAnnotation(a) {
+    return (0,external_node_crypto_.createHash)('sha256')
+        .update(`${a.path}\0${a.category}\0${normalizeTitle(a.title)}`)
+        .digest('hex')
+        .slice(0, 16);
+}
+/** Hidden marker appended to every inline comment we post. */
+function fingerprintMarker(fingerprint) {
+    return `<!-- fiscalcr:fp:v1:${fingerprint} -->`;
+}
+/** Extract the fingerprint from a previously posted comment body, if any. */
+function extractFingerprint(commentBody) {
+    return commentBody.match(FP_MARKER_RE)?.[1] ?? null;
+}
+
 ;// CONCATENATED MODULE: ./src/utils/pricing.ts
 
 /** Previous FiscalCR estimate, retained for unknown/custom endpoints. */
@@ -54057,18 +54205,23 @@ function isReasoningModel(model) {
  * Resolve the temperature for a review call: an explicit config value wins;
  * models that pin their own temperature get none at all (the server default
  * applies); everything else uses the pipeline's preferred low temperature.
+ *
+ * `model` is the model actually used for this call (a stage model when the
+ * caller resolved one); it defaults to the legacy single `config.model` so
+ * callers that predate stage routing keep their behavior.
  */
-function reviewTemperature(config, preferred = 0.3) {
+function reviewTemperature(config, preferred = 0.3, model = config.model) {
     if (config.temperature !== undefined)
         return config.temperature;
-    if (FIXED_TEMPERATURE_MODELS.has(config.model))
+    if (FIXED_TEMPERATURE_MODELS.has(model))
         return undefined;
-    if (isReasoningModel(config.model))
+    if (isReasoningModel(model))
         return undefined;
     return preferred;
 }
 
 ;// CONCATENATED MODULE: ./src/pipeline/pass3-synthesis.ts
+
 
 
 
@@ -54177,11 +54330,13 @@ async function synthesize(llm, input, config, usage) {
             ];
             const startedAt = Date.now();
             usage.startCall();
+            const model = modelForRole(config, 'synthesis');
             const response = await llm.chatCompletion({
                 messages,
+                model,
                 responseFormat: { type: 'json_object' },
                 maxTokens: 4_096,
-                temperature: reviewTemperature(config),
+                temperature: reviewTemperature(config, 0.3, model),
                 timeoutMs: 90_000,
             });
             usage.add(response.usage, {
@@ -54265,12 +54420,14 @@ async function synthesize(llm, input, config, usage) {
 
 
 
+
 /**
- * Pass 1: one small, fast call that understands what the PR is trying to do.
+ * Pass 1: one lightweight, fast call that understands what the PR is trying to do.
  * Failure is never fatal — the pipeline proceeds without hints.
  */
 async function runIntentPass(llm, ctx, config, usage) {
     try {
+        const model = modelForRole(config, 'intent');
         const messages = [
             { role: 'system', content: buildIntentSystemPrompt(config) },
             { role: 'user', content: buildIntentUserPrompt(ctx) },
@@ -54279,9 +54436,10 @@ async function runIntentPass(llm, ctx, config, usage) {
         usage.startCall();
         const response = await llm.chatCompletion({
             messages,
+            model,
             responseFormat: { type: 'json_object' },
             maxTokens: 2_048,
-            temperature: reviewTemperature(config),
+            temperature: reviewTemperature(config, 0.3, model),
             timeoutMs: 60_000,
         });
         usage.add(response.usage, {
@@ -54563,24 +54721,29 @@ const KIMI_MAX_OUTPUT_TOKENS = 65_536;
 /** Conservative cap for any other/unknown model. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 32_768;
 /** True when the review runs against a Kimi model, by provider or model name. */
-function isKimiModel(config) {
-    return (config.provider === "kimi" || config.model.toLowerCase().startsWith("kimi"));
+function isKimiModel(config, model) {
+    return (config.provider === "kimi" || model.toLowerCase().startsWith("kimi"));
 }
 /**
  * Resolve the output-token cap for a review call: an explicit
  * `pipeline.maxOutputTokens` wins; Kimi models get a larger cap since they
  * reliably emit long structured output (and short caps truncate mid-JSON);
  * everything else uses a conservative default that unknown endpoints accept.
+ *
+ * `model` is the model actually used for this call (a stage model when the
+ * caller resolved one); it defaults to the legacy single `config.model` so
+ * callers that predate stage routing keep their behavior.
  */
-function reviewMaxOutputTokens(config) {
+function reviewMaxOutputTokens(config, model = config.model) {
     if (config.pipeline.maxOutputTokens !== undefined)
         return config.pipeline.maxOutputTokens;
-    if (isKimiModel(config))
+    if (isKimiModel(config, model))
         return KIMI_MAX_OUTPUT_TOKENS;
     return DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 ;// CONCATENATED MODULE: ./src/pipeline/pass2-review.ts
+
 
 
 
@@ -54596,7 +54759,8 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
     const systemPrompt = buildGroupSystemPrompt(config);
     const changedPaths = new Set(ctx.changedFiles.map((f) => f.filename));
     const limit = pLimit(config.pipeline.concurrency);
-    const maxOutputTokens = reviewMaxOutputTokens(config);
+    const model = modelForRole(config, 'groupReview');
+    const maxOutputTokens = reviewMaxOutputTokens(config, model);
     return Promise.all(groups.map((group, groupIndex) => limit(async () => {
         try {
             const relatedFiles = options.workspaceRoot
@@ -54619,9 +54783,10 @@ async function runReviewPass(llm, ctx, groups, intent, config, usage, options = 
             usage.startCall();
             const response = await llm.chatCompletion({
                 messages,
+                model,
                 responseFormat: { type: 'json_object' },
                 maxTokens: maxOutputTokens,
-                temperature: reviewTemperature(config),
+                temperature: reviewTemperature(config, 0.3, model),
                 timeoutMs: config.pipeline.callTimeoutMs,
             });
             usage.add(response.usage, {
@@ -54708,12 +54873,14 @@ class ReviewError extends Error {
 
 
 
+
 /**
- * Fast path: one combined call for small PRs (and the `pipeline.enabled: false`
+ * Fast path: one combined call for lightweight PRs (and the `pipeline.enabled: false`
  * kill-switch). Same output contract and code-side validation as the pipeline.
  */
 async function runFastPath(llm, ctx, config, usage, deltaHint) {
-    const maxOutputTokens = reviewMaxOutputTokens(config);
+    const model = modelForRole(config, 'fastPath');
+    const maxOutputTokens = reviewMaxOutputTokens(config, model);
     const messages = [
         { role: 'system', content: buildFastPathSystemPrompt(config) },
         { role: 'user', content: buildFastPathUserPrompt(ctx, ctx.changedFiles, deltaHint) },
@@ -54723,9 +54890,10 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
     const response = await llm
         .chatCompletion({
         messages,
+        model,
         responseFormat: { type: 'json_object' },
         maxTokens: maxOutputTokens,
-        temperature: reviewTemperature(config),
+        temperature: reviewTemperature(config, 0.3, model),
         timeoutMs: config.pipeline.callTimeoutMs,
     })
         .catch((err) => {
@@ -54926,6 +55094,7 @@ class UsageTracker {
 
 
 
+
 function conclusionFor(counts, failOn) {
     if (failOn === 'critical')
         return counts.critical > 0 ? 'failure' : 'success';
@@ -55059,7 +55228,7 @@ class ReviewOrchestrator {
                 : undefined;
             const pricingContext = this.options.pricingContext ?? {
                 provider: this.config.provider,
-                model: this.config.model,
+                model: modelForRole(this.config, 'groupReview'),
                 baseUrl: this.config.baseUrl,
             };
             const pricingResolution = await resolvePricingAsync(pricingContext);
@@ -55373,10 +55542,11 @@ class AnthropicProvider {
         if (params.responseFormat?.type === 'json_object') {
             system.push('Respond with a single valid JSON object. Do not use Markdown fences.');
         }
+        const model = params.model ?? this.model;
         const body = {
-            // Operator passthrough is the base layer; managed fields below win.
+            // Operator passthrough is the base layer; managed fields below always win.
             ...this.modelParams,
-            model: this.model,
+            model,
             messages,
             max_tokens: params.maxTokens ?? 4_096,
             ...(system.length > 0 && { system: system.join('\n\n') }),
@@ -55396,7 +55566,7 @@ class AnthropicProvider {
         if (!res.ok) {
             const errorBody = await res.text().catch(() => '');
             const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
-            logger.warn({ status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
+            logger.warn({ status: res.status, model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
             throw new LLMApiError(`Anthropic API error: ${res.status} ${res.statusText}${snippet ? ` — ${snippet}` : ''}`, res.status, errorBody, parseRetryAfter(res.headers.get('retry-after')));
         }
         const data = (await res.json());
@@ -55408,7 +55578,7 @@ class AnthropicProvider {
             ? 'length'
             : data.stop_reason ?? undefined;
         logger.info({
-            model: this.model,
+            model,
             baseUrl: this.baseUrl,
             promptTokens: input,
             completionTokens: usage?.output_tokens ?? 0,
@@ -55511,10 +55681,11 @@ class OpenAICompatibleProvider {
     }
     async performCompletionRequest(params, signal) {
         const temperature = params.temperature ?? this.temperature;
+        const model = params.model ?? this.model;
         const body = {
             // Operator passthrough is the base layer; managed fields below always win.
             ...this.modelParams,
-            model: this.model,
+            model,
             messages: params.messages,
             ...(temperature !== undefined && { temperature }),
             ...(params.maxTokens !== undefined && {
@@ -55537,7 +55708,7 @@ class OpenAICompatibleProvider {
             const errorBody = await res.text().catch(() => '');
             // Surface the endpoint's own message — a bare "400 Bad Request" is undiagnosable.
             const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
-            logger.warn({ status: res.status, model: this.model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
+            logger.warn({ status: res.status, model, baseUrl: this.baseUrl, body: snippet }, 'LLM API request rejected');
             throw new LLMApiError(`LLM API error: ${res.status} ${res.statusText}${snippet ? ` — ${snippet}` : ''}`, res.status, errorBody, openai_compatible_parseRetryAfter(res.headers.get('retry-after')));
         }
         const data = (await res.json());
@@ -55549,7 +55720,7 @@ class OpenAICompatibleProvider {
             cached: data.usage?.cached_tokens ?? 0,
         };
         logger.info({
-            model: this.model,
+            model,
             baseUrl: this.baseUrl,
             promptTokens: usage.input,
             completionTokens: usage.output,
@@ -55679,136 +55850,18 @@ function createLLMProvider(config) {
 
 // EXTERNAL MODULE: ./node_modules/.pnpm/yaml@2.8.2/node_modules/yaml/dist/index.js
 var dist = __nccwpck_require__(6159);
-;// CONCATENATED MODULE: ./src/config/schema.ts
-
-/**
- * Files excluded from review by default: dependency dirs, build output, and
- * lockfiles/generated manifests. These are machine-generated, often huge, and
- * carry no review value while consuming a large share of the token budget.
- * Shared by the schema default and DEFAULT_CONFIG so the two never drift.
- */
-const DEFAULT_EXCLUDE_PATTERNS = [
-    "**/node_modules/**",
-    "**/dist/**",
-    "**/build/**",
-    // Minified bundles.
-    "**/*.min.*",
-    // Lockfiles / generated dependency manifests, across ecosystems.
-    "**/*.lock", // Cargo.lock, composer.lock, Gemfile.lock, poetry.lock, Podfile.lock, flake.lock, …
-    "**/*.lockb", // bun.lockb
-    "**/package-lock.json",
-    "**/npm-shrinkwrap.json",
-    "**/yarn.lock",
-    "**/pnpm-lock.yaml",
-    "**/bun.lockb",
-    "**/go.sum",
-    "**/go.work.sum",
-    "**/packages.lock.json", // NuGet
-];
-const reviewConfigSchema = objectType({
-    language: enumType(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
-    provider: enumType(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
-    model: stringType().default("kimi-for-coding"),
-    baseUrl: stringType().url().optional(),
-    /** Custom User-Agent for endpoints that whitelist clients. */
-    userAgent: stringType().max(200).optional(),
-    /** Sampling temperature override. Unset → 0.3, except models that pin their own. */
-    temperature: numberType().min(0).max(2).optional(),
-    /**
-     * Provider-native request fields merged into every LLM call. Typed fields are
-     * validated; all other keys pass through verbatim (future-proof). Pipeline-
-     * managed keys are stripped by the selected provider adapter.
-     */
-    modelParams: objectType({
-        reasoning_effort: enumType(["minimal", "low", "medium", "high"]).optional(),
-        verbosity: enumType(["low", "medium", "high"]).optional(),
-    })
-        .passthrough()
-        .optional(),
-    /** Enables opt-in prompt optimizations that may change between releases. */
-    experimental: booleanType().default(false),
-    review: objectType({
-        auto: objectType({
-            enabled: booleanType().default(true),
-            onOpen: booleanType().default(true),
-            onPush: booleanType().default(true),
-            onReviewRequest: booleanType().default(true),
-            drafts: booleanType().default(false),
-        })
-            .default({}),
-        aspects: objectType({
-            bugs: booleanType().default(true),
-            security: booleanType().default(true),
-            performance: booleanType().default(true),
-            style: booleanType().default(true),
-            bestPractices: booleanType().default(true),
-            documentation: booleanType().default(false),
-            testing: booleanType().default(false),
-        })
-            .default({}),
-        minSeverity: enumType(["critical", "warning", "suggestion", "nitpick"])
-            .default("suggestion"),
-        maxAnnotations: numberType().min(1).max(100).default(30),
-        failOn: enumType(["critical", "warning", "never"]).default("critical"),
-        incremental: objectType({
-            enabled: booleanType().default(true),
-            /** Deltas touching more files than this fall back to a full review. */
-            maxDeltaFiles: numberType().min(1).max(299).default(150),
-        })
-            .default({}),
-        comments: objectType({
-            /** 'sticky': one updated summary + incremental reviews. 'legacy': stack a full review per run. */
-            mode: enumType(["sticky", "legacy"]).default("sticky"),
-            dedupe: booleanType().default(true),
-            resolveOutdated: booleanType().default(true),
-            /** Cumulative inline-comment cap; overflow demotes to check-run annotations. */
-            maxOpenComments: numberType().min(1).default(100),
-        })
-            .default({}),
-    })
-        .default({}),
-    files: objectType({
-        include: arrayType(stringType()).default(["**/*"]),
-        exclude: arrayType(stringType()).default([...DEFAULT_EXCLUDE_PATTERNS]),
-        maxFileSize: numberType().default(100_000),
-    })
-        .default({}),
-    rules: arrayType(objectType({
-        name: stringType(),
-        description: stringType(),
-        filePattern: stringType().optional(),
-        severity: enumType(["critical", "warning", "suggestion"])
-            .default("warning"),
-    }))
-        .default([]),
-    prompt: objectType({
-        systemAppend: stringType().max(2000).optional(),
-        reviewFocus: stringType().max(500).optional(),
-    })
-        .default({}),
-    pipeline: objectType({
-        /** false → single-call review regardless of PR size (legacy behavior). */
-        enabled: booleanType().default(true),
-        concurrency: numberType().min(1).max(8).default(3),
-        groupTokenBudget: numberType().min(8_000).default(40_000),
-        relatedContextBudget: numberType().min(0).default(15_000),
-        maxGroups: numberType().min(1).max(20).default(8),
-        fastPathThreshold: numberType().default(25_000),
-        minConfidence: numberType().min(0).max(1).default(0.6),
-        maxRetries: numberType().min(0).max(5).default(3),
-        callTimeoutMs: numberType().default(120_000),
-        // Unset → resolved per model (Kimi gets a larger cap). See reviewMaxOutputTokens.
-        maxOutputTokens: numberType().optional(),
-    })
-        .default({}),
-});
-
 ;// CONCATENATED MODULE: ./src/config/defaults.ts
 
 const DEFAULT_CONFIG = {
     language: "en",
     provider: "kimi",
     model: "kimi-for-coding",
+    models: {
+        intent: "kimi-for-coding-highspeed",
+        fastPath: "kimi-for-coding",
+        groupReview: "kimi-for-coding",
+        synthesis: "kimi-for-coding",
+    },
     experimental: false,
     review: {
         auto: {
@@ -55970,6 +56023,7 @@ function modelParamsFromActionInput(core) {
 
 
 
+
 async function run() {
     try {
         // Get inputs
@@ -56013,7 +56067,13 @@ async function run() {
             config.review.failOn = failOnInput;
         }
         if (modelInput) {
+            // Explicit Action override is global: pin every pipeline stage so repo
+            // `models` roles are bypassed, preserving pre-roles behavior.
             config.model = modelInput;
+            config.models.intent = modelInput;
+            config.models.fastPath = modelInput;
+            config.models.groupReview = modelInput;
+            config.models.synthesis = modelInput;
         }
         if (baseUrlInput) {
             config.baseUrl = baseUrlInput;
@@ -56045,7 +56105,7 @@ async function run() {
         const llm = createLLMProvider({
             apiKey,
             provider: providerInput || config.provider,
-            model: config.model,
+            model: modelForRole(config, "groupReview"),
             baseUrl: config.baseUrl,
             userAgent: config.userAgent,
             modelParams: config.modelParams,
@@ -56057,7 +56117,7 @@ async function run() {
             telemetry,
             pricingContext: {
                 provider: providerInput || config.provider,
-                model: config.model,
+                model: modelForRole(config, "groupReview"),
                 baseUrl: config.baseUrl,
             },
         });
@@ -56084,7 +56144,7 @@ async function run() {
         core.setOutput("tokens_used", (result.tokensUsed.input + result.tokensUsed.output).toString());
         core.setOutput("cost_estimate", (result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {
             provider: config.provider,
-            model: config.model,
+            model: modelForRole(config, "groupReview"),
             baseUrl: config.baseUrl,
         })).toFixed(4));
         // Summary in job output

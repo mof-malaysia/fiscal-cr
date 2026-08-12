@@ -3,6 +3,7 @@ import * as github from "@actions/github";
 import { ReviewOrchestrator } from "../src/review/orchestrator.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
+import { modelForRole } from "../src/config/schema.js";
 import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
@@ -61,7 +62,13 @@ async function run(): Promise<void> {
       config.review.failOn = failOnInput;
     }
     if (modelInput) {
+      // Explicit Action override is global: pin every pipeline stage so repo
+      // `models` roles are bypassed, preserving pre-roles behavior.
       config.model = modelInput;
+      config.models.intent = modelInput;
+      config.models.fastPath = modelInput;
+      config.models.groupReview = modelInput;
+      config.models.synthesis = modelInput;
     }
     if (baseUrlInput) {
       config.baseUrl = baseUrlInput;
@@ -97,7 +104,7 @@ async function run(): Promise<void> {
     const llm = createLLMProvider({
       apiKey,
       provider: providerInput || config.provider,
-      model: config.model,
+      model: modelForRole(config, "groupReview"),
       baseUrl: config.baseUrl,
       userAgent: config.userAgent,
       modelParams: config.modelParams,
@@ -114,7 +121,7 @@ async function run(): Promise<void> {
         telemetry,
         pricingContext: {
           provider: providerInput || config.provider,
-          model: config.model,
+          model: modelForRole(config, "groupReview"),
           baseUrl: config.baseUrl,
         },
       },
@@ -151,7 +158,7 @@ async function run(): Promise<void> {
       "cost_estimate",
       (result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {
         provider: config.provider,
-        model: config.model,
+        model: modelForRole(config, "groupReview"),
         baseUrl: config.baseUrl,
       })).toFixed(4),
     );

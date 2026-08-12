@@ -3,7 +3,7 @@ import { runFastPath } from '../../src/pipeline/fast-path.js';
 import { UsageTracker, type TelemetryEvent } from '../../src/pipeline/usage.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import { ReviewError } from '../../src/utils/errors.js';
-import type { LLMCompletionResponse, LLMProvider } from '../../src/providers/interface.js';
+import type { ChatCompletionParams, LLMCompletionResponse, LLMProvider } from '../../src/providers/interface.js';
 import type { PullRequestContext } from '../../src/types/review.js';
 
 function context(): PullRequestContext {
@@ -90,5 +90,46 @@ describe('runFastPath', () => {
     expect(events).toEqual([
       { type: 'stage_result', stage: 'fast-path', status: 'failed' },
     ]);
+  });
+
+  it('routes to the fastPath stage model and resolves temperature/max-output from it', async () => {
+    const chatCompletion = vi.fn(async () => ({
+      content: '{"summary":"looks good","score":95,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    }));
+    const llm: LLMProvider = { chatCompletion };
+
+    // fastPath stage model is a non-pinned, non-Kimi model: preferred temperature + conservative cap.
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: 'openai-compatible' as const,
+      baseUrl: 'https://api.example.com/v1',
+      models: { fastPath: 'Qwen/Qwen2.5-3B' },
+    };
+    await runFastPath(llm, context(), config, new UsageTracker());
+
+    const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
+    expect(params.model).toBe('Qwen/Qwen2.5-3B');
+    expect(params.temperature).toBe(0.3);
+    expect(params.maxTokens).toBe(32_768);
+  });
+
+  it('falls back to the top-level model and its temperature/max-output behavior when fastPath is unset', async () => {
+    const chatCompletion = vi.fn(async () => ({
+      content: '{"summary":"looks good","score":95,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    }));
+    const llm: LLMProvider = { chatCompletion };
+
+    // Legacy config: no stage overrides → top-level model pins its temperature and gets the Kimi cap.
+    const config = { ...DEFAULT_CONFIG, models: {}, model: 'kimi-for-coding' };
+    await runFastPath(llm, context(), config, new UsageTracker());
+
+    const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
+    expect(params.model).toBe('kimi-for-coding');
+    expect(params.temperature).toBeUndefined();
+    expect(params.maxTokens).toBe(65_536);
   });
 });

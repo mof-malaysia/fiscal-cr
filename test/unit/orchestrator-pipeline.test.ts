@@ -217,6 +217,91 @@ describe('ReviewOrchestrator pipeline routing', () => {
     expect(result.annotations.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('routes intent to the intent model and group review/synthesis to their stage models', async () => {
+    const octokit = fakeOctokit([{ filename: 'src/a.ts' }, { filename: 'lib/b.ts' }]);
+    octokit.repos.getContent = vi.fn(async ({ path }: { path: string }) => ({
+      data: {
+        content: Buffer.from(`// ${path}\n${'x'.repeat(90_000)}`).toString('base64'),
+        encoding: 'base64',
+      },
+    }));
+
+    const llm = scriptedLLM([
+      {
+        match: isIntentCall,
+        content: {
+          intent: 'Big refactor',
+          walkthrough: [],
+          groups: [
+            { label: 'g1', files: ['src/a.ts'] },
+            { label: 'g2', files: ['lib/b.ts'] },
+          ],
+          riskHotspots: [],
+        },
+      },
+      { match: isGroupCall, content: groupResponse('Group finding') },
+      { match: isGroupCall, content: groupResponse('Group finding 2') },
+      {
+        match: isSynthesisCall,
+        content: { summary: 'Final synthesis', score: 80, walkthrough: [], nearDuplicates: [], likelyFalsePositives: [] },
+      },
+    ]);
+
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      {
+        ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+        models: { intent: 'intent-stage-model', groupReview: 'group-review-model', synthesis: 'synthesis-stage-model' },
+      },
+    );
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    const { calls } = llm;
+    expect(calls).toHaveLength(4);
+    expect(isIntentCall(calls[0])).toBe(true);
+    expect(calls[0].model).toBe('intent-stage-model');
+    expect(isGroupCall(calls[1])).toBe(true);
+    expect(calls[1].model).toBe('group-review-model');
+    expect(isGroupCall(calls[2])).toBe(true);
+    expect(calls[2].model).toBe('group-review-model');
+    expect(isSynthesisCall(calls[3])).toBe(true);
+    expect(calls[3].model).toBe('synthesis-stage-model');
+  });
+
+  it('falls back to the top-level model for every stage when stage models are unset', async () => {
+    const octokit = fakeOctokit([{ filename: 'src/a.ts' }, { filename: 'lib/b.ts' }]);
+    octokit.repos.getContent = vi.fn(async ({ path }: { path: string }) => ({
+      data: {
+        content: Buffer.from(`// ${path}\n${'x'.repeat(90_000)}`).toString('base64'),
+        encoding: 'base64',
+      },
+    }));
+
+    const llm = scriptedLLM([
+      {
+        match: isIntentCall,
+        content: { intent: 'Big refactor', walkthrough: [], groups: [{ label: 'g1', files: ['src/a.ts'] }], riskHotspots: [] },
+      },
+      { match: isGroupCall, content: groupResponse('Group finding') },
+      {
+        match: isSynthesisCall,
+        content: { summary: 'Final synthesis', score: 80, walkthrough: [], nearDuplicates: [], likelyFalsePositives: [] },
+      },
+    ]);
+
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      { ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }), models: {}, model: 'legacy-model' },
+    );
+    await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    for (const call of llm.calls) {
+      expect(call.model).toBe('legacy-model');
+    }
+  });
+
   it('tolerates a failed group and notes it in the summary', async () => {
     const octokit = fakeOctokit([
       { filename: 'src/a.ts' },

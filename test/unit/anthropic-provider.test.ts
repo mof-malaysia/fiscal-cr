@@ -75,6 +75,47 @@ describe('AnthropicProvider', () => {
     });
   });
 
+  it('sends a per-call model override in the request payload', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      response({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    const provider = new AnthropicProvider({
+      apiKey: 'test-key',
+      model: 'claude-sonnet-4.5',
+      baseUrl: 'https://api.anthropic.com/v1',
+    });
+    await provider.chatCompletion({
+      messages: [{ role: 'user', content: 'hi' }],
+      model: 'claude-haiku-4.5',
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.model).toBe('claude-haiku-4.5');
+  });
+
+  it('uses the constructor model when no per-call override is given', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      response({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    const provider = new AnthropicProvider({
+      apiKey: 'test-key',
+      model: 'claude-sonnet-4.5',
+      baseUrl: 'https://api.anthropic.com/v1',
+    });
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.model).toBe('claude-sonnet-4.5');
+  });
+
   it('surfaces Anthropic errors and Retry-After for the resilient wrapper', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       response({ error: { type: 'rate_limit_error', message: 'slow down' } }, {

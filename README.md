@@ -176,6 +176,11 @@ Create `.fiscalcr-review.yml` in your repository root:
 language: en
 provider: openai-compatible
 model: kimi-for-coding-highspeed
+models:
+  intent: kimi-for-coding-highspeed
+  fastPath: kimi-for-coding
+  groupReview: kimi-for-coding
+  synthesis: kimi-for-coding
 baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
 experimental: false # opt in to prompt optimizations that may change between releases
@@ -257,13 +262,36 @@ model: claude-sonnet-4.5
 
 If the configured file is not found, FiscalCR falls back to built-in defaults. Invalid configs fail fast instead of being silently ignored.
 
+### Model stages
+
+FiscalCR configures a model per pipeline stage under `models`:
+
+| Key                    | Stage                                                                 |
+| ---------------------- | --------------------------------------------------------------------- |
+| `models.intent`        | Pass 1 intent/walkthrough/grouping call                               |
+| `models.fastPath`      | Fast-path combined call (PRs under `pipeline.fastPathThreshold`)      |
+| `models.groupReview`   | Pass 2 per-group file reviews                                         |
+| `models.synthesis`     | Pass 3 final synthesis merging group summaries into one review        |
+
+An unset stage falls back to the top-level `model`, so configs that only set
+`model` keep their single-model behavior — including configs with no `models`
+block at all. Built-in defaults: `intent` is `kimi-for-coding-highspeed`;
+`fastPath`, `groupReview`, and `synthesis` are `kimi-for-coding`. With no
+config file all stages use these defaults. Unknown keys under `models` (such
+as the legacy `big`/`small` roles) are rejected, so a stale config fails fast
+instead of silently ignoring a stage.
+Repo `models.*` values override built-in stage defaults, while the top-level
+repo `model` is the fallback for unset stages. An explicit `model` input on
+the GitHub Action or `MODEL`/`FISCALCR_MODEL` in App mode overrides all stages
+globally.
+
 ## How it works
 
 ```text
 PR Event -> Extract Context -> Filter Files
   ├── Fast path (small PR): one combined LLM call (intent + walkthrough + findings)
   └── Full pipeline (large PR):
-        Pass 1: PR intent, walkthrough, grouping hints   (1 small call)
+        Pass 1: PR intent, walkthrough, grouping hints   (1 intent call)
         Pass 2: parallel per-group file reviews          (N calls)
         Pass 3: validate/dedupe/rank + synthesis         (1 call, skipped for 1 group)
   -> Publish Check Run + PR review
@@ -274,11 +302,11 @@ PR Event -> Extract Context -> Filter Files
 1. Create a GitHub Check Run
 2. Extract PR metadata, diff, and changed files (local checkout in Action mode, parallel API otherwise)
 3. Filter files by include/exclude rules
-4. PRs under `pipeline.fastPathThreshold` tokens take the fast path: a single combined call
+4. PRs under `pipeline.fastPathThreshold` tokens take the fast path: a single combined call on the `fastPath` stage model
 5. Larger PRs run the multi-pass pipeline:
-   - **Pass 1 — intent**: a small call summarizes the PR's intent, produces a file walkthrough, and suggests file groupings. Failure here is non-fatal.
-   - **Pass 2 — group reviews**: files are deterministically grouped (hints → directory clustering → bin-packing to `groupTokenBudget`) and reviewed in parallel. In Action mode each group also sees unchanged files it imports (`relatedContextBudget`). One failed group does not fail the review.
-   - **Pass 3 — synthesis**: code-side validation drops findings on lines outside the diff, filters by confidence, dedupes, and ranks; a final call merges group summaries into one review (skipped when there is only one group).
+   - **Pass 1 — intent**: an `intent` stage call summarizes the PR's intent, produces a file walkthrough, and suggests file groupings. Failure here is non-fatal.
+   - **Pass 2 — group reviews**: files are deterministically grouped (hints → directory clustering → bin-packing to `groupTokenBudget`) and reviewed in parallel with the `groupReview` stage model. In Action mode each group also sees unchanged files it imports (`relatedContextBudget`). One failed group does not fail the review.
+   - **Pass 3 — synthesis**: code-side validation drops findings on lines outside the diff, filters by confidence, dedupes, and ranks; a final `synthesis` stage call merges group summaries into one review (skipped when there is only one group).
 6. Every LLM call goes through retry/backoff/timeout handling with `max_tokens` enforced
 7. Update the Check Run and PR review summary (intent, walkthrough table, findings, token usage)
 

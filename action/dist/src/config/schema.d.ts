@@ -10,6 +10,30 @@ export declare const reviewConfigSchema: z.ZodObject<{
     language: z.ZodDefault<z.ZodEnum<["en", "zh-TW", "zh-CN", "ja", "ko"]>>;
     provider: z.ZodDefault<z.ZodEnum<["openai-compatible", "kimi", "openai", "anthropic"]>>;
     model: z.ZodDefault<z.ZodString>;
+    /**
+     * Per-stage model overrides. `intent` drives the Pass 1 intent call,
+     * `fastPath` the fast-path combined call, `groupReview` the per-group file
+     * reviews, and `synthesis` the final synthesis call. An unset stage falls
+     * back to the legacy top-level `model`, so configs that only set `model`
+     * keep working. Unknown keys are rejected (`.strict()`), so the old
+     * `big`/`small` roles fail loudly instead of silently disappearing.
+     */
+    models: z.ZodDefault<z.ZodObject<{
+        intent: z.ZodOptional<z.ZodString>;
+        fastPath: z.ZodOptional<z.ZodString>;
+        groupReview: z.ZodOptional<z.ZodString>;
+        synthesis: z.ZodOptional<z.ZodString>;
+    }, "strict", z.ZodTypeAny, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }, {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    }>>;
     baseUrl: z.ZodOptional<z.ZodString>;
     /** Custom User-Agent for endpoints that whitelist clients. */
     userAgent: z.ZodOptional<z.ZodString>;
@@ -248,6 +272,12 @@ export declare const reviewConfigSchema: z.ZodObject<{
     provider: "openai-compatible" | "kimi" | "openai" | "anthropic";
     model: string;
     language: "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
+    models: {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    };
     experimental: boolean;
     review: {
         auto: {
@@ -318,6 +348,12 @@ export declare const reviewConfigSchema: z.ZodObject<{
     provider?: "openai-compatible" | "kimi" | "openai" | "anthropic" | undefined;
     model?: string | undefined;
     language?: "en" | "zh-TW" | "zh-CN" | "ja" | "ko" | undefined;
+    models?: {
+        intent?: string | undefined;
+        fastPath?: string | undefined;
+        groupReview?: string | undefined;
+        synthesis?: string | undefined;
+    } | undefined;
     baseUrl?: string | undefined;
     userAgent?: string | undefined;
     temperature?: number | undefined;
@@ -386,4 +422,12 @@ export declare const reviewConfigSchema: z.ZodObject<{
     } | undefined;
 }>;
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
+/** Pipeline model stages: intent, fastPath, groupReview, synthesis. */
+export type ModelRole = "intent" | "fastPath" | "groupReview" | "synthesis";
+/**
+ * Resolve the model for a pipeline stage. Prefers the per-stage override from
+ * `config.models`, falling back to the legacy top-level `model` so old configs
+ * keep their single-model behavior.
+ */
+export declare function modelForRole(config: ReviewConfig, role: ModelRole): string;
 //# sourceMappingURL=schema.d.ts.map
