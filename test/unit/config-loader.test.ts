@@ -80,7 +80,7 @@ describe('loadConfig', () => {
     await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).resolves.toEqual(DEFAULT_CONFIG);
   });
 
-  it('defaults all four stage models when the config file is missing', async () => {
+  it('uses the provider-default preset for all stages when the config file is missing', async () => {
     const octokit = {
       repos: {
         getContent: vi.fn().mockRejectedValue({ status: 404 }),
@@ -88,12 +88,12 @@ describe('loadConfig', () => {
     } as any;
 
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(config.models).toEqual({
-      intent: 'k3-256k',
-      fastPath: 'k3-256k',
-      groupReview: 'k3',
-      synthesis: 'k3',
-    });
+    expect(config.modelPreset).toBe('provider-default');
+    expect(config.models).toEqual({});
+    expect(modelForRole(config, 'intent')).toBe('k3-256k');
+    expect(modelForRole(config, 'fastPath')).toBe('k3-256k');
+    expect(modelForRole(config, 'groupReview')).toBe('k3');
+    expect(modelForRole(config, 'synthesis')).toBe('k3');
   });
 
   it('keeps old configs without a models block valid, defaulting it to {}', async () => {

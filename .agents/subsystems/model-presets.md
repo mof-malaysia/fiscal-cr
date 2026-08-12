@@ -14,7 +14,7 @@ Anthropic Claude Fable/Sonnet 5.
 
 - `src/config/model-presets.ts` — `BUILTIN_MODEL_PRESET_NAMES`, `MODEL_PRESETS` (exact built-in stage maps), `presetForProvider`, `resolvePresetName`, `resolveStageMapFor`.
 - `src/config/schema.ts` — `reviewConfigSchema` fields `model` / `models` / `modelPreset` / `modelPresets`, the `.superRefine` preset-name check, `ModelRole`, and `modelForRole` (the single resolver every call site uses).
-- `src/config/defaults.ts` — `DEFAULT_CONFIG` (used when the config file is missing); unlike schema defaults, it explicitly populates all four `models` stage values.
+- `src/config/defaults.ts` — `DEFAULT_CONFIG` (used when the config file is missing); it leaves `models` empty and selects `provider-default`, so stage models follow the effective provider.
 
 ## Config shape
 
@@ -29,7 +29,7 @@ Stage keys (`ModelRole`): `intent` (Pass 1 intent call), `fastPath` (fast-path c
 
 All stage values and preset names require `min(1)` — empty strings are rejected.
 
-**Schema versus missing-config defaults:** `{}` in this table is the `reviewConfigSchema` default for an explicit YAML config. `loadConfig` returns `DEFAULT_CONFIG` only when the config file is missing, and that object includes the fully populated Kimi stage map. An explicit YAML config may omit `models` (including an empty file); schema parsing then produces `models: {}`, so stage resolution uses the selected preset and ultimately the top-level `model`.
+**Schema versus missing-config defaults:** both use `models: {}`. Missing-config `DEFAULT_CONFIG` additionally selects `provider-default`, so its stages resolve from the effective provider; explicit YAML without `modelPreset` keeps legacy top-level-model behavior.
 
 ## Built-in presets
 
@@ -150,7 +150,7 @@ Per-model knobs consume the **resolved** stage model: `src/pipeline/max-output.t
 - **Change merge / resolution behavior**: `resolveStageMapFor` / `resolvePresetName` in `model-presets.ts` plus `modelForRole` in `schema.ts`; update `config-loader.test.ts` expectations.
 - **Change validation**: `models` / `modelPresets` `.strict()` shape or the `superRefine` preset-name check in `schema.ts`; keep unknown-name / unknown-key rejection.
 - **Never add an Action input or App env var for preset selection** without updating `action.yml`, `action/index.ts`, `src/index.ts`, README, and regenerating `action/dist/` — the current contract is presets are repo-YAML only.
-- Keep `DEFAULT_CONFIG` structurally compatible with `ReviewConfig`; its populated `models` map is intentional and must not be replaced with the schema's `{}` default.
+- Keep `DEFAULT_CONFIG` structurally compatible with `ReviewConfig`; its `models: {}` and `modelPreset: provider-default` defaults must preserve provider-aware missing-config routing.
 
 ## Invariants
 
@@ -159,4 +159,4 @@ Per-model knobs consume the **resolved** stage model: `src/pipeline/max-output.t
 - Presets are YAML-only — no Action input or App env selects one.
 - `provider-default` resolves from the effective provider after Action/App provider overrides, not the stale repository value.
 - Unknown preset names and unknown stage keys (including legacy `big`/`small`) fail validation fast; nothing is silently ignored.
-- `schema.ts` and `defaults.ts` remain structurally compatible; their `models` defaults intentionally differ (`{}` for schema-parsed YAML, populated Kimi stages for missing-config fallback).
+- `schema.ts` and `defaults.ts` remain structurally compatible: both default `models` to `{}`, while missing-config fallback selects `provider-default` explicitly.

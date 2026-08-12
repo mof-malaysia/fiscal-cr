@@ -24,11 +24,9 @@ describe('App review-request webhook', () => {
     vi.clearAllMocks();
   });
 
-  it('applies App provider before resolving provider-default stage models', async () => {
+  it('uses default provider stages when App provider overrides the repo provider', async () => {
     const config = structuredClone(DEFAULT_CONFIG);
     config.provider = 'kimi';
-    config.modelPreset = 'provider-default';
-    config.models = {};
     config.review.auto.onReviewRequest = true;
     vi.mocked(loadConfig).mockResolvedValue(config);
 

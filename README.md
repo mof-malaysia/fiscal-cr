@@ -308,9 +308,9 @@ or `MODEL`/`FISCALCR_MODEL` in App mode overrides all stages globally.
 ### Model presets
 
 Instead of listing every stage under `models`, select an opinionated preset
-with `modelPreset`. Presets are YAML-only and optional: omitting `modelPreset`
-keeps the legacy behavior (`models.*` stage, else the top-level `model`), and
-no preset is injected by default.
+with `modelPreset`. Presets are YAML-only and optional for explicit repo
+configs: omitting `modelPreset` keeps legacy behavior (`models.*` stage, else
+the top-level `model`), while missing config uses the provider-aware fallback.
 
 Built-in presets and their exact stage models:
 

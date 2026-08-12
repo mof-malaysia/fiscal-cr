@@ -1,11 +1,11 @@
 import { DEFAULT_EXCLUDE_PATTERNS, type ReviewConfig } from "./schema.js";
-import { MODEL_PRESETS } from "./model-presets.js";
 
 export const DEFAULT_CONFIG: ReviewConfig = {
   language: "en",
   provider: "kimi",
   model: "k3",
-  models: { ...MODEL_PRESETS.kimi },
+  modelPreset: "provider-default",
+  models: {},
   experimental: false,
   review: {
     auto: {
