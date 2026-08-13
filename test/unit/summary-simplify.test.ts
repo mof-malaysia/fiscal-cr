@@ -27,6 +27,24 @@ describe('simplifySummaryProse', () => {
     expect(result).toBe('The tool normalizes blank rows. It keeps the rest.');
   });
 
+  it('keeps distinct qualifiers in shared-prefix sentences', () => {
+    const result = simplifySummaryProse(
+      'The client retries failed requests. The client retries failed requests after a timeout.',
+    );
+
+    expect(result).toBe(
+      'The client retries failed requests. The client retries failed requests after a timeout.',
+    );
+  });
+
+  it('protects URLs and inline code from prose substitutions', () => {
+    const result = simplifySummaryProse(
+      'Use utilize in https://host/utilize and `utilize` prior to upload.',
+    );
+
+    expect(result).toBe('Use use in https://host/utilize and `utilize` before upload.');
+  });
+
   it('uses plain words and removes empty note openers', () => {
     const result = simplifySummaryProse(
       'In order to utilize the API, the batch stops prior to the upload. It is important to note that this is safe.',

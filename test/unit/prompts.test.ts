@@ -42,5 +42,6 @@ describe('synthesis prompt', () => {
     expect(prompt).toContain('## Writing Style');
     expect(prompt).toContain('State each fact once.');
     expect(prompt).toContain('Prefer a short bulleted list over long prose');
+    expect(prompt).toContain('preserve technical terms such as "throws" and "catches"');
   });
 });

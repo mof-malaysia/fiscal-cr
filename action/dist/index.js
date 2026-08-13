@@ -53963,7 +53963,7 @@ Write the summary in plain, simple English. Follow these rules:
 - Keep the articles ("the", "a", "an"). Do not drop words to shorten a sentence.
 - Avoid "-ing" forms unless the word is a technical name, such as "rendering" or "logging".
 - Use at most 3 nouns in a row. Break up longer noun clusters. Write "validation of the development expenditure spreadsheet", not "development-expenditure spreadsheet validation".
-- Prefer a plain verb over jargon. Write "stops" not "throws", "removes" not "discards", "writes" not "dumps", "finds" not "catches".
+- Prefer a plain verb over jargon, but preserve technical terms such as "throws" and "catches" when they describe exception behavior or other code semantics.
 - Use a bulleted list for two or more related facts instead of long prose.
 - Keep paragraphs to 6 sentences or fewer.
 - State each fact once. Do not restate a group summary in different words.`;
@@ -54469,13 +54469,7 @@ function dedupeSummaryLines(text) {
                 keptUnits.push(unit);
                 continue;
             }
-            const duplicate = seen.some((previous) => {
-                if (!previous.includes(normalized) && !normalized.includes(previous))
-                    return false;
-                const shorter = Math.min(previous.length, normalized.length);
-                const longer = Math.max(previous.length, normalized.length);
-                return shorter >= 8 && shorter / longer >= 0.6;
-            });
+            const duplicate = seen.some((previous) => previous === normalized);
             if (duplicate)
                 continue;
             seen.push(normalized);
@@ -54558,7 +54552,18 @@ function simplifySummaryLine(line, capitalizeStarts) {
 function simplifySummaryProse(text) {
     if (!text)
         return text;
-    let simplified = text;
+    const protectedSpans = [];
+    const spanIds = new Map();
+    const protect = (span) => {
+        let id = spanIds.get(span);
+        if (id === undefined) {
+            id = protectedSpans.length;
+            spanIds.set(span, id);
+            protectedSpans.push(span);
+        }
+        return `\uE000${id}\uE001`;
+    };
+    let simplified = text.replace(/`[^`\n]*`|https?:\/\/[^\s<>)]+/gi, protect);
     let substitutionsApplied = false;
     for (const [pattern, replacement] of PLAIN_WORD_SUBSTITUTIONS) {
         const replaced = simplified.replace(pattern, replacement);
@@ -54570,11 +54575,12 @@ function simplifySummaryProse(text) {
         .map((line) => line.replace(/[ \t]{2,}/g, ' ').trimEnd())
         .join('\n');
     simplified = dedupeSummaryLines(simplified);
-    return simplified
+    simplified = simplified
         .split('\n')
         .map((line) => (isListItem(line) ? line : simplifySummaryLine(line, substitutionsApplied)))
         .join('\n')
         .trim();
+    return simplified.replace(/\uE000(\d+)\uE001/g, (_, id) => protectedSpans[Number(id)]);
 }
 /**
  * Deterministic quality gate applied to all findings regardless of path:

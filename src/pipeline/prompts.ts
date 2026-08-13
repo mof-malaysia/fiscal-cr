@@ -253,7 +253,7 @@ Write the summary in plain, simple English. Follow these rules:
 - Keep the articles ("the", "a", "an"). Do not drop words to shorten a sentence.
 - Avoid "-ing" forms unless the word is a technical name, such as "rendering" or "logging".
 - Use at most 3 nouns in a row. Break up longer noun clusters. Write "validation of the development expenditure spreadsheet", not "development-expenditure spreadsheet validation".
-- Prefer a plain verb over jargon. Write "stops" not "throws", "removes" not "discards", "writes" not "dumps", "finds" not "catches".
+- Prefer a plain verb over jargon, but preserve technical terms such as "throws" and "catches" when they describe exception behavior or other code semantics.
 - Use a bulleted list for two or more related facts instead of long prose.
 - Keep paragraphs to 6 sentences or fewer.
 - State each fact once. Do not restate a group summary in different words.`;

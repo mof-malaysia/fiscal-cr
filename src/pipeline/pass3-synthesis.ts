@@ -98,12 +98,7 @@ function dedupeSummaryLines(text: string): string {
         continue;
       }
 
-      const duplicate = seen.some((previous) => {
-        if (!previous.includes(normalized) && !normalized.includes(previous)) return false;
-        const shorter = Math.min(previous.length, normalized.length);
-        const longer = Math.max(previous.length, normalized.length);
-        return shorter >= 8 && shorter / longer >= 0.6;
-      });
+      const duplicate = seen.some((previous) => previous === normalized);
       if (duplicate) continue;
 
       seen.push(normalized);
@@ -194,7 +189,19 @@ function simplifySummaryLine(line: string, capitalizeStarts: boolean): string {
 export function simplifySummaryProse(text: string): string {
   if (!text) return text;
 
-  let simplified = text;
+  const protectedSpans: string[] = [];
+  const spanIds = new Map<string, number>();
+  const protect = (span: string): string => {
+    let id = spanIds.get(span);
+    if (id === undefined) {
+      id = protectedSpans.length;
+      spanIds.set(span, id);
+      protectedSpans.push(span);
+    }
+    return `\uE000${id}\uE001`;
+  };
+
+  let simplified = text.replace(/`[^`\n]*`|https?:\/\/[^\s<>)]+/gi, protect);
   let substitutionsApplied = false;
   for (const [pattern, replacement] of PLAIN_WORD_SUBSTITUTIONS) {
     const replaced = simplified.replace(pattern, replacement);
@@ -206,14 +213,14 @@ export function simplifySummaryProse(text: string): string {
     .map((line) => line.replace(/[ \t]{2,}/g, ' ').trimEnd())
     .join('\n');
   simplified = dedupeSummaryLines(simplified);
-
-  return simplified
+  simplified = simplified
     .split('\n')
     .map((line) => (isListItem(line) ? line : simplifySummaryLine(line, substitutionsApplied)))
     .join('\n')
     .trim();
-}
 
+  return simplified.replace(/\uE000(\d+)\uE001/g, (_, id: string) => protectedSpans[Number(id)]);
+}
 
 /**
  * Deterministic quality gate applied to all findings regardless of path:
