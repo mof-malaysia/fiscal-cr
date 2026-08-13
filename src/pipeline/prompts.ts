@@ -342,6 +342,7 @@ export function buildFastPathSystemPrompt(config: ReviewConfig): string {
 - Return compact JSON only. Do not narrate the schema, response process, validation, or field completeness.
 - Keep intent to at most 40 words.
 - Keep summary to at most 80 words. Lead with the highest-severity issue, or the overall verdict when there are no findings.
+- Put each summary sentence on its own Markdown bullet line.
 - Keep each walkthrough summary to at most 20 words.
 - Keep each finding body to at most 80 words: state the problem, impact, and concrete fix without repetition or hedging.
 - Preserve JSON keys, code, symbols, paths, line numbers, and suggested fixes exactly. Do not use caveman grammar in user-facing text.`

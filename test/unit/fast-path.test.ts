@@ -76,6 +76,48 @@ describe('runFastPath', () => {
     expect(result.annotations).toEqual([]);
   });
 
+  it('formats a multi-sentence summary as Markdown bullets', async () => {
+    const llm = llmReturning({
+      content: '{"summary":"The tool moves the player. The tool collects the coin.","score":92,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    });
+
+    const result = await runFastPath(llm, context(), DEFAULT_CONFIG, new UsageTracker());
+
+    expect(result.summary).toBe('- The tool moves the player.\n- The tool collects the coin.');
+  });
+
+  it('keeps default prose unchanged apart from line breaks', async () => {
+    const llm = llmReturning({
+      content: '{"summary":"Use utilize prior to upload.","score":92,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    });
+
+    const result = await runFastPath(llm, context(), DEFAULT_CONFIG, new UsageTracker());
+
+    expect(result.summary).toBe('Use utilize prior to upload.');
+  });
+
+  it('simplifies and formats summaries in experimental mode', async () => {
+    const llm = llmReturning({
+      content:
+        '{"summary":"In order to utilize the API. The tool reports the result.","score":92,"findings":[]}',
+      usage: { input: 100, output: 50, cached: 0 },
+      finishReason: 'stop',
+    });
+
+    const result = await runFastPath(
+      llm,
+      context(),
+      { ...DEFAULT_CONFIG, experimental: true },
+      new UsageTracker(),
+    );
+
+    expect(result.summary).toBe('- To use the API.\n- The tool reports the result.');
+  });
+
   it('records a failed attempted call when the provider rejects', async () => {
     const error = new Error('provider unavailable');
     const llm: LLMProvider = { chatCompletion: vi.fn(async () => Promise.reject(error)) };

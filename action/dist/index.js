@@ -54036,6 +54036,7 @@ function buildFastPathSystemPrompt(config) {
 - Return compact JSON only. Do not narrate the schema, response process, validation, or field completeness.
 - Keep intent to at most 40 words.
 - Keep summary to at most 80 words. Lead with the highest-severity issue, or the overall verdict when there are no findings.
+- Put each summary sentence on its own Markdown bullet line.
 - Keep each walkthrough summary to at most 20 words.
 - Keep each finding body to at most 80 words: state the problem, impact, and concrete fix without repetition or hedging.
 - Preserve JSON keys, code, symbols, paths, line numbers, and suggested fixes exactly. Do not use caveman grammar in user-facing text.`
@@ -54481,7 +54482,7 @@ function dedupeSummaryLines(text) {
     return keptLines.join('\n');
 }
 function splitIntoSentences(line) {
-    return line.split(/(?<![A-Z]\.)(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\betc)(?<=[.!?])\s+(?=["'A-Za-z0-9])/);
+    return line.split(/(?<!\b[A-Z]\.)(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\betc)(?<=[.!?])\s+(?=["'A-Za-z0-9])/);
 }
 function findBestSplit(text) {
     const total = wordCount(text);
@@ -54586,15 +54587,21 @@ function simplifySummaryProse(text) {
  * Put each sentence on a visible Markdown list line when the model returns
  * several sentences as one paragraph.
  */
-function formatSummaryProse(text) {
-    const simplified = simplifySummaryProse(text);
-    if (!simplified || simplified.includes('\n'))
-        return simplified;
-    const body = simplified.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '');
+function formatSummaryLines(text) {
+    const normalized = text.trim();
+    if (!normalized || normalized.includes('\n'))
+        return normalized;
+    const body = normalized.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '');
     const sentences = splitIntoSentences(body).map((sentence) => sentence.trim()).filter(Boolean);
     if (sentences.length < 2)
-        return simplified;
+        return normalized;
     return sentences.map((sentence) => `- ${sentence}`).join('\n');
+}
+/**
+ * Simplify summary prose, then put each sentence on a visible Markdown line.
+ */
+function formatSummaryProse(text) {
+    return formatSummaryLines(simplifySummaryProse(text));
 }
 /**
  * Deterministic quality gate applied to all findings regardless of path:
@@ -55299,7 +55306,9 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
     });
     logger.info({ findings: parsed.findings.length, kept: annotations.length }, 'Fast-path review completed');
     return {
-        summary: parsed.summary || 'Automated review completed.',
+        summary: config.experimental
+            ? formatSummaryProse(parsed.summary || 'Automated review completed.')
+            : formatSummaryLines(parsed.summary || 'Automated review completed.'),
         score: parsed.score ?? deterministicScore(stats),
         annotations,
         stats,

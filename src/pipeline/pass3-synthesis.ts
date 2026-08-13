@@ -113,7 +113,7 @@ function dedupeSummaryLines(text: string): string {
 
 function splitIntoSentences(line: string): string[] {
   return line.split(
-    /(?<![A-Z]\.)(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\betc)(?<=[.!?])\s+(?=["'A-Za-z0-9])/,
+    /(?<!\b[A-Z]\.)(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\betc)(?<=[.!?])\s+(?=["'A-Za-z0-9])/,
   );
 }
 
@@ -226,17 +226,23 @@ export function simplifySummaryProse(text: string): string {
  * Put each sentence on a visible Markdown list line when the model returns
  * several sentences as one paragraph.
  */
-export function formatSummaryProse(text: string): string {
-  const simplified = simplifySummaryProse(text);
-  if (!simplified || simplified.includes('\n')) return simplified;
+export function formatSummaryLines(text: string): string {
+  const normalized = text.trim();
+  if (!normalized || normalized.includes('\n')) return normalized;
 
-  const body = simplified.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '');
+  const body = normalized.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '');
   const sentences = splitIntoSentences(body).map((sentence) => sentence.trim()).filter(Boolean);
-  if (sentences.length < 2) return simplified;
+  if (sentences.length < 2) return normalized;
 
   return sentences.map((sentence) => `- ${sentence}`).join('\n');
 }
 
+/**
+ * Simplify summary prose, then put each sentence on a visible Markdown line.
+ */
+export function formatSummaryProse(text: string): string {
+  return formatSummaryLines(simplifySummaryProse(text));
+}
 /**
  * Deterministic quality gate applied to all findings regardless of path:
  * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)

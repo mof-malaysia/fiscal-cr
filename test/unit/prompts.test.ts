@@ -18,9 +18,8 @@ describe('fast-path prompt', () => {
       experimental: true,
     });
 
-    expect(prompt).toContain('## Concision Rules');
-    expect(prompt).toContain('Keep intent to at most 40 words.');
     expect(prompt).toContain('Keep summary to at most 80 words.');
+    expect(prompt).toContain('Put each summary sentence on its own Markdown bullet line.');
     expect(prompt).toContain('Keep each walkthrough summary to at most 20 words.');
     expect(prompt).toContain('Keep each finding body to at most 80 words');
     expect(prompt).toContain('Do not narrate the schema');

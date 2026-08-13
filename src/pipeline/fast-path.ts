@@ -7,6 +7,8 @@ import { parseFastPathResponse } from './schemas.js';
 import {
   countBySeverity,
   deterministicScore,
+  formatSummaryLines,
+  formatSummaryProse,
   validateAndRankFindings,
 } from './pass3-synthesis.js';
 import { reviewTemperature } from './temperature.js';
@@ -92,9 +94,10 @@ export async function runFastPath(
     { findings: parsed.findings.length, kept: annotations.length },
     'Fast-path review completed',
   );
-
   return {
-    summary: parsed.summary || 'Automated review completed.',
+    summary: config.experimental
+      ? formatSummaryProse(parsed.summary || 'Automated review completed.')
+      : formatSummaryLines(parsed.summary || 'Automated review completed.'),
     score: parsed.score ?? deterministicScore(stats),
     annotations,
     stats,

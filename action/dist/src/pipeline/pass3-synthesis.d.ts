@@ -15,6 +15,10 @@ export declare function simplifySummaryProse(text: string): string;
  * Put each sentence on a visible Markdown list line when the model returns
  * several sentences as one paragraph.
  */
+export declare function formatSummaryLines(text: string): string;
+/**
+ * Simplify summary prose, then put each sentence on a visible Markdown line.
+ */
 export declare function formatSummaryProse(text: string): string;
 /**
  * Deterministic quality gate applied to all findings regardless of path:
