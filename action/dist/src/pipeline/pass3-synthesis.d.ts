@@ -11,6 +11,8 @@ export declare function countBySeverity(annotations: ReviewAnnotation[]): Record
  * summary prose. Ambiguous rewrites remain untouched.
  */
 export declare function simplifySummaryProse(text: string): string;
+/** Apply the same safe plain-English cleanup to inline finding comments. */
+export declare function simplifyFindingBody(body: string): string;
 /**
  * Put each sentence on a visible Markdown list line when the model returns
  * several sentences as one paragraph.

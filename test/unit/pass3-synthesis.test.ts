@@ -102,6 +102,24 @@ describe('validateAndRankFindings', () => {
     expect(kept).toHaveLength(1);
     expect(kept[0].title).toBe('crit');
   });
+
+  it('simplifies finding bodies before they reach review comments', () => {
+    const kept = validateAndRankFindings(
+      [
+        finding({
+          body:
+            'In order to utilize the API, the tool checks the input, and it reports errors. It is important to note that this is safe. Suggested fix: validate the input first.',
+        }),
+      ],
+      files,
+      cfg(),
+    );
+
+    expect(kept[0].body).toContain('To use the API');
+    expect(kept[0].body).not.toContain('It is important to note');
+    expect(kept[0].body).not.toContain('utilize');
+    expect(kept[0].body).not.toContain('Suggested fix:');
+  });
 });
 
 describe('deterministicScore', () => {

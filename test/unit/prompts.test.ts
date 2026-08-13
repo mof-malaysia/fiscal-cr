@@ -12,6 +12,14 @@ describe('fast-path prompt', () => {
     expect(prompt).not.toContain('\n\n\n## Line Number Rules');
   });
 
+  it('applies concise finding style rules by default', () => {
+    const prompt = buildFastPathSystemPrompt(DEFAULT_CONFIG);
+
+    expect(prompt).toContain('## Finding Style');
+    expect(prompt).toContain('Keep the body to 2-4 sentences and 60 words or fewer.');
+    expect(prompt).toContain('Do not add a "Suggested fix:" heading.');
+  });
+
   it('requires concise output when experimental features are enabled', () => {
     const prompt = buildFastPathSystemPrompt({
       ...DEFAULT_CONFIG,
@@ -20,8 +28,7 @@ describe('fast-path prompt', () => {
 
     expect(prompt).toContain('Keep summary to at most 80 words.');
     expect(prompt).toContain('Put each summary sentence on its own Markdown bullet line.');
-    expect(prompt).toContain('Keep each walkthrough summary to at most 20 words.');
-    expect(prompt).toContain('Keep each finding body to at most 80 words');
+    expect(prompt).toContain('Keep each finding body to at most 60 words');
     expect(prompt).toContain('Do not narrate the schema');
     expect(prompt).toContain('Preserve JSON keys, code, symbols, paths, line numbers, and suggested fixes exactly.');
   });

@@ -201,7 +201,7 @@ export function simplifySummaryProse(text: string): string {
     return `\uE000${id}\uE001`;
   };
 
-  let simplified = text.replace(/`[^`\n]*`|https?:\/\/[^\s<>)]+/gi, protect);
+  let simplified = text.replace(/```[\s\S]*?```|`[^`\n]*`|https?:\/\/[^\s<>)]+/gi, protect);
   let substitutionsApplied = false;
   for (const [pattern, replacement] of PLAIN_WORD_SUBSTITUTIONS) {
     const replaced = simplified.replace(pattern, replacement);
@@ -220,6 +220,14 @@ export function simplifySummaryProse(text: string): string {
     .trim();
 
   return simplified.replace(/\uE000(\d+)\uE001/g, (_, id: string) => protectedSpans[Number(id)]);
+}
+
+/** Apply the same safe plain-English cleanup to inline finding comments. */
+export function simplifyFindingBody(body: string): string {
+  return simplifySummaryProse(body).replace(
+    /(^|\n|\s+)(?:\*\*)?Suggested fix:\s*(?:\*\*)?\s*/gi,
+    '$1',
+  );
 }
 
 /**
@@ -302,7 +310,8 @@ export function validateAndRankFindings(
   const minIdx = severityRank(config.review.minSeverity);
   return deduped
     .filter((f) => severityRank(f.severity) <= minIdx)
-    .slice(0, config.review.maxAnnotations);
+    .slice(0, config.review.maxAnnotations)
+    .map((f) => ({ ...f, body: simplifyFindingBody(f.body) }));
 }
 
 export interface SynthesisInput {

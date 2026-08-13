@@ -33,6 +33,17 @@ const QUALITY_BAR = `## Quality Bar
 - Reason about how the pieces interact: callers, error paths, edge cases, concurrency — not just line-by-line pattern matching.
 - If the code is genuinely fine, return an empty findings list. Silence beats noise.`;
 
+const FINDING_STYLE_RULES = `## Finding Style
+Write every finding for a busy engineer:
+- Keep the title short. Name the concrete behavior and risk. Avoid vague titles such as "Issue with..." or "Problem in...".
+- Keep the body to 2-4 sentences and 60 words or fewer.
+- State one problem. Explain when it occurs and its impact. End with a direct fix.
+- Keep each sentence to 25 words or fewer. Use plain, active English and simple tenses.
+- Keep articles ("the", "a", "an"). Avoid filler, hedging, repetition, and long noun clusters.
+- Do not restate the PR intent or explain unrelated code.
+- Do not add a "Suggested fix:" heading. Use the "suggestedFix" field for replacement code when possible.
+- Preserve exact code identifiers, paths, and behavior.`;
+
 const FINDING_SCHEMA = `{
   "path": "string — file path relative to repo root",
   "startLine": "number — starting line in the NEW version of the file (1-indexed)",
@@ -40,11 +51,10 @@ const FINDING_SCHEMA = `{
   "severity": "critical | warning | suggestion | nitpick",
   "category": "bug | security | performance | style | best-practice | documentation | testing | other",
   "title": "string — short issue title",
-  "body": "string — detailed explanation in markdown",
+  "body": "string — concise explanation of the problem, impact, and fix in markdown",
   "suggestedFix": "string | null — replacement code snippet for exactly lines startLine-endLine",
   "confidence": "number 0-1"
 }`;
-
 function sharedReviewerPreamble(config: ReviewConfig): string {
   const aspects = Object.entries(config.review.aspects)
     .filter(([, enabled]) => enabled)
@@ -65,6 +75,8 @@ function sharedReviewerPreamble(config: ReviewConfig): string {
     CONFIDENCE_RUBRIC,
     '',
     QUALITY_BAR,
+    '',
+    FINDING_STYLE_RULES,
   ];
 
   if (config.language !== 'en') {
@@ -344,7 +356,7 @@ export function buildFastPathSystemPrompt(config: ReviewConfig): string {
 - Keep summary to at most 80 words. Lead with the highest-severity issue, or the overall verdict when there are no findings.
 - Put each summary sentence on its own Markdown bullet line.
 - Keep each walkthrough summary to at most 20 words.
-- Keep each finding body to at most 80 words: state the problem, impact, and concrete fix without repetition or hedging.
+- Keep each finding body to at most 60 words: state the problem, impact, and concrete fix without repetition or hedging.
 - Preserve JSON keys, code, symbols, paths, line numbers, and suggested fixes exactly. Do not use caveman grammar in user-facing text.`
     : '';
 
