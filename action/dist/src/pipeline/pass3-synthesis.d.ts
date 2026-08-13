@@ -7,6 +7,11 @@ import type { UsageTracker } from './usage.js';
 export declare function deterministicScore(stats: Record<Severity, number>): number;
 export declare function countBySeverity(annotations: ReviewAnnotation[]): Record<Severity, number>;
 /**
+ * Apply safe, deterministic readability improvements to model-generated
+ * summary prose. Ambiguous rewrites remain untouched.
+ */
+export declare function simplifySummaryProse(text: string): string;
+/**
  * Deterministic quality gate applied to all findings regardless of path:
  * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)
  * 2. drop low-confidence findings (criticals get a lower floor, flagged)

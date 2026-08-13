@@ -239,16 +239,54 @@ export function buildGroupUserPrompt(input: GroupPromptInput): string {
 // ---------------------------------------------------------------------------
 // Pass 3: synthesis
 
+/**
+ * STE-inspired plain-English rules for user-facing summary prose, adapted to
+ * the code-review use case. The deterministic guardrail in
+ * pass3-synthesis.ts enforces the mechanically checkable subset; keep the two
+ * in sync.
+ */
+const SIMPLE_PROSE_RULES = `## Writing Style
+Write the summary in plain, simple English. Follow these rules:
+- One sentence states one idea. Keep sentences to 25 words or fewer.
+- Use the active voice. Write "the tool stops the batch", not "the batch is stopped".
+- Use simple present, past, or future tense. Avoid the perfect tenses, such as "has fixed" or "had validated".
+- Keep the articles ("the", "a", "an"). Do not drop words to shorten a sentence.
+- Avoid "-ing" forms unless the word is a technical name, such as "rendering" or "logging".
+- Use at most 3 nouns in a row. Break up longer noun clusters. Write "validation of the development expenditure spreadsheet", not "development-expenditure spreadsheet validation".
+- Prefer a plain verb over jargon. Write "stops" not "throws", "removes" not "discards", "writes" not "dumps", "finds" not "catches".
+- Use a bulleted list for two or more related facts instead of long prose.
+- Keep paragraphs to 6 sentences or fewer.
+- State each fact once. Do not restate a group summary in different words.`;
+
+const SYNTHESIS_STYLE_EXAMPLE = `## Example
+Write this:
+- Fixes validation of the development expenditure spreadsheet.
+- Lets users re-upload generated error workbooks from the data sheet.
+- Normalizes blank or whitespace-only rows before validation.
+- Accepts Excel numeric codes with a trailing ".0".
+- Improves user-facing error messages.
+- Updates the pending-job copy.
+
+Do not write this:
+"Fixes development-expenditure spreadsheet validation and re-upload handling so generated error workbooks can be validated from their data sheet, blank/whitespace rows are safely normalized, and Excel numeric codes with a trailing .0 match valid options. It also improves user-facing processing error feedback and updates pending-job copy."`;
+
 export function buildSynthesisSystemPrompt(config: ReviewConfig): string {
   const language =
     config.language !== 'en'
       ? `\nWrite "summary" and walkthrough summaries in ${LANGUAGE_NAMES[config.language]}.`
       : '';
+  const summaryDescription = config.experimental
+    ? 'final PR review summary in markdown: what the PR does, overall quality, the most important issues. Prefer a short bulleted list over long prose'
+    : 'final PR review summary in markdown, 3-6 sentences: what the PR does, overall quality, the most important issues';
+  const experimentalStyle = config.experimental
+    ? `\n\n${SIMPLE_PROSE_RULES}\n\n${SYNTHESIS_STYLE_EXAMPLE}`
+    : '';
+
   return `You are the review lead consolidating parallel code-review results into one final review.
 
 Respond with a single JSON object:
 {
-  "summary": "final PR review summary in markdown, 3-6 sentences: what the PR does, overall quality, the most important issues",
+  "summary": "${summaryDescription}",
   "score": "number 0-100 (90-100 excellent, 70-89 good, 50-69 needs improvement, <50 significant issues)",
   "walkthrough": [{ "path": "file path", "summary": "one line per changed file" }],
   "nearDuplicates": [["finding ids that describe the same underlying issue"]],
@@ -257,7 +295,7 @@ Respond with a single JSON object:
 
 Rules:
 - Judge findings by the one-line descriptions given; do not invent new findings.
-- Be conservative with likelyFalsePositives — only flag findings that clearly contradict the PR intent or duplicate the walkthrough's understanding.${language}`;
+- Be conservative with likelyFalsePositives — only flag findings that clearly contradict the PR intent or duplicate the walkthrough's understanding.${experimentalStyle}${language}`;
 }
 
 export interface SynthesisPromptInput {

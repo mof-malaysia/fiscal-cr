@@ -35,6 +35,185 @@ export function countBySeverity(annotations: ReviewAnnotation[]): Record<Severit
   for (const a of annotations) stats[a.severity]++;
   return stats;
 }
+// ---------------------------------------------------------------------------
+// Summary simplification (STE-inspired guardrail)
+
+const MAX_SUMMARY_SENTENCE_WORDS = 25;
+
+const PLAIN_WORD_SUBSTITUTIONS: Array<[RegExp, string]> = [
+  [/\bin order to\b/gi, 'to'],
+  [/\bprior to\b/gi, 'before'],
+  [/\bsubsequent to\b/gi, 'after'],
+  [/\bwith regard to\b/gi, 'about'],
+  [/\bregarding\b/gi, 'about'],
+  [/\bin the event that\b/gi, 'if'],
+  [/\bat this point in time\b/gi, 'now'],
+  [/\ba total of\b/gi, ''],
+  [/\bit is important to note that\b/gi, ''],
+  [/\bplease note that\b/gi, ''],
+  [/\butilized\b/gi, 'used'],
+  [/\butilizes\b/gi, 'uses'],
+  [/\butilizing\b/gi, 'using'],
+  [/\butilize\b/gi, 'use'],
+  [/\badditionally\b/gi, 'also'],
+];
+
+function wordCount(text: string): number {
+  return (text.match(/\S+/g) ?? []).length;
+}
+
+function capitalizeFirst(text: string): string {
+  return text.replace(/^[a-z](?=[a-z]*\s|$)/, (char) => char.toUpperCase());
+}
+
+function isListItem(line: string): boolean {
+  return /^\s*(?:[-*•]|\d+\.)\s+/.test(line);
+}
+
+function normalizeForDedupe(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/^\s*(?:[-*•]|\d+\.)\s+/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function dedupeSummaryLines(text: string): string {
+  const keptLines: string[] = [];
+  const seen: string[] = [];
+
+  for (const line of text.split('\n')) {
+    if (!line.trim()) {
+      keptLines.push(line);
+      continue;
+    }
+
+    const units = isListItem(line) ? [line] : splitIntoSentences(line);
+    const keptUnits: string[] = [];
+    for (const unit of units) {
+      const normalized = normalizeForDedupe(unit);
+      if (!normalized) {
+        keptUnits.push(unit);
+        continue;
+      }
+
+      const duplicate = seen.some((previous) => {
+        if (!previous.includes(normalized) && !normalized.includes(previous)) return false;
+        const shorter = Math.min(previous.length, normalized.length);
+        const longer = Math.max(previous.length, normalized.length);
+        return shorter >= 8 && shorter / longer >= 0.6;
+      });
+      if (duplicate) continue;
+
+      seen.push(normalized);
+      keptUnits.push(unit);
+    }
+
+    if (keptUnits.length > 0) keptLines.push(keptUnits.join(' ').trim());
+  }
+
+  return keptLines.join('\n');
+}
+
+function splitIntoSentences(line: string): string[] {
+  return line.split(
+    /(?<![A-Z]\.)(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\betc)(?<=[.!?])\s+(?=["'A-Za-z0-9])/,
+  );
+}
+
+function findBestSplit(text: string): number {
+  const total = wordCount(text);
+  const midpoint = total / 2;
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  const consider = (index: number, before: number, after: number): void => {
+    if (before < 6 || after < 6) return;
+    const distance = Math.abs(before - midpoint);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  };
+
+  let match: RegExpExecArray | null;
+  const commaConjunction = /,\s+(and|but|so|or|yet)\s+/gi;
+  while ((match = commaConjunction.exec(text)) !== null) {
+    const before = wordCount(text.slice(0, match.index));
+    consider(match.index, before, total - before - 1);
+  }
+
+  const bareConjunction = /(?<!,)\s+(and|but|so|or|yet)\s+/gi;
+  while ((match = bareConjunction.exec(text)) !== null) {
+    const afterConjunction = text.slice(match.index + match[0].length);
+    if (/^that\b/i.test(afterConjunction) && /\bso\s*$/i.test(match[0].trim())) continue;
+    const before = wordCount(text.slice(0, match.index));
+    consider(match.index, before, total - before - 1);
+  }
+
+  return bestIndex;
+}
+
+function enforceSentenceLength(sentence: string): string {
+  if (wordCount(sentence) <= MAX_SUMMARY_SENTENCE_WORDS) return sentence;
+  if (/[`]|:\/\/|https?:|e\.g\./i.test(sentence)) return sentence;
+
+  const splitAt = findBestSplit(sentence);
+  if (splitAt < 0) return sentence;
+
+  const first = `${sentence.slice(0, splitAt).trimEnd().replace(/[.!?]+$/, '')}.`;
+  const second = sentence
+    .slice(splitAt + 1)
+    .replace(/^\s*(?:and|but|so|or|yet)\s+/i, '')
+    .trim();
+  if (!second) return sentence;
+
+  return `${first} ${capitalizeFirst(second)}`;
+}
+
+function simplifySummaryLine(line: string, capitalizeStarts: boolean): string {
+  let current = line;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const next = splitIntoSentences(current)
+      .map((sentence) => {
+        const simplified = enforceSentenceLength(sentence.trim());
+        return capitalizeStarts ? capitalizeFirst(simplified) : simplified;
+      })
+      .join(' ');
+    if (next === current) return current;
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * Apply safe, deterministic readability improvements to model-generated
+ * summary prose. Ambiguous rewrites remain untouched.
+ */
+export function simplifySummaryProse(text: string): string {
+  if (!text) return text;
+
+  let simplified = text;
+  let substitutionsApplied = false;
+  for (const [pattern, replacement] of PLAIN_WORD_SUBSTITUTIONS) {
+    const replaced = simplified.replace(pattern, replacement);
+    substitutionsApplied ||= replaced !== simplified;
+    simplified = replaced;
+  }
+  simplified = simplified
+    .split('\n')
+    .map((line) => line.replace(/[ \t]{2,}/g, ' ').trimEnd())
+    .join('\n');
+  simplified = dedupeSummaryLines(simplified);
+
+  return simplified
+    .split('\n')
+    .map((line) => (isListItem(line) ? line : simplifySummaryLine(line, substitutionsApplied)))
+    .join('\n')
+    .trim();
+}
+
 
 /**
  * Deterministic quality gate applied to all findings regardless of path:
@@ -124,11 +303,14 @@ export async function synthesize(
     failedGroups.length > 0
       ? `${failedGroups.flatMap((o) => o.group.files).length} file(s) could not be fully reviewed (LLM call failed).`
       : undefined;
-
+  const simplifySummary = config.experimental ? simplifySummaryProse : (text: string) => text;
   let annotations = findings;
   let summary = '';
   let score: number | null = null;
-  let walkthrough: WalkthroughEntry[] = intent?.walkthrough ?? [];
+  let walkthrough: WalkthroughEntry[] = (intent?.walkthrough ?? []).map((entry) => ({
+    ...entry,
+    summary: simplifySummary(entry.summary),
+  }));
 
   const shouldCallLLM = outcomes.length > 1;
   if (shouldCallLLM) {
@@ -172,9 +354,14 @@ export async function synthesize(
 
       const parsed = parseSynthesisResponse(response.content);
       if (parsed) {
-        summary = parsed.summary;
+        summary = simplifySummary(parsed.summary);
         score = parsed.score;
-        if (parsed.walkthrough.length > 0) walkthrough = parsed.walkthrough;
+        if (parsed.walkthrough.length > 0) {
+          walkthrough = parsed.walkthrough.map((entry) => ({
+            ...entry,
+            summary: simplifySummary(entry.summary),
+          }));
+        }
 
         // Apply LLM pruning conservatively: never drop criticals.
         const toDrop = new Set<ReviewAnnotation>();
@@ -219,7 +406,7 @@ export async function synthesize(
       intent?.intent ?? '',
       ...outcomes.map((o) => o.summary).filter(Boolean),
     ].filter(Boolean);
-    summary = parts.join(' ') || 'Automated review completed.';
+    summary = simplifySummary(parts.join(' ') || 'Automated review completed.');
   }
   if (failedGroupNote) summary += `\n\n> ⚠️ ${failedGroupNote}`;
 

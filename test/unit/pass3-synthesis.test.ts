@@ -178,6 +178,42 @@ describe('synthesize', () => {
     expect(result.walkthrough).toEqual([{ path: 'src/a.ts', summary: 'w' }]);
   });
 
+  it('simplifies synthesized summary and walkthrough prose', async () => {
+    const llm = {
+      chatCompletion: vi.fn(async () => ({
+        content: JSON.stringify({
+          summary:
+            'In order to utilize the API, the batch stops prior to upload. It is important to note that this is safe.',
+          score: 80,
+          walkthrough: [
+            {
+              path: 'src/a.ts',
+              summary: 'Please note that the tool utilizes the API.',
+            },
+          ],
+          nearDuplicates: [],
+          likelyFalsePositives: [],
+        }),
+        usage: { input: 1, output: 1, cached: 0 },
+      })),
+    };
+
+    const result = await synthesize(
+      llm,
+      {
+        ctx: ctx([changedFile('src/a.ts')]),
+        intent: null,
+        outcomes: [outcome('a', []), outcome('b', [])],
+        findings: [],
+      },
+      cfg({ experimental: true }),
+      new UsageTracker(),
+    );
+
+    expect(result.summary).toBe('To use the API, the batch stops before upload. This is safe.');
+    expect(result.walkthrough).toEqual([{ path: 'src/a.ts', summary: 'The tool uses the API.' }]);
+  });
+
   it('falls back deterministically when the synthesis call fails', async () => {
     const llm = {
       chatCompletion: vi.fn(async () => {
