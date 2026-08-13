@@ -210,7 +210,7 @@ describe('synthesize', () => {
       new UsageTracker(),
     );
 
-    expect(result.summary).toBe('To use the API, the batch stops before upload. This is safe.');
+    expect(result.summary).toBe('- To use the API, the batch stops before upload.\n- This is safe.');
     expect(result.walkthrough).toEqual([{ path: 'src/a.ts', summary: 'The tool uses the API.' }]);
   });
 

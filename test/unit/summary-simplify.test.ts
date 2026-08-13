@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { simplifySummaryProse } from '../../src/pipeline/pass3-synthesis.js';
+import {
+  formatSummaryProse,
+  simplifySummaryProse,
+} from '../../src/pipeline/pass3-synthesis.js';
 
 const SAMPLE =
   'Fixes development-expenditure spreadsheet validation and re-upload handling so generated error workbooks can be validated from their data sheet, blank/whitespace rows are safely normalized, and Excel numeric codes with a trailing .0 match valid options. It also improves user-facing processing error feedback and updates pending-job copy. This group only changes the wording and formatting of the pending job log emitted before database persistence in VOT reuploads and national stores. It does not alter validation, upload, database, or control-flow behavior. This change makes error-workbook reuploads select the named data sheet and normalizes whitespace-only rows before validation. It also normalizes integral Excel float codes and improves frontend rendering of task-level error payloads.';
@@ -43,6 +46,12 @@ describe('simplifySummaryProse', () => {
     );
 
     expect(result).toBe('Use use in https://host/utilize and `utilize` before upload.');
+  });
+
+  it('puts multiple summary sentences on separate Markdown lines', () => {
+    const result = formatSummaryProse('The tool validates the file. The tool reports errors.');
+
+    expect(result).toBe('- The tool validates the file.\n- The tool reports errors.');
   });
 
   it('uses plain words and removes empty note openers', () => {

@@ -12,6 +12,11 @@ export declare function countBySeverity(annotations: ReviewAnnotation[]): Record
  */
 export declare function simplifySummaryProse(text: string): string;
 /**
+ * Put each sentence on a visible Markdown list line when the model returns
+ * several sentences as one paragraph.
+ */
+export declare function formatSummaryProse(text: string): string;
+/**
  * Deterministic quality gate applied to all findings regardless of path:
  * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)
  * 2. drop low-confidence findings (criticals get a lower floor, flagged)

@@ -54583,6 +54583,20 @@ function simplifySummaryProse(text) {
     return simplified.replace(/\uE000(\d+)\uE001/g, (_, id) => protectedSpans[Number(id)]);
 }
 /**
+ * Put each sentence on a visible Markdown list line when the model returns
+ * several sentences as one paragraph.
+ */
+function formatSummaryProse(text) {
+    const simplified = simplifySummaryProse(text);
+    if (!simplified || simplified.includes('\n'))
+        return simplified;
+    const body = simplified.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '');
+    const sentences = splitIntoSentences(body).map((sentence) => sentence.trim()).filter(Boolean);
+    if (sentences.length < 2)
+        return simplified;
+    return sentences.map((sentence) => `- ${sentence}`).join('\n');
+}
+/**
  * Deterministic quality gate applied to all findings regardless of path:
  * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)
  * 2. drop low-confidence findings (criticals get a lower floor, flagged)
@@ -54644,6 +54658,7 @@ async function synthesize(llm, input, config, usage) {
         ? `${failedGroups.flatMap((o) => o.group.files).length} file(s) could not be fully reviewed (LLM call failed).`
         : undefined;
     const simplifySummary = config.experimental ? simplifySummaryProse : (text) => text;
+    const formatSummary = config.experimental ? formatSummaryProse : (text) => text;
     let annotations = findings;
     let summary = '';
     let score = null;
@@ -54692,7 +54707,7 @@ async function synthesize(llm, input, config, usage) {
             });
             const parsed = parseSynthesisResponse(response.content);
             if (parsed) {
-                summary = simplifySummary(parsed.summary);
+                summary = formatSummary(parsed.summary);
                 score = parsed.score;
                 if (parsed.walkthrough.length > 0) {
                     walkthrough = parsed.walkthrough.map((entry) => ({
@@ -54746,7 +54761,7 @@ async function synthesize(llm, input, config, usage) {
             intent?.intent ?? '',
             ...outcomes.map((o) => o.summary).filter(Boolean),
         ].filter(Boolean);
-        summary = simplifySummary(parts.join(' ') || 'Automated review completed.');
+        summary = formatSummary(parts.join(' ') || 'Automated review completed.');
     }
     if (failedGroupNote)
         summary += `\n\n> ⚠️ ${failedGroupNote}`;

@@ -223,6 +223,21 @@ export function simplifySummaryProse(text: string): string {
 }
 
 /**
+ * Put each sentence on a visible Markdown list line when the model returns
+ * several sentences as one paragraph.
+ */
+export function formatSummaryProse(text: string): string {
+  const simplified = simplifySummaryProse(text);
+  if (!simplified || simplified.includes('\n')) return simplified;
+
+  const body = simplified.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '');
+  const sentences = splitIntoSentences(body).map((sentence) => sentence.trim()).filter(Boolean);
+  if (sentences.length < 2) return simplified;
+
+  return sentences.map((sentence) => `- ${sentence}`).join('\n');
+}
+
+/**
  * Deterministic quality gate applied to all findings regardless of path:
  * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)
  * 2. drop low-confidence findings (criticals get a lower floor, flagged)
@@ -311,6 +326,7 @@ export async function synthesize(
       ? `${failedGroups.flatMap((o) => o.group.files).length} file(s) could not be fully reviewed (LLM call failed).`
       : undefined;
   const simplifySummary = config.experimental ? simplifySummaryProse : (text: string) => text;
+  const formatSummary = config.experimental ? formatSummaryProse : (text: string) => text;
   let annotations = findings;
   let summary = '';
   let score: number | null = null;
@@ -361,7 +377,7 @@ export async function synthesize(
 
       const parsed = parseSynthesisResponse(response.content);
       if (parsed) {
-        summary = simplifySummary(parsed.summary);
+        summary = formatSummary(parsed.summary);
         score = parsed.score;
         if (parsed.walkthrough.length > 0) {
           walkthrough = parsed.walkthrough.map((entry) => ({
@@ -413,7 +429,7 @@ export async function synthesize(
       intent?.intent ?? '',
       ...outcomes.map((o) => o.summary).filter(Boolean),
     ].filter(Boolean);
-    summary = simplifySummary(parts.join(' ') || 'Automated review completed.');
+    summary = formatSummary(parts.join(' ') || 'Automated review completed.');
   }
   if (failedGroupNote) summary += `\n\n> ⚠️ ${failedGroupNote}`;
 
