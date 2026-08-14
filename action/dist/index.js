@@ -53772,6 +53772,16 @@ const QUALITY_BAR = `## Quality Bar
 - Every finding must cite the exact code shown — reference variable names, functions, and line numbers.
 - Reason about how the pieces interact: callers, error paths, edge cases, concurrency — not just line-by-line pattern matching.
 - If the code is genuinely fine, return an empty findings list. Silence beats noise.`;
+const FINDING_STYLE_RULES = `## Finding Style
+Write every finding for a busy engineer:
+- Keep the title short. Name the concrete behavior and risk. Avoid vague titles such as "Issue with..." or "Problem in...".
+- Keep the body to 2-4 sentences and 60 words or fewer.
+- State one problem. Explain when it occurs and its impact. End with a direct fix.
+- Keep each sentence to 25 words or fewer. Use plain, active English and simple tenses.
+- Keep articles ("the", "a", "an"). Avoid filler, hedging, repetition, and long noun clusters.
+- Do not restate the PR intent or explain unrelated code.
+- Do not add a "Suggested fix:" heading. Use the "suggestedFix" field for replacement code when possible.
+- Preserve exact code identifiers, paths, and behavior.`;
 const FINDING_SCHEMA = `{
   "path": "string — file path relative to repo root",
   "startLine": "number — starting line in the NEW version of the file (1-indexed)",
@@ -53779,7 +53789,7 @@ const FINDING_SCHEMA = `{
   "severity": "critical | warning | suggestion | nitpick",
   "category": "bug | security | performance | style | best-practice | documentation | testing | other",
   "title": "string — short issue title",
-  "body": "string — detailed explanation in markdown",
+  "body": "string — concise explanation of the problem, impact, and fix in markdown",
   "suggestedFix": "string | null — replacement code snippet for exactly lines startLine-endLine",
   "confidence": "number 0-1"
 }`;
@@ -53801,6 +53811,8 @@ function sharedReviewerPreamble(config) {
         CONFIDENCE_RUBRIC,
         '',
         QUALITY_BAR,
+        '',
+        FINDING_STYLE_RULES,
     ];
     if (config.language !== 'en') {
         parts.push('', `## Language\nWrite all summaries, titles, and finding bodies in ${LANGUAGE_NAMES[config.language]}. Keep code identifiers and code snippets as-is.`);
@@ -53949,15 +53961,50 @@ function buildGroupUserPrompt(input) {
 }
 // ---------------------------------------------------------------------------
 // Pass 3: synthesis
+/**
+ * STE-inspired plain-English rules for user-facing summary prose, adapted to
+ * the code-review use case. The deterministic guardrail in
+ * pass3-synthesis.ts enforces the mechanically checkable subset; keep the two
+ * in sync.
+ */
+const SIMPLE_PROSE_RULES = `## Writing Style
+Write the summary in plain, simple English. Follow these rules:
+- One sentence states one idea. Keep sentences to 25 words or fewer.
+- Use the active voice. Write "the tool stops the batch", not "the batch is stopped".
+- Use simple present, past, or future tense. Avoid the perfect tenses, such as "has fixed" or "had validated".
+- Keep the articles ("the", "a", "an"). Do not drop words to shorten a sentence.
+- Avoid "-ing" forms unless the word is a technical name, such as "rendering" or "logging".
+- Use at most 3 nouns in a row. Break up longer noun clusters. Write "validation of the development expenditure spreadsheet", not "development-expenditure spreadsheet validation".
+- Prefer a plain verb over jargon, but preserve technical terms such as "throws" and "catches" when they describe exception behavior or other code semantics.
+- Use a bulleted list for two or more related facts instead of long prose.
+- Keep paragraphs to 6 sentences or fewer.
+- State each fact once. Do not restate a group summary in different words.`;
+const SYNTHESIS_STYLE_EXAMPLE = `## Example
+Write this:
+- Fixes validation of the development expenditure spreadsheet.
+- Lets users re-upload generated error workbooks from the data sheet.
+- Normalizes blank or whitespace-only rows before validation.
+- Accepts Excel numeric codes with a trailing ".0".
+- Improves user-facing error messages.
+- Updates the pending-job copy.
+
+Do not write this:
+"Fixes development-expenditure spreadsheet validation and re-upload handling so generated error workbooks can be validated from their data sheet, blank/whitespace rows are safely normalized, and Excel numeric codes with a trailing .0 match valid options. It also improves user-facing processing error feedback and updates pending-job copy."`;
 function buildSynthesisSystemPrompt(config) {
     const language = config.language !== 'en'
         ? `\nWrite "summary" and walkthrough summaries in ${LANGUAGE_NAMES[config.language]}.`
+        : '';
+    const summaryDescription = config.experimental
+        ? 'final PR review summary in markdown: what the PR does, overall quality, the most important issues. Prefer a short bulleted list over long prose'
+        : 'final PR review summary in markdown, 3-6 sentences: what the PR does, overall quality, the most important issues';
+    const experimentalStyle = config.experimental
+        ? `\n\n${SIMPLE_PROSE_RULES}\n\n${SYNTHESIS_STYLE_EXAMPLE}`
         : '';
     return `You are the review lead consolidating parallel code-review results into one final review.
 
 Respond with a single JSON object:
 {
-  "summary": "final PR review summary in markdown, 3-6 sentences: what the PR does, overall quality, the most important issues",
+  "summary": "${summaryDescription}",
   "score": "number 0-100 (90-100 excellent, 70-89 good, 50-69 needs improvement, <50 significant issues)",
   "walkthrough": [{ "path": "file path", "summary": "one line per changed file" }],
   "nearDuplicates": [["finding ids that describe the same underlying issue"]],
@@ -53966,7 +54013,7 @@ Respond with a single JSON object:
 
 Rules:
 - Judge findings by the one-line descriptions given; do not invent new findings.
-- Be conservative with likelyFalsePositives — only flag findings that clearly contradict the PR intent or duplicate the walkthrough's understanding.${language}`;
+- Be conservative with likelyFalsePositives — only flag findings that clearly contradict the PR intent or duplicate the walkthrough's understanding.${experimentalStyle}${language}`;
 }
 function buildSynthesisUserPrompt(input) {
     const parts = [];
@@ -54001,8 +54048,9 @@ function buildFastPathSystemPrompt(config) {
 - Return compact JSON only. Do not narrate the schema, response process, validation, or field completeness.
 - Keep intent to at most 40 words.
 - Keep summary to at most 80 words. Lead with the highest-severity issue, or the overall verdict when there are no findings.
+- Put each summary sentence on its own Markdown bullet line.
 - Keep each walkthrough summary to at most 20 words.
-- Keep each finding body to at most 80 words: state the problem, impact, and concrete fix without repetition or hedging.
+- Keep each finding body to at most 60 words: state the problem, impact, and concrete fix without repetition or hedging.
 - Preserve JSON keys, code, symbols, paths, line numbers, and suggested fixes exactly. Do not use caveman grammar in user-facing text.`
         : '';
     return `${sharedReviewerPreamble(config)}
@@ -54381,6 +54429,196 @@ function countBySeverity(annotations) {
         stats[a.severity]++;
     return stats;
 }
+// ---------------------------------------------------------------------------
+// Summary simplification (STE-inspired guardrail)
+const MAX_SUMMARY_SENTENCE_WORDS = 25;
+const PLAIN_WORD_SUBSTITUTIONS = [
+    [/\bin order to\b/gi, 'to'],
+    [/\bprior to\b/gi, 'before'],
+    [/\bsubsequent to\b/gi, 'after'],
+    [/\bwith regard to\b/gi, 'about'],
+    [/\bregarding\b/gi, 'about'],
+    [/\bin the event that\b/gi, 'if'],
+    [/\bat this point in time\b/gi, 'now'],
+    [/\ba total of\b/gi, ''],
+    [/\bit is important to note that\b/gi, ''],
+    [/\bplease note that\b/gi, ''],
+    [/\butilized\b/gi, 'used'],
+    [/\butilizes\b/gi, 'uses'],
+    [/\butilizing\b/gi, 'using'],
+    [/\butilize\b/gi, 'use'],
+    [/\badditionally\b/gi, 'also'],
+];
+function wordCount(text) {
+    return (text.match(/\S+/g) ?? []).length;
+}
+function capitalizeFirst(text) {
+    return text.replace(/^[a-z](?=[a-z]*\s|$)/, (char) => char.toUpperCase());
+}
+function isListItem(line) {
+    return /^\s*(?:[-*•]|\d+\.)\s+/.test(line);
+}
+function normalizeForDedupe(text) {
+    return text
+        .toLowerCase()
+        .replace(/^\s*(?:[-*•]|\d+\.)\s+/, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+function dedupeSummaryLines(text) {
+    const keptLines = [];
+    const seen = [];
+    for (const line of text.split('\n')) {
+        if (!line.trim()) {
+            keptLines.push(line);
+            continue;
+        }
+        const units = isListItem(line) ? [line] : splitIntoSentences(line);
+        const keptUnits = [];
+        for (const unit of units) {
+            const normalized = normalizeForDedupe(unit);
+            if (!normalized) {
+                keptUnits.push(unit);
+                continue;
+            }
+            const duplicate = seen.some((previous) => previous === normalized);
+            if (duplicate)
+                continue;
+            seen.push(normalized);
+            keptUnits.push(unit);
+        }
+        if (keptUnits.length > 0)
+            keptLines.push(keptUnits.join(' ').trim());
+    }
+    return keptLines.join('\n');
+}
+function splitIntoSentences(line) {
+    return line.split(/(?<!\b[A-Z]\.)(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\betc)(?<=[.!?])\s+(?=["'A-Za-z0-9])/);
+}
+function findBestSplit(text) {
+    const total = wordCount(text);
+    const midpoint = total / 2;
+    let bestIndex = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    const consider = (index, before, after) => {
+        if (before < 6 || after < 6)
+            return;
+        const distance = Math.abs(before - midpoint);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = index;
+        }
+    };
+    let match;
+    const commaConjunction = /,\s+(and|but|so|or|yet)\s+/gi;
+    while ((match = commaConjunction.exec(text)) !== null) {
+        const before = wordCount(text.slice(0, match.index));
+        consider(match.index, before, total - before - 1);
+    }
+    const bareConjunction = /(?<!,)\s+(and|but|so|or|yet)\s+/gi;
+    while ((match = bareConjunction.exec(text)) !== null) {
+        const afterConjunction = text.slice(match.index + match[0].length);
+        if (/^that\b/i.test(afterConjunction) && /\bso\s*$/i.test(match[0].trim()))
+            continue;
+        const before = wordCount(text.slice(0, match.index));
+        consider(match.index, before, total - before - 1);
+    }
+    return bestIndex;
+}
+function enforceSentenceLength(sentence) {
+    if (wordCount(sentence) <= MAX_SUMMARY_SENTENCE_WORDS)
+        return sentence;
+    if (/[`]|:\/\/|https?:|e\.g\./i.test(sentence))
+        return sentence;
+    const splitAt = findBestSplit(sentence);
+    if (splitAt < 0)
+        return sentence;
+    const first = `${sentence.slice(0, splitAt).trimEnd().replace(/[.!?]+$/, '')}.`;
+    const second = sentence
+        .slice(splitAt + 1)
+        .replace(/^\s*(?:and|but|so|or|yet)\s+/i, '')
+        .trim();
+    if (!second)
+        return sentence;
+    return `${first} ${capitalizeFirst(second)}`;
+}
+function simplifySummaryLine(line, capitalizeStarts) {
+    let current = line;
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const next = splitIntoSentences(current)
+            .map((sentence) => {
+            const simplified = enforceSentenceLength(sentence.trim());
+            return capitalizeStarts ? capitalizeFirst(simplified) : simplified;
+        })
+            .join(' ');
+        if (next === current)
+            return current;
+        current = next;
+    }
+    return current;
+}
+/**
+ * Apply safe, deterministic readability improvements to model-generated
+ * summary prose. Ambiguous rewrites remain untouched.
+ */
+function simplifySummaryProse(text) {
+    if (!text)
+        return text;
+    const protectedSpans = [];
+    const spanIds = new Map();
+    const protect = (span) => {
+        let id = spanIds.get(span);
+        if (id === undefined) {
+            id = protectedSpans.length;
+            spanIds.set(span, id);
+            protectedSpans.push(span);
+        }
+        return `\uE000${id}\uE001`;
+    };
+    let simplified = text.replace(/```[\s\S]*?```|`[^`\n]*`|https?:\/\/[^\s<>)]+/gi, protect);
+    let substitutionsApplied = false;
+    for (const [pattern, replacement] of PLAIN_WORD_SUBSTITUTIONS) {
+        const replaced = simplified.replace(pattern, replacement);
+        substitutionsApplied ||= replaced !== simplified;
+        simplified = replaced;
+    }
+    simplified = simplified
+        .split('\n')
+        .map((line) => line.replace(/[ \t]{2,}/g, ' ').trimEnd())
+        .join('\n');
+    simplified = dedupeSummaryLines(simplified);
+    simplified = simplified
+        .split('\n')
+        .map((line) => (isListItem(line) ? line : simplifySummaryLine(line, substitutionsApplied)))
+        .join('\n')
+        .trim();
+    return simplified.replace(/\uE000(\d+)\uE001/g, (_, id) => protectedSpans[Number(id)]);
+}
+/** Apply the same safe plain-English cleanup to inline finding comments. */
+function simplifyFindingBody(body) {
+    return simplifySummaryProse(body).replace(/(^|\n|\s+)(?:\*\*)?Suggested fix:\s*(?:\*\*)?\s*/gi, '$1');
+}
+/**
+ * Put each sentence on a visible Markdown list line when the model returns
+ * several sentences as one paragraph.
+ */
+function formatSummaryLines(text) {
+    const normalized = text.trim();
+    if (!normalized || normalized.includes('\n'))
+        return normalized;
+    const body = normalized.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '');
+    const sentences = splitIntoSentences(body).map((sentence) => sentence.trim()).filter(Boolean);
+    if (sentences.length < 2)
+        return normalized;
+    return sentences.map((sentence) => `- ${sentence}`).join('\n');
+}
+/**
+ * Simplify summary prose, then put each sentence on a visible Markdown line.
+ */
+function formatSummaryProse(text) {
+    return formatSummaryLines(simplifySummaryProse(text));
+}
 /**
  * Deterministic quality gate applied to all findings regardless of path:
  * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)
@@ -54429,7 +54667,8 @@ function validateAndRankFindings(findings, changedFiles, config) {
     const minIdx = severityRank(config.review.minSeverity);
     return deduped
         .filter((f) => severityRank(f.severity) <= minIdx)
-        .slice(0, config.review.maxAnnotations);
+        .slice(0, config.review.maxAnnotations)
+        .map((f) => ({ ...f, body: simplifyFindingBody(f.body) }));
 }
 /**
  * Pass 3: assemble the final ReviewResult. Uses one LLM call to write the
@@ -54442,10 +54681,15 @@ async function synthesize(llm, input, config, usage) {
     const failedGroupNote = failedGroups.length > 0
         ? `${failedGroups.flatMap((o) => o.group.files).length} file(s) could not be fully reviewed (LLM call failed).`
         : undefined;
+    const simplifySummary = config.experimental ? simplifySummaryProse : (text) => text;
+    const formatSummary = config.experimental ? formatSummaryProse : (text) => text;
     let annotations = findings;
     let summary = '';
     let score = null;
-    let walkthrough = intent?.walkthrough ?? [];
+    let walkthrough = (intent?.walkthrough ?? []).map((entry) => ({
+        ...entry,
+        summary: simplifySummary(entry.summary),
+    }));
     const shouldCallLLM = outcomes.length > 1;
     if (shouldCallLLM) {
         try {
@@ -54487,10 +54731,14 @@ async function synthesize(llm, input, config, usage) {
             });
             const parsed = parseSynthesisResponse(response.content);
             if (parsed) {
-                summary = parsed.summary;
+                summary = formatSummary(parsed.summary);
                 score = parsed.score;
-                if (parsed.walkthrough.length > 0)
-                    walkthrough = parsed.walkthrough;
+                if (parsed.walkthrough.length > 0) {
+                    walkthrough = parsed.walkthrough.map((entry) => ({
+                        ...entry,
+                        summary: simplifySummary(entry.summary),
+                    }));
+                }
                 // Apply LLM pruning conservatively: never drop criticals.
                 const toDrop = new Set();
                 for (const dupSet of parsed.nearDuplicates) {
@@ -54537,7 +54785,7 @@ async function synthesize(llm, input, config, usage) {
             intent?.intent ?? '',
             ...outcomes.map((o) => o.summary).filter(Boolean),
         ].filter(Boolean);
-        summary = parts.join(' ') || 'Automated review completed.';
+        summary = formatSummary(parts.join(' ') || 'Automated review completed.');
     }
     if (failedGroupNote)
         summary += `\n\n> ⚠️ ${failedGroupNote}`;
@@ -55075,7 +55323,9 @@ async function runFastPath(llm, ctx, config, usage, deltaHint) {
     });
     logger.info({ findings: parsed.findings.length, kept: annotations.length }, 'Fast-path review completed');
     return {
-        summary: parsed.summary || 'Automated review completed.',
+        summary: config.experimental
+            ? formatSummaryProse(parsed.summary || 'Automated review completed.')
+            : formatSummaryLines(parsed.summary || 'Automated review completed.'),
         score: parsed.score ?? deterministicScore(stats),
         annotations,
         stats,

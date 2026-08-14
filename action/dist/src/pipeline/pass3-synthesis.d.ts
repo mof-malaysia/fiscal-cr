@@ -7,6 +7,22 @@ import type { UsageTracker } from './usage.js';
 export declare function deterministicScore(stats: Record<Severity, number>): number;
 export declare function countBySeverity(annotations: ReviewAnnotation[]): Record<Severity, number>;
 /**
+ * Apply safe, deterministic readability improvements to model-generated
+ * summary prose. Ambiguous rewrites remain untouched.
+ */
+export declare function simplifySummaryProse(text: string): string;
+/** Apply the same safe plain-English cleanup to inline finding comments. */
+export declare function simplifyFindingBody(body: string): string;
+/**
+ * Put each sentence on a visible Markdown list line when the model returns
+ * several sentences as one paragraph.
+ */
+export declare function formatSummaryLines(text: string): string;
+/**
+ * Simplify summary prose, then put each sentence on a visible Markdown line.
+ */
+export declare function formatSummaryProse(text: string): string;
+/**
  * Deterministic quality gate applied to all findings regardless of path:
  * 1. drop findings whose lines don't exist in the PR diff (hallucinated lines)
  * 2. drop low-confidence findings (criticals get a lower floor, flagged)

@@ -102,6 +102,24 @@ describe('validateAndRankFindings', () => {
     expect(kept).toHaveLength(1);
     expect(kept[0].title).toBe('crit');
   });
+
+  it('simplifies finding bodies before they reach review comments', () => {
+    const kept = validateAndRankFindings(
+      [
+        finding({
+          body:
+            'In order to utilize the API, the tool checks the input, and it reports errors. It is important to note that this is safe. Suggested fix: validate the input first.',
+        }),
+      ],
+      files,
+      cfg(),
+    );
+
+    expect(kept[0].body).toContain('To use the API');
+    expect(kept[0].body).not.toContain('It is important to note');
+    expect(kept[0].body).not.toContain('utilize');
+    expect(kept[0].body).not.toContain('Suggested fix:');
+  });
 });
 
 describe('deterministicScore', () => {
@@ -176,6 +194,42 @@ describe('synthesize', () => {
     // f2 dropped as near-duplicate of f3; f1 (critical) kept despite FP flag
     expect(result.annotations.map((f) => f.title).sort()).toEqual(['crit', 'fp']);
     expect(result.walkthrough).toEqual([{ path: 'src/a.ts', summary: 'w' }]);
+  });
+
+  it('simplifies synthesized summary and walkthrough prose', async () => {
+    const llm = {
+      chatCompletion: vi.fn(async () => ({
+        content: JSON.stringify({
+          summary:
+            'In order to utilize the API, the batch stops prior to upload. It is important to note that this is safe.',
+          score: 80,
+          walkthrough: [
+            {
+              path: 'src/a.ts',
+              summary: 'Please note that the tool utilizes the API.',
+            },
+          ],
+          nearDuplicates: [],
+          likelyFalsePositives: [],
+        }),
+        usage: { input: 1, output: 1, cached: 0 },
+      })),
+    };
+
+    const result = await synthesize(
+      llm,
+      {
+        ctx: ctx([changedFile('src/a.ts')]),
+        intent: null,
+        outcomes: [outcome('a', []), outcome('b', [])],
+        findings: [],
+      },
+      cfg({ experimental: true }),
+      new UsageTracker(),
+    );
+
+    expect(result.summary).toBe('- To use the API, the batch stops before upload.\n- This is safe.');
+    expect(result.walkthrough).toEqual([{ path: 'src/a.ts', summary: 'The tool uses the API.' }]);
   });
 
   it('falls back deterministically when the synthesis call fails', async () => {

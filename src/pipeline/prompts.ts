@@ -33,6 +33,17 @@ const QUALITY_BAR = `## Quality Bar
 - Reason about how the pieces interact: callers, error paths, edge cases, concurrency — not just line-by-line pattern matching.
 - If the code is genuinely fine, return an empty findings list. Silence beats noise.`;
 
+const FINDING_STYLE_RULES = `## Finding Style
+Write every finding for a busy engineer:
+- Keep the title short. Name the concrete behavior and risk. Avoid vague titles such as "Issue with..." or "Problem in...".
+- Keep the body to 2-4 sentences and 60 words or fewer.
+- State one problem. Explain when it occurs and its impact. End with a direct fix.
+- Keep each sentence to 25 words or fewer. Use plain, active English and simple tenses.
+- Keep articles ("the", "a", "an"). Avoid filler, hedging, repetition, and long noun clusters.
+- Do not restate the PR intent or explain unrelated code.
+- Do not add a "Suggested fix:" heading. Use the "suggestedFix" field for replacement code when possible.
+- Preserve exact code identifiers, paths, and behavior.`;
+
 const FINDING_SCHEMA = `{
   "path": "string — file path relative to repo root",
   "startLine": "number — starting line in the NEW version of the file (1-indexed)",
@@ -40,11 +51,10 @@ const FINDING_SCHEMA = `{
   "severity": "critical | warning | suggestion | nitpick",
   "category": "bug | security | performance | style | best-practice | documentation | testing | other",
   "title": "string — short issue title",
-  "body": "string — detailed explanation in markdown",
+  "body": "string — concise explanation of the problem, impact, and fix in markdown",
   "suggestedFix": "string | null — replacement code snippet for exactly lines startLine-endLine",
   "confidence": "number 0-1"
 }`;
-
 function sharedReviewerPreamble(config: ReviewConfig): string {
   const aspects = Object.entries(config.review.aspects)
     .filter(([, enabled]) => enabled)
@@ -65,6 +75,8 @@ function sharedReviewerPreamble(config: ReviewConfig): string {
     CONFIDENCE_RUBRIC,
     '',
     QUALITY_BAR,
+    '',
+    FINDING_STYLE_RULES,
   ];
 
   if (config.language !== 'en') {
@@ -239,16 +251,54 @@ export function buildGroupUserPrompt(input: GroupPromptInput): string {
 // ---------------------------------------------------------------------------
 // Pass 3: synthesis
 
+/**
+ * STE-inspired plain-English rules for user-facing summary prose, adapted to
+ * the code-review use case. The deterministic guardrail in
+ * pass3-synthesis.ts enforces the mechanically checkable subset; keep the two
+ * in sync.
+ */
+const SIMPLE_PROSE_RULES = `## Writing Style
+Write the summary in plain, simple English. Follow these rules:
+- One sentence states one idea. Keep sentences to 25 words or fewer.
+- Use the active voice. Write "the tool stops the batch", not "the batch is stopped".
+- Use simple present, past, or future tense. Avoid the perfect tenses, such as "has fixed" or "had validated".
+- Keep the articles ("the", "a", "an"). Do not drop words to shorten a sentence.
+- Avoid "-ing" forms unless the word is a technical name, such as "rendering" or "logging".
+- Use at most 3 nouns in a row. Break up longer noun clusters. Write "validation of the development expenditure spreadsheet", not "development-expenditure spreadsheet validation".
+- Prefer a plain verb over jargon, but preserve technical terms such as "throws" and "catches" when they describe exception behavior or other code semantics.
+- Use a bulleted list for two or more related facts instead of long prose.
+- Keep paragraphs to 6 sentences or fewer.
+- State each fact once. Do not restate a group summary in different words.`;
+
+const SYNTHESIS_STYLE_EXAMPLE = `## Example
+Write this:
+- Fixes validation of the development expenditure spreadsheet.
+- Lets users re-upload generated error workbooks from the data sheet.
+- Normalizes blank or whitespace-only rows before validation.
+- Accepts Excel numeric codes with a trailing ".0".
+- Improves user-facing error messages.
+- Updates the pending-job copy.
+
+Do not write this:
+"Fixes development-expenditure spreadsheet validation and re-upload handling so generated error workbooks can be validated from their data sheet, blank/whitespace rows are safely normalized, and Excel numeric codes with a trailing .0 match valid options. It also improves user-facing processing error feedback and updates pending-job copy."`;
+
 export function buildSynthesisSystemPrompt(config: ReviewConfig): string {
   const language =
     config.language !== 'en'
       ? `\nWrite "summary" and walkthrough summaries in ${LANGUAGE_NAMES[config.language]}.`
       : '';
+  const summaryDescription = config.experimental
+    ? 'final PR review summary in markdown: what the PR does, overall quality, the most important issues. Prefer a short bulleted list over long prose'
+    : 'final PR review summary in markdown, 3-6 sentences: what the PR does, overall quality, the most important issues';
+  const experimentalStyle = config.experimental
+    ? `\n\n${SIMPLE_PROSE_RULES}\n\n${SYNTHESIS_STYLE_EXAMPLE}`
+    : '';
+
   return `You are the review lead consolidating parallel code-review results into one final review.
 
 Respond with a single JSON object:
 {
-  "summary": "final PR review summary in markdown, 3-6 sentences: what the PR does, overall quality, the most important issues",
+  "summary": "${summaryDescription}",
   "score": "number 0-100 (90-100 excellent, 70-89 good, 50-69 needs improvement, <50 significant issues)",
   "walkthrough": [{ "path": "file path", "summary": "one line per changed file" }],
   "nearDuplicates": [["finding ids that describe the same underlying issue"]],
@@ -257,7 +307,7 @@ Respond with a single JSON object:
 
 Rules:
 - Judge findings by the one-line descriptions given; do not invent new findings.
-- Be conservative with likelyFalsePositives — only flag findings that clearly contradict the PR intent or duplicate the walkthrough's understanding.${language}`;
+- Be conservative with likelyFalsePositives — only flag findings that clearly contradict the PR intent or duplicate the walkthrough's understanding.${experimentalStyle}${language}`;
 }
 
 export interface SynthesisPromptInput {
@@ -304,8 +354,9 @@ export function buildFastPathSystemPrompt(config: ReviewConfig): string {
 - Return compact JSON only. Do not narrate the schema, response process, validation, or field completeness.
 - Keep intent to at most 40 words.
 - Keep summary to at most 80 words. Lead with the highest-severity issue, or the overall verdict when there are no findings.
+- Put each summary sentence on its own Markdown bullet line.
 - Keep each walkthrough summary to at most 20 words.
-- Keep each finding body to at most 80 words: state the problem, impact, and concrete fix without repetition or hedging.
+- Keep each finding body to at most 60 words: state the problem, impact, and concrete fix without repetition or hedging.
 - Preserve JSON keys, code, symbols, paths, line numbers, and suggested fixes exactly. Do not use caveman grammar in user-facing text.`
     : '';
 
