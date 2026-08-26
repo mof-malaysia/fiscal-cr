@@ -19,6 +19,8 @@ export interface OrchestratorOptions {
     telemetry?: TelemetrySink;
     /** Effective provider/model used by the provider factory, including App overrides. */
     pricingContext?: PricingContext;
+    /** Disable the app-managed check run when the host already supplies one (Action mode). */
+    createCheckRun?: boolean;
 }
 export declare class ReviewOrchestrator {
     private octokit;
