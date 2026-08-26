@@ -49,6 +49,8 @@ export interface OrchestratorOptions {
   telemetry?: TelemetrySink;
   /** Effective provider/model used by the provider factory, including App overrides. */
   pricingContext?: PricingContext;
+  /** Disable the app-managed check run when the host already supplies one (Action mode). */
+  createCheckRun?: boolean;
 }
 
 function conclusionFor(
@@ -128,8 +130,11 @@ export class ReviewOrchestrator {
     const { owner, repo, pullNumber, headSha } = params;
     const sticky = this.config.review.comments.mode === 'sticky';
 
-    // Step 1: Create Check Run
-    const checkRunId = await createCheckRun(this.octokit, { owner, repo, headSha });
+    // GitHub Actions already provides the workflow job check; avoid publishing a duplicate.
+    const checkRunId =
+      this.options.createCheckRun === false
+        ? null
+        : await createCheckRun(this.octokit, { owner, repo, headSha });
 
     try {
       // Step 2: Load state and decide review scope
@@ -209,14 +214,16 @@ export class ReviewOrchestrator {
           stats: { ...EMPTY_COUNTS },
           tokensUsed: { input: 0, output: 0, cached: 0 },
         };
-        await completeCheckRun(this.octokit, {
-          owner,
-          repo,
-          checkRunId,
-          conclusion: 'success',
-          summary: result.summary,
-          annotations: [],
-        });
+        if (checkRunId !== null) {
+          await completeCheckRun(this.octokit, {
+            owner,
+            repo,
+            checkRunId,
+            conclusion: 'success',
+            summary: result.summary,
+            annotations: [],
+          });
+        }
         return result;
       }
 
@@ -272,14 +279,16 @@ export class ReviewOrchestrator {
     } catch (err) {
       logger.error({ err, pullNumber }, 'Review failed');
 
-      await completeCheckRun(this.octokit, {
-        owner,
-        repo,
-        checkRunId,
-        conclusion: 'failure',
-        summary: `Review failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        annotations: [],
-      });
+      if (checkRunId !== null) {
+        await completeCheckRun(this.octokit, {
+          owner,
+          repo,
+          checkRunId,
+          conclusion: 'failure',
+          summary: `Review failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          annotations: [],
+        });
+      }
 
       throw new ReviewError(
         err instanceof Error ? err.message : 'Unknown error',
@@ -290,7 +299,7 @@ export class ReviewOrchestrator {
 
   /** Nothing to review — carry the previous conclusion so the check stays honest. */
   private async completeSkippedRun(
-    target: { owner: string; repo: string; checkRunId: number },
+    target: { owner: string; repo: string; checkRunId: number | null },
     state: ReviewState,
     reason: string,
   ): Promise<ReviewResult> {
@@ -298,13 +307,17 @@ export class ReviewOrchestrator {
     const openTotal = Object.values(state.openCounts).reduce((a, b) => a + b, 0);
     const summary = `Review skipped: ${reason}. ${openTotal} open finding(s) carried from the last review of \`${state.lastReviewedSha.slice(0, 7)}\`.`;
 
-    await completeCheckRun(this.octokit, {
-      ...target,
-      conclusion,
-      summary,
-      annotations: [],
-      externalId: JSON.stringify({ scope: 'skip' }),
-    });
+    if (target.checkRunId !== null) {
+      await completeCheckRun(this.octokit, {
+        owner: target.owner,
+        repo: target.repo,
+        checkRunId: target.checkRunId,
+        conclusion,
+        summary,
+        annotations: [],
+        externalId: JSON.stringify({ scope: 'skip' }),
+      });
+    }
 
     logger.info({ reason, conclusion }, 'Review skipped');
     return {
@@ -319,7 +332,7 @@ export class ReviewOrchestrator {
 
   /** Pre-sticky behavior: full review stacked on the PR every run. */
   private async publishLegacy(input: {
-    checkRunId: number;
+    checkRunId: number | null;
     prContext: PullRequestContext;
     result: ReviewResult;
   }): Promise<ReviewResult> {
@@ -327,14 +340,16 @@ export class ReviewOrchestrator {
     const { owner, repo, pullNumber, headSha } = prContext;
 
     const conclusion = conclusionFor(result.stats, this.config.review.failOn);
-    await completeCheckRun(this.octokit, {
-      owner,
-      repo,
-      checkRunId,
-      conclusion,
-      summary: buildSummary(result),
-      annotations: result.annotations,
-    });
+    if (checkRunId !== null) {
+      await completeCheckRun(this.octokit, {
+        owner,
+        repo,
+        checkRunId,
+        conclusion,
+        summary: buildSummary(result),
+        annotations: result.annotations,
+      });
+    }
 
     await createPRReview(this.octokit, {
       owner,
@@ -364,7 +379,7 @@ export class ReviewOrchestrator {
    * summary comment (which persists the state — always saved last).
    */
   private async publishSticky(input: {
-    checkRunId: number;
+    checkRunId: number | null;
     prContext: PullRequestContext;
     result: ReviewResult;
     scope: ScopeDecision;
@@ -409,19 +424,21 @@ export class ReviewOrchestrator {
     const conclusion = plan.blocking ? 'failure' : 'success';
 
     // Check run reflects cumulative PR health, not just this run's delta.
-    await completeCheckRun(this.octokit, {
-      owner,
-      repo,
-      checkRunId,
-      conclusion,
-      summary: buildSummary({ ...result, stats: plan.openCounts }),
-      annotations: result.annotations,
-      externalId: JSON.stringify({
-        scope: scope.mode,
-        calls: result.callCount ?? 0,
-        newFindings: plan.newAnnotations.length,
-      }),
-    });
+    if (checkRunId !== null) {
+      await completeCheckRun(this.octokit, {
+        owner,
+        repo,
+        checkRunId,
+        conclusion,
+        summary: buildSummary({ ...result, stats: plan.openCounts }),
+        annotations: result.annotations,
+        externalId: JSON.stringify({
+          scope: scope.mode,
+          calls: result.callCount ?? 0,
+          newFindings: plan.newAnnotations.length,
+        }),
+      });
+    }
 
     // One live blocking review, anchored to the newest commit: always dismiss
     // the old one; re-post below when still failing.

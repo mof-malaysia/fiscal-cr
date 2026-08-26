@@ -111,6 +111,9 @@ async function run(): Promise<void> {
       llm,
       config,
       {
+        // The workflow job is the user-facing check in Action mode; the
+        // orchestrator's check run is reserved for App mode.
+        createCheckRun: false,
         workspaceRoot: process.env.GITHUB_WORKSPACE || process.cwd(),
         telemetry,
         pricingContext: {

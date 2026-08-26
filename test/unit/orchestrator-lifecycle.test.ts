@@ -312,6 +312,19 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(state!.runs.at(-1)!.scope).toBe('full');
   });
 
+  it('Action mode uses the workflow check instead of creating a duplicate', async () => {
+    const octokit = fakeOctokit();
+    const llm = fastPathLLM([]);
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg(), {
+      createCheckRun: false,
+    });
+
+    await orchestrator.reviewPullRequest(params);
+
+    expect(octokit.checks.create).not.toHaveBeenCalled();
+    expect(octokit.checks.update).not.toHaveBeenCalled();
+  });
+
   it('legacy mode: stacked full review, no sticky comment or state involved', async () => {
     const octokit = fakeOctokit();
     const llm = fastPathLLM([FINDING]);
