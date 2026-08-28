@@ -34,13 +34,21 @@ jobs:
       - name: Build Action
         run: pnpm exec ncc build action/index.ts -o action/dist
 
-      - name: Commit and push build
+      - name: Commit build and move tags
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add action/dist/
-          git commit -m "build: release ${{ github.event.release.tag_name }}" || exit 0
-          git push origin HEAD:main
-          # Update the release tag to include the build
-          git tag -f ${{ github.event.release.tag_name }}
-          git push -f origin ${{ github.event.release.tag_name }}
+          # action/dist/ is gitignored, so force-add the freshly built bundle.
+          git add -f action/dist/
+          git commit -m "build: release $TAG"
+          # Move the exact release tag onto the build commit (never touches main).
+          git tag -f "$TAG"
+          git push -f origin "$TAG"
+          # Move the floating major tag (e.g. v1) onto the same build commit.
+          MAJOR=$(echo "$TAG" | grep -oE '^v[0-9]+')
+          if [ -n "$MAJOR" ]; then
+            git tag -f "$MAJOR"
+            git push -f origin "$MAJOR"
+          fi

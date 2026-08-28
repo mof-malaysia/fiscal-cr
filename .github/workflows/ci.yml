@@ -1,35 +1,25 @@
-name: CI
+name: Code Review
 
 on:
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+# Prevent two reviews of the same PR from racing each other's state
+concurrency:
+  group: fiscalcr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  review:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: mof-malaysia/fiscal-cr@v1
         with:
-          ref: ${{ github.event.release.tag_name }}
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Type check
-        run: pnpm exec tsc --noEmit
-
-      - name: Run tests
-        run: pnpm test
-
-      - name: Build Action
-        run: pnpm exec ncc build action/index.ts -o action/dist
+          api_key: ${{ secrets.LLM_API_KEY }}
+          provider: openai
