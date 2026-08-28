@@ -60,5 +60,5 @@ outputs:
     description: 'Estimated API cost in USD'
 
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'action/dist/index.js'
