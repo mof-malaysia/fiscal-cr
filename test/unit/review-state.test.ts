@@ -12,6 +12,7 @@ import {
   replaceStateMarker,
   renderStickyComment,
   saveStickyComment,
+  MAX_STATE_MARKER_BYTES,
   type ReviewState,
 } from '../../src/github/review-state.js';
 import type { ReviewResult } from '../../src/types/review.js';
@@ -78,7 +79,10 @@ describe('state marker', () => {
     const s = state({
       findings: [{ ...state().findings[0], title: 'Message contains --> delimiter text' }],
     });
-    const body = `prefix\n${renderStateMarker(s)}\ntrailer`;
+    const marker = renderStateMarker(s);
+    expect(marker).toContain('--\\u003e delimiter text');
+    expect(marker.slice(0, marker.lastIndexOf(' -->'))).not.toContain('-->');
+    const body = `prefix\n${marker}\ntrailer`;
     expect(parseStateMarker(body)).toEqual(s);
     const replacement = replaceStateMarker(body, state({ lastReviewedSha: 'next-sha' }));
     expect(replacement).toContain('prefix');
@@ -114,6 +118,22 @@ describe('state marker', () => {
       checkRunId: null,
       migratedFromV1: true,
     });
+  });
+
+  it('bounds terminal lifecycle records before rendering the marker', () => {
+    const findings = Array.from({ length: 200 }, (_, index) => ({
+      ...state().findings[0],
+      fingerprint: `${index.toString(16).padStart(16, '0')}`,
+      status: 'fixed' as const,
+      title: `historical finding ${index} ${'x'.repeat(200)}`,
+      transitions: [{ status: 'fixed' as const, at: `2026-01-${(index % 28) + 1}`, source: 'review' as const }],
+    }));
+    const marker = renderStateMarker(state({ findings }));
+    const parsed = parseStateMarker(marker);
+
+    expect(Buffer.byteLength(marker, 'utf8')).toBeLessThanOrEqual(MAX_STATE_MARKER_BYTES);
+    expect(parsed?.v).toBe(2);
+    if (parsed?.v === 2) expect(parsed.findings.length).toBeLessThan(200);
   });
 });
 
@@ -155,6 +175,10 @@ describe('finding lifecycle reconciliation', () => {
       'three',
     );
     expect(reopened.findings[0]).toMatchObject({ status: 'open', severity: 'warning' });
+    expect(reopened.findings[0].transitions.at(-1)).toMatchObject({
+      status: 'open',
+      source: 'review',
+    });
   });
 
   it('keeps absent findings open outside the successful manifest', () => {
@@ -180,6 +204,20 @@ describe('finding lifecycle reconciliation', () => {
       at: 'three',
     });
     expect(duplicate).toEqual(dismissed);
+  });
+
+  it('does not consume an event before its finding matches', () => {
+    const current = reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', 'one');
+    const withThread = firstState(current.findings.map((finding) => ({ ...finding, threadId: 'thread-1' })));
+    const unmatched = applyManualThreadResolution(withThread, {
+      fingerprint: withThread.findings[0].fingerprint,
+      threadId: 'thread-2',
+      eventKey: 'delivery-race',
+      at: 'two',
+    });
+
+    expect(unmatched).toEqual(withThread);
+    expect(unmatched.recentEvents).not.toContain('delivery-race');
   });
 });
 
@@ -212,33 +250,38 @@ describe('renderStickyComment', () => {
   });
 });
 
-describe('loadReviewState / saveStickyComment', () => {
+describe('sticky state persistence', () => {
   it('finds the sticky comment by marker, never by author', async () => {
     const octokit = {
       issues: {
         listComments: vi.fn(async () => ({
           data: [
             { id: 1, body: 'human comment' },
-            { id: 2, body: `bot noise` },
-            { id: 3, body: `summary\n${renderStateMarker(state())}` },
+            { id: 2, body: `user marker\n${renderStateMarker(state())}` },
+            { id: 3, body: `summary\n${renderStateMarker(state())}`, performed_via_github_app: { id: 1 } },
           ],
         })),
       },
     };
     const sticky = await loadReviewState(octokit as never, { owner: 'o', repo: 'r', pullNumber: 1 });
-    expect(sticky).toEqual({ commentId: 3, state: state() });
+    expect(sticky).toEqual({ commentId: 3, state: state(), body: `summary\n${renderStateMarker(state())}` });
+    expect(Object.keys(sticky!)).toContain('body');
   });
 
   it('returns commentId with null state for a corrupt marker (treated as no state)', async () => {
     const octokit = {
       issues: {
         listComments: vi.fn(async () => ({
-          data: [{ id: 5, body: '<!-- fiscalcr:state:v1 {corrupt -->' }],
+          data: [{ id: 5, body: '<!-- fiscalcr:state:v1 {corrupt -->', performed_via_github_app: { id: 1 } }],
         })),
       },
     };
     const sticky = await loadReviewState(octokit as never, { owner: 'o', repo: 'r', pullNumber: 1 });
-    expect(sticky).toEqual({ commentId: 5, state: null });
+    expect(sticky).toEqual({
+      commentId: 5,
+      state: null,
+      body: '<!-- fiscalcr:state:v1 {corrupt -->',
+    });
   });
 
   it('updates in place when a comment id is known', async () => {
@@ -263,7 +306,7 @@ describe('loadReviewState / saveStickyComment', () => {
     const octokit = {
       issues: {
         listComments: vi.fn(async () => ({
-          data: [{ id: 8, body: renderStateMarker(state()) }],
+          data: [{ id: 8, body: renderStateMarker(state()), performed_via_github_app: { id: 1 } }],
         })),
         updateComment: vi.fn(async () => ({})),
         createComment: vi.fn(),

@@ -10,6 +10,7 @@ const LEGACY_MARKER_PREFIX = '<!-- fiscalcr:state:v1 ';
 const MAX_RUN_HISTORY = 20;
 const MAX_TRANSITIONS_PER_FINDING = 8;
 const MAX_TERMINAL_FINDINGS = 100;
+const MAX_VISIBLE_FINDINGS = 100;
 const MAX_RECENT_EVENTS = 50;
 const MAX_AUTO_RESOLVED_THREADS = 50;
 /** Conservative budget for the serialized hidden marker, below GitHub's limit. */
@@ -17,6 +18,7 @@ export const MAX_STATE_MARKER_BYTES = 24_000;
 /** Conservative budget for the complete sticky comment body. */
 export const MAX_STICKY_COMMENT_BYTES = 60_000;
 
+/** Read an HTTP status code from an unknown Octokit error value. */
 function statusOf(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null || !('status' in error)) return undefined;
   const status = error.status;
@@ -96,14 +98,17 @@ export const EMPTY_COUNTS: Record<Severity, number> = {
 const SEVERITIES: Severity[] = ['critical', 'warning', 'suggestion', 'nitpick'];
 const STATUSES: FindingStatus[] = ['open', 'fixed', 'dismissed'];
 
+/** Check whether a value is one of the supported finding severities. */
 function isSeverity(value: unknown): value is Severity {
   return typeof value === 'string' && SEVERITIES.includes(value as Severity);
 }
 
+/** Check whether a value is one of the persisted finding statuses. */
 function isStatus(value: unknown): value is FindingStatus {
   return typeof value === 'string' && STATUSES.includes(value as FindingStatus);
 }
 
+/** Narrow an unknown parsed JSON value to a plain record-like object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -114,6 +119,7 @@ interface MarkerMatch {
   payload: string;
 }
 
+/** Find the first syntactically valid JSON state marker with the given prefix. */
 function findJsonMarker(body: string, prefix: string): MarkerMatch | null {
   let start = body.indexOf(prefix);
   while (start >= 0) {
@@ -132,10 +138,12 @@ function findJsonMarker(body: string, prefix: string): MarkerMatch | null {
   return null;
 }
 
+/** Parse a JSON marker payload, returning null when no valid marker exists. */
 function parseJsonMarker(body: string, prefix: string): unknown | null {
   const match = findJsonMarker(body, prefix);
   return match ? JSON.parse(match.payload) : null;
 }
+/** Validate and normalize one persisted run-history entry. */
 function parseRun(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
   if (
@@ -156,6 +164,7 @@ function parseRun(value: unknown): RunRecord | null {
   };
 }
 
+/** Validate and normalize one persisted finding record. */
 function parseFinding(value: unknown): FindingRecord | null {
   if (!isRecord(value)) return null;
   if (
@@ -274,10 +283,13 @@ export function migrateLegacyState(legacy: LegacyReviewState): ReviewState {
   };
 }
 
+/** Measure the escaped v2 marker payload against its byte budget. */
 function markerBytes(state: ReviewState): number {
-  return Buffer.byteLength(`${STATE_MARKER_PREFIX}${JSON.stringify(state)}${STATE_MARKER_SUFFIX}`, 'utf8');
+  const payload = JSON.stringify(state).replace(/-->/g, '--\\u003e');
+  return Buffer.byteLength(`${STATE_MARKER_PREFIX}${payload}${STATE_MARKER_SUFFIX}`, 'utf8');
 }
 
+/** Remove bounded history and terminal records until the marker fits. */
 function compactState(state: ReviewState): ReviewState {
   const findings = state.findings.map((finding) => ({
     ...finding,
@@ -295,6 +307,13 @@ function compactState(state: ReviewState): ReviewState {
     autoResolvedThreads: state.autoResolvedThreads.slice(-MAX_AUTO_RESOLVED_THREADS),
     runs: state.runs.slice(-MAX_RUN_HISTORY),
   };
+  if (markerBytes(compacted) > MAX_STATE_MARKER_BYTES) {
+    compacted = {
+      ...compacted,
+      findings: compacted.findings.map((finding) => ({ ...finding, transitions: [] })),
+    };
+  }
+  terminal = compacted.findings.filter((finding) => finding.status !== 'open');
   while (markerBytes(compacted) > MAX_STATE_MARKER_BYTES && terminal.length > 0) {
     terminal = terminal.slice(1);
     compacted = { ...compacted, findings: [...active, ...terminal] };
@@ -305,12 +324,19 @@ function compactState(state: ReviewState): ReviewState {
   return compacted;
 }
 
+const SEVERITY_ORDER: Record<Severity, number> = {
+  critical: 0,
+  warning: 1,
+  suggestion: 2,
+  nitpick: 3,
+};
+
+/** Serialize the v1 or compacted v2 lifecycle state inside an HTML comment. */
 export function renderStateMarker(state: ReviewState | LegacyReviewState): string {
-  if (state.v === 1) {
-    return `<!-- fiscalcr:state:v1 ${JSON.stringify(state)} -->`;
-  }
-  const compacted = compactState(state);
-  return `${STATE_MARKER_PREFIX}${JSON.stringify(compacted)}${STATE_MARKER_SUFFIX}`;
+  const serializable = state.v === 2 ? compactState(state) : state;
+  const prefix = serializable.v === 1 ? LEGACY_MARKER_PREFIX : STATE_MARKER_PREFIX;
+  const payload = JSON.stringify(serializable).replace(/-->/g, '--\\u003e');
+  return `${prefix}${payload}${STATE_MARKER_SUFFIX}`;
 }
 
 export interface FindingReconciliation {
@@ -319,14 +345,16 @@ export interface FindingReconciliation {
   fixed: string[];
 }
 
+/** Append a lifecycle transition unless the record already has that status. */
 function transition(
   finding: FindingRecord,
   status: FindingStatus,
   at: string,
   source: FindingTransitionSource,
   event?: string,
+  force = false,
 ): FindingRecord {
-  if (finding.status === status && !event) return finding;
+  if (finding.status === status && !event && !force) return finding;
   return {
     ...finding,
     status,
@@ -368,8 +396,8 @@ export function reconcileFindingInventory(
       lastSeenSha: headSha,
       transitions: old?.transitions ?? [],
     };
-    const reopened = !old || old.status !== 'open';
-    const updated = transition(next, 'open', at, 'review');
+    const reopened = old?.status !== 'open';
+    const updated = transition(next, 'open', at, 'review', undefined, reopened);
     if (reopened) newlyOpen.push(fingerprint);
     const position = index.get(fingerprint);
     if (position === undefined) {
@@ -395,6 +423,7 @@ export function reconcileFindingInventory(
   return { findings, newlyOpen, fixed };
 }
 
+/** Append a run record while retaining only the bounded recent history. */
 export function appendRun(runs: RunRecord[], run: RunRecord): RunRecord[] {
   return [...runs, run].slice(-MAX_RUN_HISTORY);
 }
@@ -412,11 +441,11 @@ export interface StickyComment {
   commentId: number;
   state: ReviewState | null;
   legacyState?: LegacyReviewState;
-  /** Original body is non-enumerable to preserve the small public shape. */
+  /** Original body, preserved as a normal enumerable field. */
   body: string;
 }
 
-/** Find the sticky FiscalCR comment by marker, never by author. */
+/** Find the app-authored sticky FiscalCR comment by marker. */
 export async function loadReviewState(
   octokit: Octokit,
   params: { owner: string; repo: string; pullNumber: number },
@@ -429,15 +458,15 @@ export async function loadReviewState(
       const body = comment.body ?? '';
       const hasV2 = body.includes(STATE_MARKER_PREFIX);
       const hasV1 = body.includes('<!-- fiscalcr:state:v1 ');
-      if (hasV2 || hasV1) {
-        const result: StickyComment = {
+      const appAuthored =
+        'performed_via_github_app' in comment && comment.performed_via_github_app !== null;
+      if ((hasV2 || hasV1) && appAuthored) {
+        return {
           commentId: comment.id,
           state: parseV2StateMarker(body),
           body,
           ...(hasV1 ? { legacyState: parseLegacyStateMarker(body) ?? undefined } : {}),
         };
-        Object.defineProperty(result, 'body', { value: body, enumerable: false });
-        return result;
       }
     }
     if (data.length < 100) return null;
@@ -486,7 +515,7 @@ export interface StickyCommentInput {
   walkthrough?: WalkthroughEntry[];
 }
 
-/** Render active findings only; fixed/dismissed records remain hidden in the marker. */
+/** Render the human-readable sticky summary; fixed and dismissed findings stay hidden. */
 export function renderStickyComment(input: StickyCommentInput): string {
   const { result, state, demoted } = input;
   const walkthrough = input.walkthrough ?? result.walkthrough;
@@ -512,8 +541,16 @@ export function renderStickyComment(input: StickyCommentInput): string {
   lines.push(`### Open findings: ${openTotal}`);
   if (openTotal > 0) {
     lines.push('| Severity | Location | Finding |', '|----------|----------|---------|');
-    for (const finding of active) {
-      lines.push(`| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${finding.title} |`);
+    const visible = [...active]
+      .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
+      .slice(0, MAX_VISIBLE_FINDINGS);
+    for (const finding of visible) {
+      lines.push(
+        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${finding.title.replace(/\|/g, '\\|')} |`,
+      );
+    }
+    if (visible.length < active.length) {
+      lines.push('', `_…${active.length - visible.length} more open finding(s) are included in the counts above._`);
     }
     lines.push('', '| Severity | Open |', '|----------|------|');
     for (const [severity, count] of Object.entries(openCounts)) {
@@ -536,21 +573,23 @@ export function renderStickyComment(input: StickyCommentInput): string {
   return lines.join('\n');
 }
 
+/** Replace an existing v1/v2 marker without disturbing surrounding comment text. */
 export function replaceStateMarker(body: string, state: ReviewState): string {
   const marker = renderStateMarker(state);
-  const existing = findJsonMarker(body, STATE_MARKER_PREFIX);
+  const existing = findJsonMarker(body, STATE_MARKER_PREFIX) ?? findJsonMarker(body, LEGACY_MARKER_PREFIX);
   if (existing) {
     return `${body.slice(0, existing.start)}${marker}${body.slice(existing.end)}`;
   }
   return `${body.trim()}\n\n${marker}`;
 }
 
+/** Apply one matching current-thread resolution as a manual dismissal. */
 export function applyManualThreadResolution(
   state: ReviewState,
   input: { fingerprint: string; threadId: string; eventKey: string; at: string },
 ): ReviewState {
   if (state.recentEvents.includes(input.eventKey)) return state;
-  const recentEvents = [...state.recentEvents, input.eventKey].slice(-MAX_RECENT_EVENTS);
+  let applied = false;
   const findings = state.findings.map((finding) => {
     if (
       finding.fingerprint !== input.fingerprint ||
@@ -560,7 +599,13 @@ export function applyManualThreadResolution(
     ) {
       return finding;
     }
+    applied = true;
     return transition(finding, 'dismissed', input.at, 'manual', input.eventKey);
   });
-  return { ...state, findings, recentEvents };
+  if (!applied) return state;
+  return {
+    ...state,
+    findings,
+    recentEvents: [...state.recentEvents, input.eventKey].slice(-MAX_RECENT_EVENTS),
+  };
 }
