@@ -1,6 +1,13 @@
 import type { Octokit } from '@octokit/rest';
 import type { Webhooks } from '@octokit/webhooks';
-import { applyManualThreadResolution, loadReviewState, replaceStateMarker, saveStickyComment } from './review-state.js';
+import {
+  applyManualThreadResolution,
+  loadReviewState,
+  migrateLegacyState,
+  replaceStateMarker,
+  saveStickyComment,
+  type FindingRecord,
+} from './review-state.js';
 import { listFiscalcrThreads } from './threads.js';
 import { ReviewOrchestrator } from '../review/orchestrator.js';
 import { loadConfig } from '../config/loader.js';
@@ -20,6 +27,7 @@ interface AppContext {
 type FiscalCRCommand = 'review' | 'help' | 'unknown';
 
 
+/** Register App-mode review, command, and review-thread lifecycle handlers. */
 export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
   // Auto-review on PR opened, new commits pushed, reopened, or marked ready
   webhooks.on(
@@ -193,7 +201,7 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
         repo: event.repository.name,
         pullNumber: event.pull_request.number,
         headSha: event.pull_request.head.sha,
-        threadId: event.review_thread?.node_id ?? event.review_thread?.id,
+        threadId: event.thread.node_id ?? event.thread.id,
         action: event.action,
         eventId: id,
       });
@@ -206,9 +214,12 @@ interface ThreadWebhookPayload {
   installation?: { id?: number };
   repository: { owner: { login: string }; name: string };
   pull_request: { number: number; head: { sha: string } };
-  review_thread?: { id?: string | number; node_id?: string };
+  thread: { id?: string | number; node_id?: string };
 }
 
+const threadEventLocks = new Map<string, Promise<void>>();
+
+/** Apply one resolved-thread delivery while serializing updates per pull request. */
 export async function handleFiscalcrThreadEvent(
   octokit: Octokit,
   input: {
@@ -224,39 +235,74 @@ export async function handleFiscalcrThreadEvent(
   if (!input.threadId || input.action === 'unresolved') return;
   const threadId = String(input.threadId);
   const eventKey = input.eventId ?? `${input.action}:${threadId}:${input.headSha}`;
+  const lockKey = `${input.owner}/${input.repo}#${input.pullNumber}`;
+  const previous = threadEventLocks.get(lockKey) ?? Promise.resolve();
+  const current = previous
+    .catch(() => undefined)
+    .then(async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const sticky = await loadReviewState(octokit, input);
+        const state = sticky?.state ?? (sticky?.legacyState ? migrateLegacyState(sticky.legacyState) : null);
+        if (!sticky || !state) return;
+        if (state.recentEvents.includes(eventKey)) return;
+        if (state.autoResolvedThreads.includes(threadId)) return;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const sticky = await loadReviewState(octokit, input);
-    const state = sticky?.state;
-    if (!sticky || !state) return;
-    if (state.recentEvents.includes(eventKey)) return;
-    if (state.autoResolvedThreads.includes(threadId)) return;
+        const threads = await listFiscalcrThreads(octokit, input);
+        const thread = threads.find((candidate) => candidate.id === threadId);
+        if (!thread || !thread.isResolved) return;
 
-    const threads = await listFiscalcrThreads(octokit, input);
-    const thread = threads.find((candidate) => candidate.id === threadId);
-    if (!thread || !thread.isResolved) return;
-    const updated = applyManualThreadResolution(state, {
-      fingerprint: thread.fingerprint,
-      threadId,
-      eventKey,
-      at: new Date().toISOString(),
+        let stateForResolution = state;
+        if (!stateForResolution.findings.some((finding) => finding.fingerprint === thread.fingerprint)) {
+          const migratedFinding: FindingRecord = {
+            fingerprint: thread.fingerprint,
+            status: 'open',
+            severity: thread.severity ?? 'suggestion',
+            path: thread.path,
+            startLine: 0,
+            endLine: 0,
+            title: '',
+            threadId,
+            lastSeenSha: input.headSha,
+            transitions: [],
+          };
+          stateForResolution = {
+            ...stateForResolution,
+            findings: [...stateForResolution.findings, migratedFinding],
+          };
+        }
+        const updated = applyManualThreadResolution(stateForResolution, {
+          fingerprint: thread.fingerprint,
+          threadId,
+          eventKey,
+          at: new Date().toISOString(),
+        });
+        if (updated === stateForResolution) return;
+        try {
+          await saveStickyComment(octokit, {
+            owner: input.owner,
+            repo: input.repo,
+            pullNumber: input.pullNumber,
+            commentId: sticky.commentId,
+            body: replaceStateMarker(sticky.body, updated),
+          });
+          return;
+        } catch (err) {
+          if (attempt === 1) throw err;
+          logger.warn({ err, threadId }, 'Thread event state save failed — rereading and retrying');
+        }
+      }
     });
-    try {
-      await saveStickyComment(octokit, {
-        owner: input.owner,
-        repo: input.repo,
-        pullNumber: input.pullNumber,
-        commentId: sticky.commentId,
-        body: replaceStateMarker(sticky.body, updated),
-      });
-      return;
-    } catch (err) {
-      if (attempt === 1) throw err;
-      logger.warn({ err, threadId }, 'Thread event state save failed — rereading and retrying');
-    }
+  threadEventLocks.set(lockKey, current);
+  try {
+    await current;
+  } finally {
+    if (threadEventLocks.get(lockKey) === current) threadEventLocks.delete(lockKey);
   }
 }
 
+
+
+/** Parse a supported FiscalCR command from an issue-comment body. */
 function parseFiscalCRCommand(body: string): FiscalCRCommand {
   const match = body.match(/(?:^|\s)@fiscalcr(?:\s+(\w+))?(?=$|\s|[.,!?:;])/i);
   if (!match) return 'unknown';

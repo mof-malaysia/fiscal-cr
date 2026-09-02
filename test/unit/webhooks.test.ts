@@ -70,7 +70,23 @@ describe('App review-request webhook', () => {
       }),
     );
   });
+
+  it('registers resolved and unresolved review-thread events', () => {
+    const webhooks = { on: vi.fn() };
+    registerWebhooks(webhooks as never, {
+      apiKey: 'test-key',
+      provider: 'anthropic',
+      getInstallationOctokit: vi.fn().mockResolvedValue({}),
+    });
+
+    const events = webhooks.on.mock.calls.map(([event]) => event);
+    expect(events).toContainEqual([
+      'pull_request_review_thread.resolved',
+      'pull_request_review_thread.unresolved',
+    ]);
+  });
 });
+
 
 describe('FiscalCR review-thread lifecycle webhook', () => {
   it('dismisses an open current FiscalCR thread once and ignores unresolved events', async () => {
@@ -124,7 +140,9 @@ describe('FiscalCR review-thread lifecycle webhook', () => {
     });
     const octokit = {
       issues: {
-        listComments: vi.fn(async () => ({ data: [{ id: 3, body }] })),
+        listComments: vi.fn(async () => ({
+          data: [{ id: 3, body, performed_via_github_app: { id: 1 } }],
+        })),
         updateComment,
         createComment: vi.fn(),
       },
@@ -146,5 +164,150 @@ describe('FiscalCR review-thread lifecycle webhook', () => {
     expect(updateComment).toHaveBeenCalledTimes(1);
     await handleFiscalcrThreadEvent(octokit as never, input);
     expect(updateComment).toHaveBeenCalledTimes(1);
+  });
+
+  it('migrates a v1 marker when a resolved thread arrives before the next review', async () => {
+    const legacy = {
+      v: 1 as const,
+      lastReviewedSha: 'old',
+      baseSha: 'base',
+      blockingReviewId: null,
+      postedFingerprints: ['bbbbbbbbbbbbbbbb'],
+      openCounts: { critical: 0, warning: 0, suggestion: 1, nitpick: 0 },
+      runs: [],
+    };
+    let body = `summary\n${renderStateMarker(legacy)}`;
+    const updateComment = vi.fn(async ({ body: nextBody }: { body: string }) => {
+      body = nextBody;
+    });
+    const octokit = {
+      issues: {
+        listComments: vi.fn(async () => ({
+          data: [{ id: 3, body, performed_via_github_app: { id: 1 } }],
+        })),
+        updateComment,
+      },
+      graphql: vi.fn(async (query: string) => {
+        if (!query.includes('reviewThreads')) return {};
+        return {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [{
+                  id: 'thread-legacy',
+                  isResolved: true,
+                  isOutdated: false,
+                  path: 'src/legacy.ts',
+                  comments: { nodes: [{ body: `**[suggestion]** old\n${fingerprintMarker('bbbbbbbbbbbbbbbb')}` }] },
+                }],
+              },
+            },
+          },
+        };
+      }),
+    };
+
+    await handleFiscalcrThreadEvent(octokit as never, {
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      headSha: 'new',
+      threadId: 'thread-legacy',
+      action: 'resolved',
+      eventId: 'delivery-legacy',
+    });
+
+    const migrated = parseStateMarker(body);
+    expect(migrated?.v).toBe(2);
+    if (migrated?.v === 2) {
+      expect(migrated.migratedFromV1).toBe(true);
+      expect(migrated.findings[0]).toMatchObject({
+        fingerprint: 'bbbbbbbbbbbbbbbb',
+        status: 'dismissed',
+        threadId: 'thread-legacy',
+      });
+    }
+    expect(updateComment).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes concurrent resolutions for the same pull request', async () => {
+    const finding = (fingerprint: string, threadId: string) => ({
+      fingerprint,
+      status: 'open' as const,
+      severity: 'warning' as const,
+      path: `src/${threadId}.ts`,
+      startLine: 1,
+      endLine: 1,
+      title: threadId,
+      threadId,
+      lastSeenSha: 'old',
+      transitions: [{ status: 'open' as const, at: 'one', source: 'review' as const }],
+    });
+    const state: ReviewState = {
+      v: 2,
+      lastReviewedSha: 'old',
+      baseSha: 'base',
+      blockingReviewId: null,
+      findings: [
+        finding('cccccccccccccccc', 'thread-1'),
+        finding('dddddddddddddddd', 'thread-2'),
+      ],
+      recentEvents: [],
+      autoResolvedThreads: [],
+      checkRunId: null,
+      checkRunHeadSha: null,
+      runs: [],
+    };
+    let body = `summary\n${renderStateMarker(state)}`;
+    const updateComment = vi.fn(async ({ body: nextBody }: { body: string }) => {
+      body = nextBody;
+    });
+    const octokit = {
+      issues: {
+        listComments: vi.fn(async () => ({
+          data: [{ id: 3, body, performed_via_github_app: { id: 1 } }],
+        })),
+        updateComment,
+      },
+      graphql: vi.fn(async (query: string) => {
+        if (!query.includes('reviewThreads')) return {};
+        return {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [
+                  ['thread-1', 'cccccccccccccccc'],
+                  ['thread-2', 'dddddddddddddddd'],
+                ].map(([id, fingerprint]) => ({
+                  id,
+                  isResolved: true,
+                  isOutdated: false,
+                  path: `src/${id}.ts`,
+                  comments: { nodes: [{ body: `**[warning]** issue\n${fingerprintMarker(fingerprint)}` }] },
+                })),
+              },
+            },
+          },
+        };
+      }),
+    };
+
+    await Promise.all([
+      handleFiscalcrThreadEvent(octokit as never, {
+        owner: 'o', repo: 'r', pullNumber: 1, headSha: 'new',
+        threadId: 'thread-1', action: 'resolved', eventId: 'delivery-1',
+      }),
+      handleFiscalcrThreadEvent(octokit as never, {
+        owner: 'o', repo: 'r', pullNumber: 1, headSha: 'new',
+        threadId: 'thread-2', action: 'resolved', eventId: 'delivery-2',
+      }),
+    ]);
+
+    const finalState = parseStateMarker(body);
+    expect(finalState?.v).toBe(2);
+    if (finalState?.v === 2) expect(finalState.findings.every((finding) => finding.status === 'dismissed')).toBe(true);
+    expect(updateComment).toHaveBeenCalledTimes(2);
   });
 });
