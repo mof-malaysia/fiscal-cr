@@ -31,7 +31,12 @@ export interface WalkthroughEntry {
 export interface ReviewResult {
   summary: string;
   score: number; // 0-100
+  /** Complete, validated findings inventory used for lifecycle reconciliation. */
+  findings: ReviewAnnotation[];
+  /** Findings eligible for publication after annotation caps. */
   annotations: ReviewAnnotation[];
+  /** Paths whose detector execution completed successfully for this result. */
+  reviewedPaths: string[];
   stats: Record<Severity, number>;
   tokensUsed: {
     input: number;

@@ -27,12 +27,26 @@ const FP = fingerprintAnnotation(FINDING);
 
 function priorState(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
-    v: 1,
+    v: 2,
     lastReviewedSha: 'old-sha',
     baseSha: 'base-sha',
     blockingReviewId: 7,
-    postedFingerprints: [FP],
-    openCounts: { ...EMPTY_COUNTS, critical: 1 },
+    findings: [{
+      fingerprint: FP,
+      status: 'open',
+      severity: 'critical',
+      path: FINDING.path,
+      startLine: FINDING.startLine,
+      endLine: FINDING.endLine,
+      title: FINDING.title,
+      threadId: 't1',
+      lastSeenSha: 'old-sha',
+      transitions: [{ status: 'open', at: '2026-01-01', source: 'review' }],
+    }],
+    recentEvents: [],
+    autoResolvedThreads: [],
+    checkRunId: null,
+    checkRunHeadSha: null,
     runs: [],
     ...overrides,
   };
@@ -188,9 +202,12 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
       lastReviewedSha: 'new-sha',
       baseSha: 'base-sha',
       blockingReviewId: 11,
-      postedFingerprints: [FP],
-      openCounts: { ...EMPTY_COUNTS, critical: 1 },
     });
+    expect(state!.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ fingerprint: FP, status: 'open', severity: 'critical' }),
+      ]),
+    );
     expect(state!.runs).toHaveLength(1);
     expect(state!.runs[0].scope).toBe('full');
 
@@ -233,7 +250,7 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     );
     const state = savedState(octokit);
     expect(state!.blockingReviewId).toBe(11);
-    expect(state!.openCounts.critical).toBe(1);
+    expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('open');
     expect(state!.runs.at(-1)!.scope).toBe('delta');
     expect(result.stats.critical).toBe(1);
 
@@ -271,14 +288,21 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     const check = octokit.checks.update.mock.calls.at(-1)?.[0] as { conclusion: string };
     expect(check.conclusion).toBe('success');
     const state = savedState(octokit);
-    expect(state!.openCounts.critical).toBe(0);
+    expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
     expect(state!.blockingReviewId).toBeNull();
     expect(result.stats.critical).toBe(0);
   });
 
   it('skip run: no LLM calls, conclusion carried from open counts', async () => {
+    const baseFinding = priorState().findings[0];
     const octokit = fakeOctokit({
-      stickyState: priorState({ lastReviewedSha: 'new-sha', openCounts: { ...EMPTY_COUNTS, critical: 2 } }),
+      stickyState: priorState({
+        lastReviewedSha: 'new-sha',
+        findings: [
+          { ...baseFinding, fingerprint: 'fp-one' },
+          { ...baseFinding, fingerprint: 'fp-two' },
+        ],
+      }),
     });
     const llm = fastPathLLM([]);
     const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg());
@@ -287,7 +311,7 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
 
     expect(llm.chatCompletion).not.toHaveBeenCalled();
     expect(octokit.pulls.createReview).not.toHaveBeenCalled();
-    expect(octokit.issues.updateComment).not.toHaveBeenCalled();
+    expect(octokit.issues.updateComment).toHaveBeenCalled();
     const check = octokit.checks.update.mock.calls.at(-1)?.[0] as { conclusion: string };
     expect(check.conclusion).toBe('failure');
     expect(result.stats.critical).toBe(2);
@@ -311,6 +335,23 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     const state = savedState(octokit);
     expect(state!.runs.at(-1)!.scope).toBe('full');
   });
+  it('reuses a persisted check only when its head still matches', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState({
+        lastReviewedSha: 'new-sha',
+        checkRunId: 42,
+        checkRunHeadSha: 'new-sha',
+      }),
+    });
+    octokit.checks.get = vi.fn(async () => ({ data: { head_sha: 'new-sha' } }));
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg());
+
+    await orchestrator.reviewPullRequest({ ...params, forceFull: true });
+
+    expect(octokit.checks.create).not.toHaveBeenCalled();
+    expect(octokit.checks.update.mock.calls[0][0].check_run_id).toBe(42);
+  });
+
 
   it('Action mode uses the workflow check instead of creating a duplicate', async () => {
     const octokit = fakeOctokit();

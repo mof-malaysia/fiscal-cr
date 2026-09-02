@@ -46,7 +46,7 @@ App env vars (`src/index.ts`, `.env.example`): `API_KEY` (or `FISCALCR_API_KEY`)
 | `action/` | Action entry + generated `action/dist/` (committed) |
 | `test/` | Vitest unit tests (`test/unit/*.test.ts`) + fixture repo (`test/fixtures/fake-repo/`) |
 | `.github/workflows/` | `ci.yml` (PR: tsc, tests, ncc build), `release.yml` (rebuild + commit `action/dist/` + retag) |
-| Root files | `action.yml` (published Action manifest), `README.md`, `package.json`, `tsconfig.json`, `vitest.config.ts`, `.env.example` |
+| Root files | `action.yml`, `README.md`, `package.json`, `tsconfig.json`, `vitest.config.ts`, `.env.example` |
 
 ## Task-to-path routing
 
@@ -127,11 +127,11 @@ reviewPullRequest(owner, repo, pullNumber, headSha, forceFull?)
         → Pass 3 synthesize()              // 1 LLM call when >1 group; fallbacks otherwise
  6. publish:
       legacy mode → createPRReview()       // stacked full review per run
-      sticky mode  → dedupe vs postedFingerprints
-                   → resolveOutdatedThreads()
-                   → completeCheckRun()    // conclusion from cumulative openCounts
+      sticky mode  → reconcile lifecycle inventory + reviewed-path manifest
+                   → resolve current/outdated FiscalCR threads
+                   → completeCheckRun()    // conclusion from derived open records
                    → dismissBlockingReview() → createIncrementalReview()
-                   → saveStickyComment()   // state saved LAST
+                   → saveStickyComment()   // bounded v2 state saved LAST
 ```
 
 ## Configuration, providers, GitHub-state integrations
@@ -144,7 +144,10 @@ Models resolve per pipeline stage via `modelForRole` (`schema.ts` + `model-prese
 
 Providers: one OpenAI-compatible adapter (`src/providers/openai-compatible.ts`) plus a native Anthropic Messages adapter (`src/providers/anthropic.ts`), selected by `src/providers/factory.ts`, wrapped in retry/backoff by `src/providers/resilient.ts`. `kimi` is a preset with a built-in base URL; `openai-compatible` requires an explicit `base_url`.
 
-GitHub state is persisted in a hidden marker inside one sticky summary comment per PR — no external storage, identical in both modes. Findings are fingerprinted (`src/github/fingerprint.ts`) so the same issue is never posted twice, even across full re-reviews or after a human deletes a bot comment.
+GitHub state is persisted in a bounded hidden v2 marker inside one sticky
+summary comment per PR — no external storage, identical in both modes. Findings
+are fingerprinted (`src/github/fingerprint.ts`) as stable identities; lifecycle
+records reconcile open/fixed/dismissed status from successful reviewed scopes.
 
 ## Testing map
 
@@ -164,7 +167,7 @@ Vitest (`test/unit/*.test.ts`, globals enabled, node env). Fixture repo: `test/f
 | Related context | `related-context.test.ts` | import spec extraction, resolution, budget |
 | Comments | `comments.test.ts` | `partitionPlaceable`, incremental review, blocking dismiss, legacy review |
 | Fingerprints | `fingerprint.test.ts` | normalization, stability, markers |
-| Sticky state | `review-state.test.ts` | marker roundtrip, FIFO caps, load/save lifecycle |
+| Sticky state | `review-state.test.ts` | v2 marker roundtrip, lifecycle transitions, migration, caps, load/save lifecycle |
 | Threads | `threads.test.ts` | listing, outdated resolution, degradation |
 | Providers | `provider-factory.test.ts`, `openai-compatible-provider.test.ts`, `anthropic-provider.test.ts`, `resilient-provider.test.ts` | factory validation, adapter HTTP, retry/backoff |
 | Config | `config-loader.test.ts` | load, missing→defaults, invalid/errors, `modelPreset`/`modelPresets` resolution + validation (stage routing: `fast-path`/`orchestrator-pipeline`/`pass3-synthesis` tests) |

@@ -19,6 +19,7 @@ interface ThreadsQueryResponse {
         nodes: Array<{
           id: string;
           isResolved: boolean;
+          isOutdated?: boolean;
           path: string | null;
           comments: { nodes: Array<{ body: string | null }> };
         }>;
@@ -36,6 +37,7 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
         nodes {
           id
           isResolved
+          isOutdated
           path
           comments(first: 1) { nodes { body } }
         }
@@ -53,7 +55,9 @@ const SEVERITY_RE = /\*\*\[(critical|warning|suggestion|nitpick)\]\*\*/;
 export async function listFiscalcrThreads(
   octokit: Octokit,
   params: { owner: string; repo: string; pullNumber: number },
+  options: { includeOutdated?: boolean } = {},
 ): Promise<FiscalcrThread[]> {
+  const includeOutdated = options.includeOutdated ?? false;
   const threads: FiscalcrThread[] = [];
   let cursor: string | null = null;
 
@@ -66,6 +70,7 @@ export async function listFiscalcrThreads(
     });
     const page = response.repository.pullRequest.reviewThreads;
     for (const node of page.nodes) {
+      if (node.isOutdated && !includeOutdated) continue;
       const body = node.comments.nodes[0]?.body ?? '';
       const fingerprint = extractFingerprint(body);
       if (!fingerprint) continue;
@@ -85,9 +90,11 @@ export async function listFiscalcrThreads(
 
 /**
  * Resolve unresolved FiscalCR threads whose file changed in this run but whose
- * finding did not recur. Returns the threads actually resolved so the caller
- * can adjust its open-finding counts. All failures (403 on default tokens,
- * merged PRs, …) degrade to logging — never fail the review over cleanup.
+ * finding did not recur. This path intentionally includes outdated threads;
+ * manual webhook handling uses the default current-thread view. Returns the
+ * threads actually resolved so the caller can mark them fixed. All failures
+ * (403 on default tokens, merged PRs, …) degrade to logging — never fail the
+ * review over cleanup.
  */
 export async function resolveOutdatedThreads(
   octokit: Octokit,
@@ -104,7 +111,7 @@ export async function resolveOutdatedThreads(
 ): Promise<FiscalcrThread[]> {
   let threads: FiscalcrThread[];
   try {
-    threads = await listFiscalcrThreads(octokit, params);
+    threads = await listFiscalcrThreads(octokit, params, { includeOutdated: true });
   } catch (err) {
     logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
     return [];

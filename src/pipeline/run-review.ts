@@ -89,11 +89,21 @@ export async function runReviewPipeline(
     throw new ReviewError('All review groups failed', 'review-pass');
   }
 
-  // Pass 3: deterministic validation + LLM synthesis
+  // Lifecycle reconciliation needs every validated finding, not only the
+  // bounded set that can be published as annotations.
   const findings = validateAndRankFindings(
     outcomes.flatMap((o) => o.findings),
     ctx.changedFiles,
     config,
+    { capAnnotations: false },
   );
-  return synthesize(llm, { ctx, intent, outcomes, findings }, config, usage);
+  const reviewedPaths = outcomes
+    .filter((outcome) => !outcome.failed)
+    .flatMap((outcome) => outcome.group.files.map((file) => file.filename));
+  return synthesize(
+    llm,
+    { ctx, intent, outcomes, findings, reviewedPaths: [...new Set(reviewedPaths)] },
+    config,
+    usage,
+  );
 }

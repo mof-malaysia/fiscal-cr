@@ -1,12 +1,13 @@
 import type { Octokit } from '@octokit/rest';
 import type { Webhooks } from '@octokit/webhooks';
+import { applyManualThreadResolution, loadReviewState, replaceStateMarker, saveStickyComment } from './review-state.js';
+import { listFiscalcrThreads } from './threads.js';
 import { ReviewOrchestrator } from '../review/orchestrator.js';
 import { loadConfig } from '../config/loader.js';
 import { modelForRole } from '../config/schema.js';
 import { applyModelOverride, applyProviderOverride } from '../config/overrides.js';
 import { createLLMProvider } from '../providers/factory.js';
 import { logger } from '../utils/logger.js';
-
 interface AppContext {
   apiKey: string;
   provider?: string;
@@ -178,6 +179,82 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     });
     await orchestrator.reviewPullRequest({ owner, repo, pullNumber, headSha });
   });
+  webhooks.on(
+    ['pull_request_review_thread.resolved', 'pull_request_review_thread.unresolved'] as unknown as Parameters<
+      Webhooks['on']
+    >[0],
+    async ({ payload, id }) => {
+      const event = payload as unknown as ThreadWebhookPayload;
+      const installationId = event.installation?.id;
+      if (!installationId) return;
+      const octokit = await appCtx.getInstallationOctokit(installationId);
+      await handleFiscalcrThreadEvent(octokit, {
+        owner: event.repository.owner.login,
+        repo: event.repository.name,
+        pullNumber: event.pull_request.number,
+        headSha: event.pull_request.head.sha,
+        threadId: event.review_thread?.node_id ?? event.review_thread?.id,
+        action: event.action,
+        eventId: id,
+      });
+    },
+  );
+}
+
+interface ThreadWebhookPayload {
+  action: 'resolved' | 'unresolved';
+  installation?: { id?: number };
+  repository: { owner: { login: string }; name: string };
+  pull_request: { number: number; head: { sha: string } };
+  review_thread?: { id?: string | number; node_id?: string };
+}
+
+export async function handleFiscalcrThreadEvent(
+  octokit: Octokit,
+  input: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    headSha: string;
+    threadId?: string | number;
+    action: 'resolved' | 'unresolved';
+    eventId?: string;
+  },
+): Promise<void> {
+  if (!input.threadId || input.action === 'unresolved') return;
+  const threadId = String(input.threadId);
+  const eventKey = input.eventId ?? `${input.action}:${threadId}:${input.headSha}`;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const sticky = await loadReviewState(octokit, input);
+    const state = sticky?.state;
+    if (!sticky || !state) return;
+    if (state.recentEvents.includes(eventKey)) return;
+    if (state.autoResolvedThreads.includes(threadId)) return;
+
+    const threads = await listFiscalcrThreads(octokit, input);
+    const thread = threads.find((candidate) => candidate.id === threadId);
+    if (!thread || !thread.isResolved) return;
+    const updated = applyManualThreadResolution(state, {
+      fingerprint: thread.fingerprint,
+      threadId,
+      eventKey,
+      at: new Date().toISOString(),
+    });
+    try {
+      await saveStickyComment(octokit, {
+        owner: input.owner,
+        repo: input.repo,
+        pullNumber: input.pullNumber,
+        commentId: sticky.commentId,
+        body: replaceStateMarker(sticky.body, updated),
+      });
+      return;
+    } catch (err) {
+      if (attempt === 1) throw err;
+      logger.warn({ err, threadId }, 'Thread event state save failed — rereading and retrying');
+    }
+  }
 }
 
 function parseFiscalCRCommand(body: string): FiscalCRCommand {

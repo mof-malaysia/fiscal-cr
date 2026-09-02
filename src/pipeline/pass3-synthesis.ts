@@ -262,6 +262,7 @@ export function validateAndRankFindings(
   findings: ReviewAnnotation[],
   changedFiles: ChangedFile[],
   config: ReviewConfig,
+  options: { capAnnotations?: boolean } = {},
 ): ReviewAnnotation[] {
   const patches = new Map(changedFiles.map((f) => [f.filename, f.patch]));
 
@@ -305,13 +306,12 @@ export function validateAndRankFindings(
     );
     if (!duplicate) deduped.push(finding);
   }
-
-  // 4. Severity floor + cap (list is already ranked best-first)
+  // 4. Severity floor + optional publication cap (list is already ranked best-first)
   const minIdx = severityRank(config.review.minSeverity);
-  return deduped
+  const retained = deduped
     .filter((f) => severityRank(f.severity) <= minIdx)
-    .slice(0, config.review.maxAnnotations)
     .map((f) => ({ ...f, body: simplifyFindingBody(f.body) }));
+  return options.capAnnotations === false ? retained : retained.slice(0, config.review.maxAnnotations);
 }
 
 export interface SynthesisInput {
@@ -320,6 +320,8 @@ export interface SynthesisInput {
   outcomes: GroupReviewOutcome[];
   /** Findings that already passed validateAndRankFindings. */
   findings: ReviewAnnotation[];
+  /** Paths covered by successful review groups only. */
+  reviewedPaths: string[];
 }
 
 /**
@@ -333,7 +335,7 @@ export async function synthesize(
   config: ReviewConfig,
   usage: UsageTracker,
 ): Promise<ReviewResult> {
-  const { ctx, intent, outcomes, findings } = input;
+  const { ctx, intent, outcomes, findings, reviewedPaths } = input;
 
   const failedGroups = outcomes.filter((o) => o.failed);
   const failedGroupNote =
@@ -452,7 +454,9 @@ export async function synthesize(
   return {
     summary,
     score: score ?? deterministicScore(stats),
-    annotations,
+    findings: annotations,
+    annotations: annotations.slice(0, config.review.maxAnnotations),
+    reviewedPaths,
     stats,
     tokensUsed: usage.total(),
     walkthrough,

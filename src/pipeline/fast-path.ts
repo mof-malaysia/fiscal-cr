@@ -80,7 +80,9 @@ export async function runFastPath(
     );
   }
 
-  const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config);
+  const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config, {
+    capAnnotations: false,
+  });
   const stats = countBySeverity(annotations);
   usage.emit({
     type: 'stage_result',
@@ -99,7 +101,9 @@ export async function runFastPath(
       ? formatSummaryProse(parsed.summary || 'Automated review completed.')
       : formatSummaryLines(parsed.summary || 'Automated review completed.'),
     score: parsed.score ?? deterministicScore(stats),
-    annotations,
+    findings: annotations,
+    annotations: annotations.slice(0, config.review.maxAnnotations),
+    reviewedPaths: ctx.changedFiles.map((file) => file.filename),
     stats,
     tokensUsed: usage.total(),
     walkthrough: parsed.walkthrough,
