@@ -5,6 +5,7 @@
  * The position is the line number in the diff (starting from 1), counting only lines
  * that are visible in the diff view (hunk headers, context lines, additions, deletions).
  */
+import type { ReviewedRange } from '../types/review.js';
 
 interface DiffHunk {
   oldStart: number;
@@ -116,6 +117,21 @@ export function commentableLines(patch: string): Set<number> {
     }
   }
   return lines;
+}
+
+/** Coalesce sorted commentable source lines into compact lifecycle ranges. */
+export function commentableRanges(path: string, patch: string): ReviewedRange[] {
+  const lines = [...commentableLines(patch)].sort((a, b) => a - b);
+  const ranges: ReviewedRange[] = [];
+  for (const line of lines) {
+    const previous = ranges.at(-1);
+    if (previous && previous.endLine + 1 === line) {
+      previous.endLine = line;
+    } else {
+      ranges.push({ path, startLine: line, endLine: line });
+    }
+  }
+  return ranges;
 }
 
 export function lineToDiffPosition(

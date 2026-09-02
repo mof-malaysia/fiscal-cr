@@ -179,10 +179,13 @@ for API calls.
 | ------------------------------------------ | --------------------------- |
 | `pull_request.opened`                      | PR created                  |
 | `pull_request.synchronize`                 | New commits pushed          |
+| `pull_request.reopened`                    | PR reopened                 |
+| `pull_request.ready_for_review`            | Draft PR marked ready       |
 | `pull_request.review_requested`            | Review requested            |
-| `pull_request_review_thread.resolved`      | FiscalCR thread resolved    |
-| `pull_request_review_thread.unresolved`    | FiscalCR thread reopened    |
+| `pull_request_review_thread.resolved`      | Thread marked resolved      |
+| `pull_request_review_thread.unresolved`    | Thread reopened             |
 | `issue_comment.created`                    | `@fiscalcr` command comment |
+
 ## Configuration
 
 Create `.fiscalcr-review.yml` in your repository root:
@@ -399,8 +402,9 @@ is used in Action and App mode.
   automatically when permissions allow.
 - Human resolution of a current FiscalCR thread marks an open, thread-backed
   finding `dismissed`. Threadless and demoted findings cannot be dismissed.
-  Unresolved-thread events have no immediate lifecycle effect; the next review
-  decides. Action mode has no immediate manual-resolution path.
+- An `unresolved` event reopens a matching dismissed finding after validating
+  the current FiscalCR thread identity. Action mode has no manual-resolution
+  webhook path.
 - The summary renders active findings only. Transition history, terminal
   records, recent event identities, and run display history are bounded.
   Terminal records are evicted oldest-first when needed; active state is never

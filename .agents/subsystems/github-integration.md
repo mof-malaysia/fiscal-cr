@@ -15,7 +15,7 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 | `pull_request.opened` / `synchronize` / `reopened` / `ready_for_review` | Auto-review, gated by `review.auto.{enabled,drafts,onOpen,onPush}` (reopened/ready follow `onOpen`) |
 | `issue_comment.created` | `parseFiscalCRCommand` matches `@fiscalcr [review|help]`. `review` → full re-review (`forceFull: true`); `help` → posts command table. Bare `@fiscalcr` defaults to `review`. Non-PR issue comments are ignored |
 | `pull_request.review_requested` | Gated by `review.auto.onReviewRequest` |
-| `pull_request_review_thread.resolved` / `unresolved` | Resolve matching FiscalCR threads to `dismissed`; unresolved events wait for the next review |
+| `pull_request_review_thread.resolved` / `unresolved` | Resolve matching FiscalCR threads to `dismissed`; unresolved events reopen matching dismissed findings |
 
 Each handler: resolve installation Octokit → `loadConfig` → `createLLMProvider` (env overrides config) → `new ReviewOrchestrator(octokit, llm, config)` → `reviewPullRequest`.
 
@@ -53,12 +53,15 @@ location, thread identity, and bounded transitions. Open counts are derived
 from current open records; `postedFingerprints` and aggregate counter deltas
 are not lifecycle state.
 
-- `loadReviewState` scans comment pages for app-authored markers; user-authored markers are ignored. v1 is detected separately for lazy migration.
+- `loadReviewState` scans comment pages for app-authored markers and accepts
+  legacy `github-actions[bot]` markers; ordinary user-authored markers are ignored.
 - v1 migration forces the next review full and is explicitly lossy: old
   fixed/dismissed history is not fabricated. A failed migration save leaves v1
   intact.
-- Reviews reconcile a complete finding inventory against an explicit successful
-  reviewed-path manifest. Failed detector groups cannot fix findings.
+Reviews reconcile a complete finding inventory against an explicit successful
+reviewed-scope manifest. Full reviews use paths; delta reviews use commentable
+line ranges, so an unrelated finding in the same file is not marked fixed.
+Failed detector groups cannot fix findings.
 - Active records render in the summary; fixed/dismissed records stay hidden.
   Transition history, terminal records, recent event identities, and run
   metadata are bounded. Old terminal records are evicted to fit a conservative
@@ -89,8 +92,8 @@ their existing `fiscalcr:fp:v1` marker.
 findings are automatically resolved when enabled. Manual resolution is handled
 by the App's `pull_request_review_thread.resolved` webhook only when the current
 thread and record identity match; only an open thread-backed record can become
-dismissed. Unresolved events have no immediate lifecycle effect. Automatic
-resolution remains `fixed`, never `dismissed`.
+dismissed. An `unresolved` event reopens only a matching dismissed record.
+Automatic resolution remains `fixed`, never `dismissed`.
 
 ## Checks (`checks.ts`)
 
@@ -109,11 +112,10 @@ webhook / action inputs
       → reconcile records → resolve fixed threads → complete check
       → dismiss/repost blocking review → post newly-open inline findings
       → update sticky marker LAST
-```
-
-State updates use bounded event identities and idempotent reread/retry. The
-latest completed review is eventual authority; strict linearizable review-wins
-ordering is not claimed.
+State updates use bounded event identities and idempotent reread/retry. Review
+publication rereads the marker immediately before its final write and merges
+concurrent webhook transitions; strict cross-process linearizability is not
+claimed.
 
 ## Invariants
 

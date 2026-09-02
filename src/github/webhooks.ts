@@ -1,11 +1,13 @@
 import type { Octokit } from '@octokit/rest';
 import type { Webhooks } from '@octokit/webhooks';
 import {
+  applyManualThreadReopening,
   applyManualThreadResolution,
   loadReviewState,
   migrateLegacyState,
-  replaceStateMarker,
+  refreshStickyCommentState,
   saveStickyComment,
+  withReviewStateLock,
   type FindingRecord,
 } from './review-state.js';
 import { listFiscalcrThreads } from './threads.js';
@@ -217,9 +219,8 @@ interface ThreadWebhookPayload {
   thread: { id?: string | number; node_id?: string };
 }
 
-const threadEventLocks = new Map<string, Promise<void>>();
 
-/** Apply one resolved-thread delivery while serializing updates per pull request. */
+/** Apply one thread lifecycle delivery while serializing updates per pull request. */
 export async function handleFiscalcrThreadEvent(
   octokit: Octokit,
   input: {
@@ -232,72 +233,78 @@ export async function handleFiscalcrThreadEvent(
     eventId?: string;
   },
 ): Promise<void> {
-  if (!input.threadId || input.action === 'unresolved') return;
+  if (!input.threadId) return;
   const threadId = String(input.threadId);
   const eventKey = input.eventId ?? `${input.action}:${threadId}:${input.headSha}`;
   const lockKey = `${input.owner}/${input.repo}#${input.pullNumber}`;
-  const previous = threadEventLocks.get(lockKey) ?? Promise.resolve();
-  const current = previous
-    .catch(() => undefined)
-    .then(async () => {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const sticky = await loadReviewState(octokit, input);
-        const state = sticky?.state ?? (sticky?.legacyState ? migrateLegacyState(sticky.legacyState) : null);
-        if (!sticky || !state) return;
-        if (state.recentEvents.includes(eventKey)) return;
-        if (state.autoResolvedThreads.includes(threadId)) return;
-
-        const threads = await listFiscalcrThreads(octokit, input);
+  return withReviewStateLock(lockKey, async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const sticky = await loadReviewState(octokit, input);
+      const state = sticky?.state ?? (sticky?.legacyState ? migrateLegacyState(sticky.legacyState) : null);
+      const threads = await listFiscalcrThreads(octokit, input);
+      if (!sticky || !state) {
         const thread = threads.find((candidate) => candidate.id === threadId);
-        if (!thread || !thread.isResolved) return;
-
-        let stateForResolution = state;
-        if (!stateForResolution.findings.some((finding) => finding.fingerprint === thread.fingerprint)) {
-          const migratedFinding: FindingRecord = {
-            fingerprint: thread.fingerprint,
-            status: 'open',
-            severity: thread.severity ?? 'suggestion',
-            path: thread.path,
-            startLine: 0,
-            endLine: 0,
-            title: '',
-            threadId,
-            lastSeenSha: input.headSha,
-            transitions: [],
-          };
-          stateForResolution = {
-            ...stateForResolution,
-            findings: [...stateForResolution.findings, migratedFinding],
-          };
+        if (thread && thread.isResolved === (input.action === 'resolved')) {
+          throw new Error('FiscalCR lifecycle state unavailable; retrying thread webhook');
         }
-        const updated = applyManualThreadResolution(stateForResolution, {
-          fingerprint: thread.fingerprint,
-          threadId,
-          eventKey,
-          at: new Date().toISOString(),
-        });
-        if (updated === stateForResolution) return;
-        try {
-          await saveStickyComment(octokit, {
-            owner: input.owner,
-            repo: input.repo,
-            pullNumber: input.pullNumber,
-            commentId: sticky.commentId,
-            body: replaceStateMarker(sticky.body, updated),
-          });
-          return;
-        } catch (err) {
-          if (attempt === 1) throw err;
-          logger.warn({ err, threadId }, 'Thread event state save failed — rereading and retrying');
-        }
+        return;
       }
-    });
-  threadEventLocks.set(lockKey, current);
-  try {
-    await current;
-  } finally {
-    if (threadEventLocks.get(lockKey) === current) threadEventLocks.delete(lockKey);
-  }
+      const thread = threads.find((candidate) => candidate.id === threadId);
+      if (!thread || thread.isResolved !== (input.action === 'resolved')) return;
+
+      let stateForEvent = state;
+      if (
+        input.action === 'resolved' &&
+        !stateForEvent.findings.some((finding) => finding.fingerprint === thread.fingerprint)
+      ) {
+        const migratedFinding: FindingRecord = {
+          fingerprint: thread.fingerprint,
+          status: 'open',
+          severity: thread.severity ?? 'suggestion',
+          path: thread.path,
+          startLine: 0,
+          endLine: 0,
+          title: '',
+          threadId,
+          lastSeenSha: input.headSha,
+          transitions: [],
+        };
+        stateForEvent = {
+          ...stateForEvent,
+          findings: [...stateForEvent.findings, migratedFinding],
+        };
+      }
+      const updated =
+        input.action === 'resolved'
+          ? applyManualThreadResolution(stateForEvent, {
+              fingerprint: thread.fingerprint,
+              threadId,
+              eventKey,
+              at: new Date().toISOString(),
+            })
+          : applyManualThreadReopening(stateForEvent, {
+              fingerprint: thread.fingerprint,
+              threadId,
+              eventKey,
+              at: new Date().toISOString(),
+            });
+      if (updated === stateForEvent) return;
+      try {
+        await saveStickyComment(octokit, {
+          owner: input.owner,
+          repo: input.repo,
+          pullNumber: input.pullNumber,
+          commentId: sticky.commentId,
+          expectedEtag: sticky.etag,
+          body: refreshStickyCommentState(sticky.body, updated),
+        });
+        return;
+      } catch (err) {
+        if (attempt === 1) throw err;
+        logger.warn({ err, threadId }, 'Thread event state save failed — rereading and retrying');
+      }
+    }
+  });
 }
 
 

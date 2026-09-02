@@ -89,7 +89,7 @@ describe('App review-request webhook', () => {
 
 
 describe('FiscalCR review-thread lifecycle webhook', () => {
-  it('dismisses an open current FiscalCR thread once and ignores unresolved events', async () => {
+  it('dismisses and reopens a matching current FiscalCR thread', async () => {
     const state: ReviewState = {
       v: 2,
       lastReviewedSha: 'old',
@@ -117,6 +117,7 @@ describe('FiscalCR review-thread lifecycle webhook', () => {
     const updateComment = vi.fn(async ({ body: nextBody }: { body: string }) => {
       body = nextBody;
     });
+    let threadResolved = true;
     const graphql = vi.fn(async (query: string) => {
       if (query.includes('reviewThreads')) {
         return {
@@ -126,7 +127,7 @@ describe('FiscalCR review-thread lifecycle webhook', () => {
                 pageInfo: { hasNextPage: false, endCursor: null },
                 nodes: [{
                   id: 'thread-1',
-                  isResolved: true,
+                  isResolved: threadResolved,
                   isOutdated: false,
                   path: 'src/a.ts',
                   comments: { nodes: [{ body: `**[critical]** Issue\n${fingerprintMarker('aaaaaaaaaaaaaaaa')}` }] },
@@ -160,10 +161,16 @@ describe('FiscalCR review-thread lifecycle webhook', () => {
     await handleFiscalcrThreadEvent(octokit as never, input);
     expect(parseStateMarker(body)!.findings[0].status).toBe('dismissed');
     expect(updateComment).toHaveBeenCalledTimes(1);
-    await handleFiscalcrThreadEvent(octokit as never, { ...input, action: 'unresolved' });
-    expect(updateComment).toHaveBeenCalledTimes(1);
+    threadResolved = false;
+    await handleFiscalcrThreadEvent(octokit as never, {
+      ...input,
+      action: 'unresolved',
+      eventId: 'delivery-2',
+    });
+    expect(parseStateMarker(body)!.findings[0].status).toBe('open');
+    expect(updateComment).toHaveBeenCalledTimes(2);
     await handleFiscalcrThreadEvent(octokit as never, input);
-    expect(updateComment).toHaveBeenCalledTimes(1);
+    expect(updateComment).toHaveBeenCalledTimes(2);
   });
 
   it('migrates a v1 marker when a resolved thread arrives before the next review', async () => {

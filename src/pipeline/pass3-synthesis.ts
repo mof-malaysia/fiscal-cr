@@ -3,6 +3,7 @@ import type {
   PullRequestContext,
   ReviewAnnotation,
   ReviewResult,
+  ReviewedRange,
   Severity,
   WalkthroughEntry,
 } from '../types/review.js';
@@ -334,6 +335,8 @@ export interface SynthesisInput {
   findings: ReviewAnnotation[];
   /** Paths covered by successful review groups only. */
   reviewedPaths: string[];
+  /** Commentable line ranges covered by successful review groups. */
+  reviewedRanges?: ReviewedRange[];
 }
 
 /**
@@ -347,8 +350,7 @@ export async function synthesize(
   config: ReviewConfig,
   usage: UsageTracker,
 ): Promise<ReviewResult> {
-  const { ctx, intent, outcomes, findings, reviewedPaths } = input;
-
+  const { ctx, intent, outcomes, findings, reviewedPaths, reviewedRanges = [] } = input;
   const failedGroups = outcomes.filter((o) => o.failed);
   const failedGroupNote =
     failedGroups.length > 0
@@ -469,6 +471,7 @@ export async function synthesize(
     findings: annotations,
     annotations: annotations.slice(0, config.review.maxAnnotations),
     reviewedPaths,
+    reviewedRanges,
     stats,
     tokensUsed: usage.total(),
     walkthrough,

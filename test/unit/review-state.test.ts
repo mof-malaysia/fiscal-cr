@@ -4,12 +4,14 @@ import {
   appendFingerprints,
   appendRun,
   applyManualThreadResolution,
+  mergeConcurrentReviewState,
   loadReviewState,
   migrateLegacyState,
   parseStateMarker,
   reconcileFindingInventory,
   renderStateMarker,
   replaceStateMarker,
+  refreshStickyCommentState,
   renderStickyComment,
   saveStickyComment,
   MAX_STATE_MARKER_BYTES,
@@ -135,6 +137,32 @@ describe('state marker', () => {
     expect(parsed?.v).toBe(2);
     if (parsed?.v === 2) expect(parsed.findings.length).toBeLessThan(200);
   });
+
+  it('keeps stripped active histories stripped while evicting terminals', () => {
+    const active = {
+      ...state().findings[0],
+      transitions: Array.from({ length: 8 }, (_, index) => ({
+        status: 'open' as const,
+        at: `2026-02-${String(index + 1).padStart(2, '0')}`,
+        source: 'review' as const,
+        event: 'x'.repeat(3000),
+      })),
+    };
+    const terminal = Array.from({ length: 80 }, (_, index) => ({
+      ...state().findings[0],
+      fingerprint: `${(index + 1).toString(16).padStart(16, '0')}`,
+      status: 'fixed' as const,
+      title: `terminal ${index} ${'x'.repeat(200)}`,
+    }));
+
+    const parsed = parseStateMarker(renderStateMarker(state({ findings: [active, ...terminal] })));
+
+    expect(parsed?.v).toBe(2);
+    if (parsed?.v === 2) {
+      expect(parsed.findings.find((finding) => finding.fingerprint === active.fingerprint)?.transitions).toEqual([]);
+      expect(parsed.findings.length).toBeLessThan(81);
+    }
+  });
 });
 
 describe('FIFO caps', () => {
@@ -181,6 +209,47 @@ describe('finding lifecycle reconciliation', () => {
     });
   });
 
+  it('fixes delta findings only when their line is covered', () => {
+    const open = firstState(reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', 'one').findings);
+    const untouched = reconcileFindingInventory(open, [], [], 'sha2', 'two', [
+      { path: 'src/a.ts', startLine: 3, endLine: 3 },
+    ]);
+    expect(untouched.findings[0].status).toBe('open');
+
+    const covered = reconcileFindingInventory(open, [], [], 'sha3', 'three', [
+      { path: 'src/a.ts', startLine: 2, endLine: 2 },
+    ]);
+    expect(covered.findings[0].status).toBe('fixed');
+  });
+
+  it('preserves a concurrent manual dismissal when saving review state', () => {
+    const base = firstState(
+      reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', '2026-01-01').findings.map((finding) => ({
+        ...finding,
+        threadId: 'thread-1',
+      })),
+    );
+    const proposed = reconcileFindingInventory(base, [], ['src/a.ts'], 'sha2', '2026-01-02').findings;
+    const latest: ReviewState = {
+      ...base,
+      findings: base.findings.map((finding) => ({
+        ...finding,
+        status: 'dismissed' as const,
+        transitions: [
+          ...finding.transitions,
+          { status: 'dismissed' as const, at: '2026-01-03', source: 'manual' as const, event: 'delivery-1' },
+        ],
+      })),
+      recentEvents: ['delivery-1'],
+    };
+
+    const merged = mergeConcurrentReviewState(base, { ...base, findings: proposed }, latest);
+
+    const mergedFinding = merged.findings.find((finding) => finding.fingerprint === base.findings.at(-1)!.fingerprint);
+    expect(mergedFinding?.status).toBe('dismissed');
+    expect(merged.recentEvents).toContain('delivery-1');
+  });
+
   it('keeps absent findings open outside the successful manifest', () => {
     const current = reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', 'one');
     const next = reconcileFindingInventory(firstState(current.findings), [], ['src/other.ts'], 'sha2', 'two');
@@ -204,6 +273,22 @@ describe('finding lifecycle reconciliation', () => {
       at: 'three',
     });
     expect(duplicate).toEqual(dismissed);
+  });
+
+  it('does not reopen a manually dismissed finding during review', () => {
+    const current = reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', 'one');
+    const withThread = firstState(current.findings.map((finding) => ({ ...finding, threadId: 'thread-1' })));
+    const dismissed = applyManualThreadResolution(withThread, {
+      fingerprint: withThread.findings[0].fingerprint,
+      threadId: 'thread-1',
+      eventKey: 'delivery-1',
+      at: 'two',
+    });
+
+    const observed = reconcileFindingInventory(dismissed, [annotation()], ['src/a.ts'], 'sha2', 'three');
+
+    expect(observed.findings[0].status).toBe('dismissed');
+    expect(observed.newlyOpen).toEqual([]);
   });
 
   it('does not consume an event before its finding matches', () => {
@@ -248,6 +333,16 @@ describe('renderStickyComment', () => {
     expect(body).toContain('could not be placed inline');
     expect(body).toContain('`src/x.ts:9` — Unplaceable');
   });
+
+  it('refreshes the visible lifecycle table after a manual state change', () => {
+    const body = renderStickyComment({ result: result(), state: state(), demoted: [] });
+    const updated = state({ findings: [{ ...state().findings[0], status: 'dismissed' }] });
+    const refreshed = refreshStickyCommentState(body, updated);
+
+    expect(refreshed).toContain('Open findings: 0');
+    expect(refreshed).not.toContain('| Existing |');
+    expect(parseStateMarker(refreshed)).toEqual(updated);
+  });
 });
 
 describe('sticky state persistence', () => {
@@ -266,6 +361,35 @@ describe('sticky state persistence', () => {
     const sticky = await loadReviewState(octokit as never, { owner: 'o', repo: 'r', pullNumber: 1 });
     expect(sticky).toEqual({ commentId: 3, state: state(), body: `summary\n${renderStateMarker(state())}` });
     expect(Object.keys(sticky!)).toContain('body');
+  });
+
+  it('accepts legacy GitHub Actions sticky comments', async () => {
+    const body = renderStateMarker(state());
+    const octokit = {
+      issues: {
+        listComments: vi.fn(async () => ({
+          data: [{ id: 4, body, user: { login: 'github-actions[bot]' }, performed_via_github_app: null }],
+        })),
+      },
+    };
+
+    await expect(loadReviewState(octokit as never, { owner: 'o', repo: 'r', pullNumber: 1 }))
+      .resolves.toMatchObject({ commentId: 4, state: state(), body });
+  });
+
+  it('returns the marker ETag for optimistic updates', async () => {
+    const body = renderStateMarker(state());
+    const octokit = {
+      issues: {
+        listComments: vi.fn(async () => ({
+          data: [{ id: 6, body, performed_via_github_app: { id: 1 } }],
+        })),
+        getComment: vi.fn(async () => ({ headers: { etag: 'etag-6' } })),
+      },
+    };
+
+    await expect(loadReviewState(octokit as never, { owner: 'o', repo: 'r', pullNumber: 1 }))
+      .resolves.toMatchObject({ commentId: 6, etag: 'etag-6' });
   });
 
   it('returns commentId with null state for a corrupt marker (treated as no state)', async () => {
@@ -293,11 +417,11 @@ describe('sticky state persistence', () => {
       },
     };
     const id = await saveStickyComment(octokit as never, {
-      owner: 'o', repo: 'r', pullNumber: 1, commentId: 3, body: 'updated',
+      owner: 'o', repo: 'r', pullNumber: 1, commentId: 3, body: 'updated', expectedEtag: 'etag-3',
     });
     expect(id).toBe(3);
     expect(octokit.issues.updateComment).toHaveBeenCalledWith(
-      expect.objectContaining({ comment_id: 3, body: 'updated' }),
+      expect.objectContaining({ comment_id: 3, body: 'updated', headers: { 'If-Match': 'etag-3' } }),
     );
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
   });

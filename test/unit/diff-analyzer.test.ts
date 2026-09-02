@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePatch, lineToDiffPosition } from '../../src/review/diff-analyzer.js';
+import { parsePatch, lineToDiffPosition, commentableRanges } from '../../src/review/diff-analyzer.js';
 
 const SAMPLE_PATCH = `@@ -1,5 +1,7 @@
  const a = 1;
@@ -24,6 +24,14 @@ describe('parsePatch', () => {
     const deletions = hunks[0].lines.filter((l) => l.type === 'deletion');
     expect(additions).toHaveLength(3); // b=3, c=4, f=7
     expect(deletions).toHaveLength(1); // b=2
+  });
+});
+
+describe('commentableRanges', () => {
+  it('coalesces adjacent reviewable lines', () => {
+    expect(commentableRanges('src/a.ts', SAMPLE_PATCH)).toEqual([
+      { path: 'src/a.ts', startLine: 1, endLine: 6 },
+    ]);
   });
 });
 

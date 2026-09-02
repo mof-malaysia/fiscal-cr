@@ -1,6 +1,12 @@
 import type { Octokit } from '@octokit/rest';
 import { modelForRole, type ReviewConfig } from '../config/schema.js';
-import type { PullRequestContext, ReviewAnnotation, ReviewResult, Severity } from '../types/review.js';
+import type {
+  PullRequestContext,
+  ReviewAnnotation,
+  ReviewResult,
+  ReviewedRange,
+  Severity,
+} from '../types/review.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { extractPullRequestContext } from '../github/pulls.js';
 import { createCheckRun, completeCheckRun } from '../github/checks.js';
@@ -15,15 +21,18 @@ import {
   EMPTY_COUNTS,
   loadReviewState,
   migrateLegacyState,
+  mergeConcurrentReviewState,
+  applyManualThreadResolution,
   reconcileFindingInventory,
   renderStickyComment,
   replaceStateMarker,
   saveStickyComment,
+  withReviewStateLock,
   type FindingRecord,
-  type ReviewState,
   type StickyComment,
+  type ReviewState,
 } from '../github/review-state.js';
-import { listFiscalcrThreads, resolveOutdatedThreads } from '../github/threads.js';
+import { listFiscalcrThreads, resolveOutdatedThreads, type FiscalcrThread } from '../github/threads.js';
 import { decideScope, type ScopeDecision } from './delta.js';
 import { filterFiles } from './file-filter.js';
 import { buildSummary } from './summary-builder.js';
@@ -81,6 +90,8 @@ interface StickyPublicationPlan {
 function planStickyPublication(input: {
   result: ReviewResult;
   config: ReviewConfig;
+  /** Delta reviews may prove fixes only for these covered lines. */
+  reviewedRanges: ReviewedRange[];
   state: ReviewState | null;
   threads: Array<{ fingerprint: string; id: string; isResolved: boolean }>;
   /** False means the API failed; preserve prior thread identities conservatively. */
@@ -89,12 +100,10 @@ function planStickyPublication(input: {
   reviewedPaths: string[];
   headSha: string;
 }): StickyPublicationPlan {
-  const { result, config, state, threads, threadsAvailable, reviewedPaths, headSha } = input;
+  const { result, config, state, threads, threadsAvailable, reviewedPaths, reviewedRanges, headSha } = input;
   const commentsCfg = config.review.comments;
   const inventory = result.findings ?? result.annotations;
-  const threadByFingerprint = new Map(
-    threads.filter((thread) => !thread.isResolved).map((thread) => [thread.fingerprint, thread.id]),
-  );
+  const threadByFingerprint = new Map(threads.map((thread) => [thread.fingerprint, thread.id]));
   const threadIdFor = (finding: FindingRecord): string | null =>
     threadsAvailable ? threadByFingerprint.get(finding.fingerprint) ?? null : finding.threadId;
   const stateWithThreads = state
@@ -112,6 +121,7 @@ function planStickyPublication(input: {
     reviewedPaths,
     headSha,
     new Date().toISOString(),
+    reviewedRanges,
   );
   const findings = reconciliation.findings.map((finding) => ({
     ...finding,
@@ -300,14 +310,16 @@ export class ReviewOrchestrator {
       if (!sticky) {
         return await this.publishLegacy({ checkRunId, prContext, result });
       }
-      return await this.publishSticky({
-        checkRunId,
-        prContext,
-        result,
-        scope,
-        state,
-        commentId: stickyRef?.commentId ?? null,
-      });
+      return await withReviewStateLock(`${owner}/${repo}#${pullNumber}`, () =>
+        this.publishSticky({
+          checkRunId,
+          prContext,
+          result,
+          scope,
+          state,
+          commentId: stickyRef?.commentId ?? null,
+        }),
+      );
     } catch (err) {
       logger.error({ err, pullNumber }, 'Review failed');
 
@@ -339,9 +351,11 @@ export class ReviewOrchestrator {
     if (existingId !== null && existingId !== undefined && input.state?.checkRunHeadSha === input.headSha) {
       try {
         const response = await (this.octokit.checks as typeof this.octokit.checks & {
-          get?: (params: { owner: string; repo: string; check_run_id: number }) => Promise<{ data: { head_sha?: string } }>;
+          get?: (params: { owner: string; repo: string; check_run_id: number }) => Promise<{
+            data: { head_sha?: string; status?: string };
+          }>;
         }).get?.({ owner: input.owner, repo: input.repo, check_run_id: existingId });
-        if (response?.data.head_sha === input.headSha) return existingId;
+        if (response?.data.head_sha === input.headSha && response.data.status === 'in_progress') return existingId;
       } catch (err) {
         logger.warn({ err, checkRunId: existingId }, 'Stored check run unavailable — creating replacement');
       }
@@ -487,21 +501,39 @@ export class ReviewOrchestrator {
     }
 
     const reviewedPaths = scope.mode === 'full' ? result.reviewedPaths : [];
+    const reviewedRanges = scope.mode === 'delta' ? result.reviewedRanges ?? [] : [];
+    let stateForPublication = state;
+    try {
+      const latestSticky = await loadReviewState(this.octokit, { owner, repo, pullNumber });
+      const latestState =
+        latestSticky?.state ?? (latestSticky?.legacyState ? migrateLegacyState(latestSticky.legacyState) : null);
+      if (latestState) {
+        stateForPublication = state
+          ? mergeConcurrentReviewState(state, state, latestState)
+          : latestState;
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Could not reread lifecycle state before publication — preserving planned state');
+    }
     const plan = planStickyPublication({
       result,
       config: this.config,
-      state,
+      state: stateForPublication,
       threads,
       threadsAvailable,
       reviewedPaths,
+      reviewedRanges,
       headSha,
     });
-    if (commentsCfg.resolveOutdated && state && threadsAvailable) {
+    if (commentsCfg.resolveOutdated && stateForPublication && threadsAvailable) {
       const resolved = await resolveOutdatedThreads(this.octokit, {
         owner,
         repo,
         pullNumber,
-        changedPaths: new Set(reviewedPaths),
+        changedPaths: new Set(
+          scope.mode === 'delta' ? reviewedRanges.map((range) => range.path) : reviewedPaths,
+        ),
+        reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
         currentFingerprints: new Set(
           (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
         ),
@@ -533,7 +565,7 @@ export class ReviewOrchestrator {
       });
     }
 
-    let blockingReviewId = state?.blockingReviewId ?? null;
+    let blockingReviewId = stateForPublication?.blockingReviewId ?? null;
     if (blockingReviewId !== null) {
       const message = plan.blocking
         ? `Superseded by an updated review as of ${headSha.slice(0, 7)}.`
@@ -565,14 +597,13 @@ export class ReviewOrchestrator {
       ),
     });
     let findings = plan.findings;
+    let refreshedThreads: FiscalcrThread[] = [];
     if (outcome.posted.length > 0) {
       try {
-        const refreshedThreads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
+        refreshedThreads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
         const postedFingerprints = new Set(outcome.posted.map((annotation) => fingerprintAnnotation(annotation)));
         const threadByFingerprint = new Map(
-          refreshedThreads
-            .filter((thread) => !thread.isResolved)
-            .map((thread) => [thread.fingerprint, thread.id]),
+          refreshedThreads.map((thread) => [thread.fingerprint, thread.id]),
         );
         findings = findings.map((finding) =>
           postedFingerprints.has(finding.fingerprint)
@@ -588,20 +619,20 @@ export class ReviewOrchestrator {
 
     // State is saved last, only after all publication side effects succeeded.
     const demoted = [...outcome.demoted, ...plan.capOverflow];
-    const newState: ReviewState = {
+    let newState: ReviewState = {
       v: 2,
       lastReviewedSha: headSha,
       baseSha: prContext.baseSha,
       blockingReviewId,
       findings,
-      recentEvents: state?.recentEvents ?? [],
+      recentEvents: stateForPublication?.recentEvents ?? [],
       autoResolvedThreads: [
-        ...(state?.autoResolvedThreads ?? []),
+        ...(stateForPublication?.autoResolvedThreads ?? []),
         ...plan.autoResolvedThreadIds,
       ],
-      checkRunId: checkRunId ?? state?.checkRunId ?? null,
-      checkRunHeadSha: checkRunId === null ? state?.checkRunHeadSha ?? null : headSha,
-      runs: appendRun(state?.runs ?? [], {
+      checkRunId: checkRunId ?? stateForPublication?.checkRunId ?? null,
+      checkRunHeadSha: checkRunId === null ? stateForPublication?.checkRunHeadSha ?? null : headSha,
+      runs: appendRun(stateForPublication?.runs ?? [], {
         sha: headSha.slice(0, 7),
         at: new Date().toISOString().slice(0, 10),
         scope: scope.mode === 'delta' ? 'delta' : 'full',
@@ -609,14 +640,41 @@ export class ReviewOrchestrator {
         cost: result.costEstimate?.usd.toFixed(4) ?? '0',
       }),
     };
+    for (const thread of refreshedThreads) {
+      if (!thread.isResolved) continue;
+      const finding = newState.findings.find(
+        (candidate) => candidate.fingerprint === thread.fingerprint && candidate.threadId === thread.id,
+      );
+      if (!finding) continue;
+      newState = applyManualThreadResolution(newState, {
+        fingerprint: thread.fingerprint,
+        threadId: thread.id,
+        eventKey: `pre-persist-resolved:${thread.id}:${headSha}`,
+        at: new Date().toISOString(),
+      });
+    }
+    let stateToSave = newState;
+    let stickyCommentId = input.commentId;
+    let expectedEtag: string | undefined;
+    try {
+      const latestSticky = await loadReviewState(this.octokit, { owner, repo, pullNumber });
+      if (latestSticky?.state) {
+        stateToSave = mergeConcurrentReviewState(stateForPublication, newState, latestSticky.state);
+        stickyCommentId = latestSticky.commentId;
+        expectedEtag = latestSticky.etag;
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Could not reread lifecycle state before save — preserving planned state');
+    }
     await saveStickyComment(this.octokit, {
       owner,
       repo,
       pullNumber,
-      commentId: input.commentId,
+      commentId: stickyCommentId,
+      expectedEtag,
       body: renderStickyComment({
         result,
-        state: newState,
+        state: stateToSave,
         demoted: demoted.map((annotation) => ({
           path: annotation.path,
           startLine: annotation.startLine,

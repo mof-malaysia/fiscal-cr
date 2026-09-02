@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import type { Severity } from '../types/review.js';
+import type { ReviewedRange, Severity } from '../types/review.js';
 import { extractFingerprint } from './fingerprint.js';
 import { logger } from '../utils/logger.js';
 
@@ -7,6 +7,7 @@ export interface FiscalcrThread {
   id: string;
   isResolved: boolean;
   path: string;
+  line?: number | null;
   fingerprint: string;
   severity: Severity | null;
 }
@@ -21,6 +22,7 @@ interface ThreadsQueryResponse {
           isResolved: boolean;
           isOutdated?: boolean;
           path: string | null;
+          line?: number | null;
           comments: { nodes: Array<{ body: string | null }> };
         }>;
       };
@@ -40,6 +42,7 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
           isOutdated
           path
           comments(first: 1) { nodes { body } }
+          line
         }
       }
     }
@@ -78,6 +81,7 @@ export async function listFiscalcrThreads(
         id: node.id,
         isResolved: node.isResolved,
         path: node.path ?? '',
+        ...(node.line !== undefined ? { line: node.line } : {}),
         fingerprint,
         severity: (body.match(SEVERITY_RE)?.[1] as Severity | undefined) ?? null,
       });
@@ -104,6 +108,8 @@ export async function resolveOutdatedThreads(
     pullNumber: number;
     /** Paths reviewed in this run — only their threads can be judged outdated. */
     changedPaths: Set<string>;
+    /** Delta line manifest, when paths alone are too broad. */
+    reviewedRanges?: ReviewedRange[];
     /** Fingerprints of findings that still exist after this run. */
     currentFingerprints: Set<string>;
     headSha: string;
@@ -117,12 +123,23 @@ export async function resolveOutdatedThreads(
     return [];
   }
 
-  const outdated = threads.filter(
-    (t) =>
+  const outdated = threads.filter((t) => {
+    const lineCovered =
+      !params.reviewedRanges?.length ||
+      (t.line != null &&
+        params.reviewedRanges.some(
+          (range) =>
+            range.path === t.path &&
+            range.startLine <= t.line! &&
+            t.line! <= range.endLine,
+        ));
+    return (
       !t.isResolved &&
       params.changedPaths.has(t.path) &&
-      !params.currentFingerprints.has(t.fingerprint),
-  );
+      lineCovered &&
+      !params.currentFingerprints.has(t.fingerprint)
+    );
+  });
 
   const resolved: FiscalcrThread[] = [];
   for (const thread of outdated) {

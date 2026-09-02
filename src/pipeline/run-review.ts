@@ -1,4 +1,4 @@
-import type { PullRequestContext, ReviewResult } from '../types/review.js';
+import type { PullRequestContext, ReviewResult, ReviewedRange } from '../types/review.js';
 import type { ReviewConfig } from '../config/schema.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { runIntentPass } from './pass1-intent.js';
@@ -9,6 +9,7 @@ import { runFastPath } from './fast-path.js';
 import type { UsageTracker } from './usage.js';
 import { estimateTokens } from '../utils/tokens.js';
 import { ReviewError } from '../utils/errors.js';
+import { commentableRanges } from '../review/diff-analyzer.js';
 import { logger } from '../utils/logger.js';
 
 export type ReviewRoute = 'fast-path' | 'multi-pass';
@@ -97,12 +98,24 @@ export async function runReviewPipeline(
     config,
     { capAnnotations: false },
   );
-  const reviewedPaths = outcomes
+  const successfulFiles = outcomes
     .filter((outcome) => !outcome.failed)
-    .flatMap((outcome) => outcome.group.files.map((file) => file.filename));
+    .flatMap((outcome) => outcome.group.files)
+    .filter((file) => Boolean(file.patch));
+  const reviewedPaths = successfulFiles.map((file) => file.filename);
+  const reviewedRanges: ReviewedRange[] = successfulFiles.flatMap((file) =>
+    file.patch ? commentableRanges(file.filename, file.patch) : [],
+  );
   return synthesize(
     llm,
-    { ctx, intent, outcomes, findings, reviewedPaths: [...new Set(reviewedPaths)] },
+    {
+      ctx,
+      intent,
+      outcomes,
+      findings,
+      reviewedPaths: [...new Set(reviewedPaths)],
+      reviewedRanges,
+    },
     config,
     usage,
   );

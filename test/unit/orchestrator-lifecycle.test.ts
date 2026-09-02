@@ -331,7 +331,7 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
   });
 
-  it('delta fix candidate: leaves thread open without full coverage', async () => {
+  it('delta fix candidate: closes findings only when their changed lines were reviewed', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
       threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
@@ -349,20 +349,17 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(octokit.pulls.dismissReview).toHaveBeenCalledWith(
       expect.objectContaining({
         review_id: 7,
-        message: expect.stringContaining('Superseded'),
+        message: expect.stringContaining('Issues addressed'),
       }),
     );
-    // Existing open finding remains blocking; no lifecycle cleanup means a replacement review is posted.
-    expect(octokit.pulls.createReview).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'REQUEST_CHANGES', comments: [] }),
-    );
+    expect(octokit.pulls.createReview).not.toHaveBeenCalled();
 
     const check = octokit.checks.update.mock.calls.at(-1)?.[0] as { conclusion: string };
-    expect(check.conclusion).toBe('failure');
+    expect(check.conclusion).toBe('success');
     const state = savedState(octokit);
-    expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('open');
-    expect(state!.blockingReviewId).toBe(11);
-    expect(result.stats.critical).toBe(1);
+    expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
+    expect(state!.blockingReviewId).toBeNull();
+    expect(result.stats.critical).toBe(0);
   });
 
   it('migrates a v1 marker before skipping a PR with no reviewable files', async () => {
@@ -439,7 +436,7 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
         checkRunHeadSha: 'new-sha',
       }),
     });
-    octokit.checks.get = vi.fn(async () => ({ data: { head_sha: 'new-sha' } }));
+    octokit.checks.get = vi.fn(async () => ({ data: { head_sha: 'new-sha', status: 'in_progress' } }));
     const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg());
 
     await orchestrator.reviewPullRequest({ ...params, forceFull: true });

@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import type { ReviewAnnotation, ReviewResult, Severity, WalkthroughEntry } from '../types/review.js';
+import type { ReviewAnnotation, ReviewResult, ReviewedRange, Severity, WalkthroughEntry } from '../types/review.js';
 import { fingerprintAnnotation } from './fingerprint.js';
 import { logger } from '../utils/logger.js';
 
@@ -313,10 +313,11 @@ function compactState(state: ReviewState): ReviewState {
       findings: compacted.findings.map((finding) => ({ ...finding, transitions: [] })),
     };
   }
+  const compactedActive = compacted.findings.filter((finding) => finding.status === 'open');
   terminal = compacted.findings.filter((finding) => finding.status !== 'open');
   while (markerBytes(compacted) > MAX_STATE_MARKER_BYTES && terminal.length > 0) {
     terminal = terminal.slice(1);
-    compacted = { ...compacted, findings: [...active, ...terminal] };
+    compacted = { ...compacted, findings: [...compactedActive, ...terminal] };
   }
   if (markerBytes(compacted) > MAX_STATE_MARKER_BYTES) {
     throw new Error(`FiscalCR lifecycle state exceeds ${MAX_STATE_MARKER_BYTES} bytes with active findings`);
@@ -372,6 +373,7 @@ export function reconcileFindingInventory(
   reviewedPaths: string[],
   headSha: string,
   at: string,
+  reviewedRanges: ReviewedRange[] = [],
 ): FindingReconciliation {
   const previous = new Map((state?.findings ?? []).map((finding) => [finding.fingerprint, finding]));
   const manifest = new Set(reviewedPaths);
@@ -384,20 +386,21 @@ export function reconcileFindingInventory(
     const fingerprint = fingerprintAnnotation(annotation);
     observedFingerprints.add(fingerprint);
     const old = previous.get(fingerprint);
+    const manuallyDismissed = old?.status === 'dismissed';
     const next: FindingRecord = {
       fingerprint,
-      status: 'open',
+      status: manuallyDismissed ? 'dismissed' : 'open',
       severity: annotation.severity,
       path: annotation.path,
       startLine: annotation.startLine,
       endLine: annotation.endLine,
       title: annotation.title,
-      threadId: old?.status === 'open' ? old.threadId : null,
+      threadId: old?.threadId ?? null,
       lastSeenSha: headSha,
       transitions: old?.transitions ?? [],
     };
-    const reopened = old?.status !== 'open';
-    const updated = transition(next, 'open', at, 'review', undefined, reopened);
+    const reopened = old?.status === 'fixed';
+    const updated = manuallyDismissed ? next : transition(next, 'open', at, 'review', undefined, reopened);
     if (reopened) newlyOpen.push(fingerprint);
     const position = index.get(fingerprint);
     if (position === undefined) {
@@ -411,10 +414,19 @@ export function reconcileFindingInventory(
   const fixed: string[] = [];
   for (let position = 0; position < findings.length; position++) {
     const finding = findings[position];
+    const coveredByReviewedScope =
+      reviewedRanges.length > 0
+        ? reviewedRanges.some(
+            (range) =>
+              range.path === finding.path &&
+              range.startLine <= finding.endLine &&
+              finding.startLine <= range.endLine,
+          )
+        : manifest.has(finding.path);
     if (
       finding.status === 'open' &&
       !observedFingerprints.has(finding.fingerprint) &&
-      manifest.has(finding.path)
+      coveredByReviewedScope
     ) {
       findings[position] = transition(finding, 'fixed', at, 'review');
       fixed.push(finding.fingerprint);
@@ -422,10 +434,88 @@ export function reconcileFindingInventory(
   }
   return { findings, newlyOpen, fixed };
 }
+/**
+ * Merge a review result with state written concurrently after the review began.
+ * Manual transitions from the newer state win by transition timestamp.
+ */
+export function mergeConcurrentReviewState(
+  base: ReviewState | null,
+  proposed: ReviewState,
+  latest: ReviewState,
+): ReviewState {
+  const baseFindings = new Map((base?.findings ?? []).map((finding) => [finding.fingerprint, finding]));
+  const latestFindings = new Map(latest.findings.map((finding) => [finding.fingerprint, finding]));
+  const proposedFindings = new Map(proposed.findings.map((finding) => [finding.fingerprint, finding]));
+  const fingerprints = new Set([...latestFindings.keys(), ...proposedFindings.keys()]);
+  const findings = [...fingerprints].map((fingerprint) => {
+    const proposedFinding = proposedFindings.get(fingerprint);
+    const latestFinding = latestFindings.get(fingerprint);
+    if (!proposedFinding) return latestFinding!;
+    if (!latestFinding || JSON.stringify(latestFinding) === JSON.stringify(baseFindings.get(fingerprint))) {
+      return proposedFinding;
+    }
+
+    const transitions = [...proposedFinding.transitions, ...latestFinding.transitions]
+      .filter(
+        (transition, index, all) =>
+          all.findIndex(
+            (candidate) =>
+              candidate.status === transition.status &&
+              candidate.at === transition.at &&
+              candidate.source === transition.source &&
+              candidate.event === transition.event,
+          ) === index,
+      )
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .slice(-MAX_TRANSITIONS_PER_FINDING);
+    return {
+      ...proposedFinding,
+      status: transitions.at(-1)?.status ?? proposedFinding.status,
+      threadId: proposedFinding.threadId ?? latestFinding.threadId,
+      transitions,
+    };
+  });
+  const latestChanged = <K extends keyof ReviewState>(key: K): boolean =>
+    latest[key] !== base?.[key];
+  const mergedEvents = [...new Set([...latest.recentEvents, ...proposed.recentEvents])].slice(-MAX_RECENT_EVENTS);
+  const mergedAutoResolved = [
+    ...new Set([...latest.autoResolvedThreads, ...proposed.autoResolvedThreads]),
+  ].slice(-MAX_AUTO_RESOLVED_THREADS);
+  const mergedRuns = [
+    ...new Map(
+      [...latest.runs, ...proposed.runs].map((run) => [`${run.sha}:${run.at}:${run.scope}`, run]),
+    ).values(),
+  ].slice(-MAX_RUN_HISTORY);
+
+  return {
+    ...proposed,
+    blockingReviewId: latestChanged('blockingReviewId') ? latest.blockingReviewId : proposed.blockingReviewId,
+    findings,
+    recentEvents: mergedEvents,
+    autoResolvedThreads: mergedAutoResolved,
+    checkRunId: latestChanged('checkRunId') ? latest.checkRunId : proposed.checkRunId,
+    checkRunHeadSha: latestChanged('checkRunHeadSha') ? latest.checkRunHeadSha : proposed.checkRunHeadSha,
+    runs: mergedRuns,
+  };
+}
 
 /** Append a run record while retaining only the bounded recent history. */
 export function appendRun(runs: RunRecord[], run: RunRecord): RunRecord[] {
   return [...runs, run].slice(-MAX_RUN_HISTORY);
+}
+
+const reviewStateLocks = new Map<string, Promise<unknown>>();
+
+/** Serialize all state publication paths for one pull request in-process. */
+export async function withReviewStateLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = reviewStateLocks.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(work);
+  reviewStateLocks.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (reviewStateLocks.get(key) === current) reviewStateLocks.delete(key);
+  }
 }
 
 /** Legacy helper retained for consumers that still inspect v1 FIFO behavior. */
@@ -443,6 +533,8 @@ export interface StickyComment {
   legacyState?: LegacyReviewState;
   /** Original body, preserved as a normal enumerable field. */
   body: string;
+  /** ETag from the matched comment resource, used for optimistic updates. */
+  etag?: string;
 }
 
 /** Find the app-authored sticky FiscalCR comment by marker. */
@@ -453,19 +545,42 @@ export async function loadReviewState(
   const { owner, repo, pullNumber } = params;
   let page = 1;
   while (true) {
-    const { data } = await octokit.issues.listComments({ owner, repo, issue_number: pullNumber, per_page: 100, page });
+    const { data } = await octokit.issues.listComments({
+      owner,
+      repo,
+      issue_number: pullNumber,
+      per_page: 100,
+      page,
+    });
     for (const comment of data) {
       const body = comment.body ?? '';
       const hasV2 = body.includes(STATE_MARKER_PREFIX);
       const hasV1 = body.includes('<!-- fiscalcr:state:v1 ');
       const appAuthored =
-        'performed_via_github_app' in comment && comment.performed_via_github_app !== null;
+        comment.user?.login === 'github-actions[bot]' ||
+        ('performed_via_github_app' in comment && comment.performed_via_github_app !== null);
       if ((hasV2 || hasV1) && appAuthored) {
+        let etag: string | undefined;
+        const getComment = (
+          octokit.issues as typeof octokit.issues & {
+            getComment?: (params: { owner: string; repo: string; comment_id: number }) => Promise<{
+              headers?: { etag?: string };
+            }>;
+          }
+        ).getComment;
+        if (getComment) {
+          try {
+            etag = (await getComment({ owner, repo, comment_id: comment.id })).headers?.etag;
+          } catch (err) {
+            logger.debug({ err, commentId: comment.id }, 'Could not read sticky comment ETag');
+          }
+        }
         return {
           commentId: comment.id,
           state: parseV2StateMarker(body),
           body,
           ...(hasV1 ? { legacyState: parseLegacyStateMarker(body) ?? undefined } : {}),
+          ...(etag ? { etag } : {}),
         };
       }
     }
@@ -477,20 +592,35 @@ export async function loadReviewState(
 /** Create/update only after the caller has completed all other side effects. */
 export async function saveStickyComment(
   octokit: Octokit,
-  params: { owner: string; repo: string; pullNumber: number; commentId: number | null; body: string },
+  params: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    commentId: number | null;
+    body: string;
+    expectedEtag?: string;
+  },
 ): Promise<number> {
   if (Buffer.byteLength(params.body, 'utf8') > MAX_STICKY_COMMENT_BYTES) {
     throw new Error(`FiscalCR sticky comment exceeds ${MAX_STICKY_COMMENT_BYTES} bytes`);
   }
   const { owner, repo, pullNumber, body } = params;
   let commentId = params.commentId;
+  let expectedEtag = params.expectedEtag;
   if (commentId === null) {
     const existing = await loadReviewState(octokit, { owner, repo, pullNumber });
     commentId = existing?.commentId ?? null;
+    expectedEtag ??= existing?.etag;
   }
   if (commentId !== null) {
     try {
-      await octokit.issues.updateComment({ owner, repo, comment_id: commentId, body });
+      await octokit.issues.updateComment({
+        owner,
+        repo,
+        comment_id: commentId,
+        body,
+        ...(expectedEtag ? { headers: { 'If-Match': expectedEtag } } : {}),
+      });
       return commentId;
     } catch (err) {
       if (statusOf(err) !== 404) throw err;
@@ -573,6 +703,32 @@ export function renderStickyComment(input: StickyCommentInput): string {
   return lines.join('\n');
 }
 
+/** Refresh the lifecycle section in an existing sticky comment after a webhook event. */
+export function refreshStickyCommentState(body: string, state: ReviewState): string {
+  const start = body.indexOf('### Open findings:');
+  const footer = start >= 0 ? body.indexOf('\n---\n', start) : -1;
+  if (start < 0 || footer < 0) return replaceStateMarker(body, state);
+
+  const active = state.findings.filter((finding) => finding.status === 'open');
+  const openCounts = { ...EMPTY_COUNTS };
+  for (const finding of active) openCounts[finding.severity]++;
+  const lines = [`### Open findings: ${active.length}`];
+  if (active.length > 0) {
+    lines.push('| Severity | Location | Finding |', '|----------|----------|---------|');
+    for (const finding of [...active].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])) {
+      lines.push(
+        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${finding.title.replace(/\|/g, '\\|')} |`,
+      );
+    }
+    lines.push('', '| Severity | Open |', '|----------|------|');
+    for (const [severity, count] of Object.entries(openCounts)) {
+      if (count > 0) lines.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
+    }
+  }
+  lines.push('');
+  return replaceStateMarker(`${body.slice(0, start)}${lines.join('\n')}${body.slice(footer)}`, state);
+}
+
 /** Replace an existing v1/v2 marker without disturbing surrounding comment text. */
 export function replaceStateMarker(body: string, state: ReviewState): string {
   const marker = renderStateMarker(state);
@@ -601,6 +757,32 @@ export function applyManualThreadResolution(
     }
     applied = true;
     return transition(finding, 'dismissed', input.at, 'manual', input.eventKey);
+  });
+  if (!applied) return state;
+  return {
+    ...state,
+    findings,
+    recentEvents: [...state.recentEvents, input.eventKey].slice(-MAX_RECENT_EVENTS),
+  };
+}
+
+/** Reopen one matching dismissed finding after a user reopens its thread. */
+export function applyManualThreadReopening(
+  state: ReviewState,
+  input: { fingerprint: string; threadId: string; eventKey: string; at: string },
+): ReviewState {
+  if (state.recentEvents.includes(input.eventKey)) return state;
+  let applied = false;
+  const findings = state.findings.map((finding) => {
+    if (
+      finding.fingerprint !== input.fingerprint ||
+      finding.threadId !== input.threadId ||
+      finding.status !== 'dismissed'
+    ) {
+      return finding;
+    }
+    applied = true;
+    return transition(finding, 'open', input.at, 'manual', input.eventKey);
   });
   if (!applied) return state;
   return {

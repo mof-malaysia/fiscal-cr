@@ -95,7 +95,7 @@ function cfg(pipelineOverrides: Partial<ReviewConfig['pipeline']> = {}): ReviewC
 }
 
 describe('fast-path lifecycle coverage', () => {
-  it('does not claim changed paths when the provider response is truncated', async () => {
+  it('does not claim changed paths when a file has no patch', async () => {
     const ctx: PullRequestContext = {
       owner: 'o',
       repo: 'r',
@@ -105,14 +105,25 @@ describe('fast-path lifecycle coverage', () => {
       title: 'Change',
       body: '',
       diff: PATCH,
-      changedFiles: [{
-        filename: 'src/a.ts',
-        status: 'modified',
-        additions: 1,
-        deletions: 0,
-        patch: PATCH,
-      }],
-      fileContents: new Map([['src/a.ts', 'const value = 1;']]),
+      changedFiles: [
+        {
+          filename: 'src/a.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 0,
+          patch: PATCH,
+        },
+        {
+          filename: 'src/generated.ts',
+          status: 'modified',
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      fileContents: new Map([
+        ['src/a.ts', 'const value = 1;'],
+        ['src/generated.ts', 'const generated = true;'],
+      ]),
     };
     const llm = {
       chatCompletion: vi.fn(async () => ({
@@ -122,13 +133,13 @@ describe('fast-path lifecycle coverage', () => {
           findings: [],
         }),
         usage: { input: 1, output: 1, cached: 0 },
-        finishReason: 'length' as const,
+        finishReason: 'stop' as const,
       })),
     };
 
     const result = await runFastPath(llm, ctx, cfg(), new UsageTracker());
 
-    expect(result.reviewedPaths).toEqual([]);
+    expect(result.reviewedPaths).toEqual(['src/a.ts']);
   });
 });
 
