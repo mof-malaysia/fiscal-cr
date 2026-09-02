@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ReviewOrchestrator } from '../../src/review/orchestrator.js';
+import { handleFiscalcrThreadEvent } from '../../src/github/webhooks.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import type { ReviewConfig } from '../../src/config/schema.js';
 import { fingerprintAnnotation, fingerprintMarker } from '../../src/github/fingerprint.js';
@@ -7,6 +8,7 @@ import {
   EMPTY_COUNTS,
   parseStateMarker,
   renderStateMarker,
+  type LegacyReviewState,
   type ReviewState,
 } from '../../src/github/review-state.js';
 import type { ReviewAnnotation } from '../../src/types/review.js';
@@ -51,17 +53,19 @@ function priorState(overrides: Partial<ReviewState> = {}): ReviewState {
     ...overrides,
   };
 }
-
 interface Fixture {
   stickyState?: ReviewState;
+  legacyState?: LegacyReviewState;
   compareFiles?: string[];
+  changedFiles?: string[];
   threads?: Array<{ id: string; fp: string; path: string; severity: string }>;
 }
-
 function fakeOctokit(fixture: Fixture = {}) {
-  const stickyBody = fixture.stickyState
-    ? `summary\n${renderStateMarker(fixture.stickyState)}`
-    : null;
+  const stickyBody = fixture.legacyState
+    ? `summary\n${renderStateMarker(fixture.legacyState)}`
+    : fixture.stickyState
+      ? `summary\n${renderStateMarker(fixture.stickyState)}`
+      : null;
   return {
     checks: {
       create: vi.fn(async () => ({ data: { id: 42 } })),
@@ -82,10 +86,13 @@ function fakeOctokit(fixture: Fixture = {}) {
       listFiles: vi.fn(async ({ page }: { page: number }) =>
         page === 1
           ? {
-              data: [
-                { filename: 'src/a.ts', status: 'modified', additions: 2, deletions: 0, patch: PATCH },
-                { filename: 'src/b.ts', status: 'modified', additions: 2, deletions: 0, patch: PATCH },
-              ],
+              data: (fixture.changedFiles ?? ['src/a.ts', 'src/b.ts']).map((filename) => ({
+                filename,
+                status: 'modified',
+                additions: 2,
+                deletions: 0,
+                patch: PATCH,
+              })),
             }
           : { data: [] },
       ),
@@ -114,7 +121,7 @@ function fakeOctokit(fixture: Fixture = {}) {
     },
     issues: {
       listComments: vi.fn(async () => ({
-        data: stickyBody ? [{ id: 3, body: stickyBody }] : [],
+        data: stickyBody ? [{ id: 3, body: stickyBody, performed_via_github_app: { id: 1 } }] : [],
       })),
       createComment: vi.fn(async () => ({ data: { id: 9 } })),
       updateComment: vi.fn(async () => ({})),
@@ -217,6 +224,69 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(result.stats.critical).toBe(1);
   });
 
+  it('persists a new inline thread ID for immediate webhook resolution', async () => {
+    const octokit = fakeOctokit();
+    let stickyBody: string | null = null;
+    let threadListCalls = 0;
+    let resolved = false;
+    octokit.issues.listComments = vi.fn(async () => ({
+      data: stickyBody
+        ? [{ id: 3, body: stickyBody, performed_via_github_app: { id: 1 } }]
+        : [],
+    }));
+    octokit.issues.createComment = vi.fn(async ({ body }: { body: string }) => {
+      stickyBody = body;
+      return { data: { id: 3 } };
+    });
+    octokit.issues.updateComment = vi.fn(async ({ body }: { body: string }) => {
+      stickyBody = body;
+      return {};
+    });
+    octokit.graphql = vi.fn(async (query: string) => {
+      if (!query.includes('reviewThreads')) return {};
+      threadListCalls++;
+      const nodes = threadListCalls === 1
+        ? []
+        : [{
+            id: 'new-thread',
+            isResolved: resolved,
+            isOutdated: false,
+            path: FINDING.path,
+            comments: { nodes: [{ body: `**[critical]** ${FINDING.title}\n${fingerprintMarker(FP)}` }] },
+          }];
+      return {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes,
+            },
+          },
+        },
+      };
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([FINDING]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+    expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.threadId).toBe('new-thread');
+
+    resolved = true;
+    await handleFiscalcrThreadEvent(octokit as never, {
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      headSha: 'new-sha',
+      threadId: 'new-thread',
+      action: 'resolved',
+      eventId: 'delivery-new-thread',
+    });
+    expect(parseStateMarker(stickyBody!)!.v).toBe(2);
+    const afterWebhook = parseStateMarker(stickyBody!);
+    if (afterWebhook?.v === 2) {
+      expect(afterWebhook.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('dismissed');
+    }
+  });
+
   it('delta run: recurring finding is deduped, blocking review re-anchored to head', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
@@ -261,7 +331,7 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
   });
 
-  it('fix push: thread resolved, blocking review dismissed, no new review posted', async () => {
+  it('delta fix candidate: leaves thread open without full coverage', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
       threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
@@ -274,23 +344,49 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     const mutations = octokit.graphql.mock.calls.filter(([q]) =>
       (q as string).includes('resolveReviewThread'),
     );
-    expect(mutations).toHaveLength(1);
+    expect(mutations).toHaveLength(0);
 
     expect(octokit.pulls.dismissReview).toHaveBeenCalledWith(
       expect.objectContaining({
         review_id: 7,
-        message: expect.stringContaining('Issues addressed'),
+        message: expect.stringContaining('Superseded'),
       }),
     );
-    // Zero new findings and not blocking → no review at all
-    expect(octokit.pulls.createReview).not.toHaveBeenCalled();
+    // Existing open finding remains blocking; no lifecycle cleanup means a replacement review is posted.
+    expect(octokit.pulls.createReview).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'REQUEST_CHANGES', comments: [] }),
+    );
 
     const check = octokit.checks.update.mock.calls.at(-1)?.[0] as { conclusion: string };
-    expect(check.conclusion).toBe('success');
+    expect(check.conclusion).toBe('failure');
     const state = savedState(octokit);
-    expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
-    expect(state!.blockingReviewId).toBeNull();
-    expect(result.stats.critical).toBe(0);
+    expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('open');
+    expect(state!.blockingReviewId).toBe(11);
+    expect(result.stats.critical).toBe(1);
+  });
+
+  it('migrates a v1 marker before skipping a PR with no reviewable files', async () => {
+    const legacyState: LegacyReviewState = {
+      v: 1,
+      lastReviewedSha: 'old-sha',
+      baseSha: 'base-sha',
+      blockingReviewId: null,
+      postedFingerprints: [],
+      openCounts: { ...EMPTY_COUNTS },
+      runs: [],
+    };
+    const octokit = fakeOctokit({ legacyState, changedFiles: ['package-lock.json'] });
+    const llm = fastPathLLM([]);
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    expect(llm.chatCompletion).not.toHaveBeenCalled();
+    const migrated = savedState(octokit);
+    expect(migrated).toMatchObject({ v: 2, migratedFromV1: true });
+    expect(octokit.issues.updateComment).toHaveBeenCalledWith(
+      expect.objectContaining({ comment_id: 3 }),
+    );
   });
 
   it('skip run: no LLM calls, conclusion carried from open counts', async () => {

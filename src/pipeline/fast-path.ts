@@ -103,7 +103,7 @@ export async function runFastPath(
     score: parsed.score ?? deterministicScore(stats),
     findings: annotations,
     annotations: annotations.slice(0, config.review.maxAnnotations),
-    reviewedPaths: ctx.changedFiles.map((file) => file.filename),
+    reviewedPaths: truncated ? [] : ctx.changedFiles.map((file) => file.filename),
     stats,
     tokensUsed: usage.total(),
     walkthrough: parsed.walkthrough,

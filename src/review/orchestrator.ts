@@ -56,6 +56,7 @@ export interface OrchestratorOptions {
   createCheckRun?: boolean;
 }
 
+/** Map configured failure thresholds to the check conclusion. */
 function conclusionFor(
   counts: Record<Severity, number>,
   failOn: ReviewConfig['review']['failOn'],
@@ -76,6 +77,7 @@ interface StickyPublicationPlan {
   blocking: boolean;
 }
 
+/** Build the side-effect and lifecycle plan for one sticky publication. */
 function planStickyPublication(input: {
   result: ReviewResult;
   config: ReviewConfig;
@@ -83,9 +85,11 @@ function planStickyPublication(input: {
   threads: Array<{ fingerprint: string; id: string; isResolved: boolean }>;
   /** False means the API failed; preserve prior thread identities conservatively. */
   threadsAvailable: boolean;
+  /** Only successful, complete scope may prove an absent finding fixed. */
+  reviewedPaths: string[];
   headSha: string;
 }): StickyPublicationPlan {
-  const { result, config, state, threads, threadsAvailable, headSha } = input;
+  const { result, config, state, threads, threadsAvailable, reviewedPaths, headSha } = input;
   const commentsCfg = config.review.comments;
   const inventory = result.findings ?? result.annotations;
   const threadByFingerprint = new Map(
@@ -105,7 +109,7 @@ function planStickyPublication(input: {
   const reconciliation = reconcileFindingInventory(
     stateWithThreads,
     inventory,
-    result.reviewedPaths,
+    reviewedPaths,
     headSha,
     new Date().toISOString(),
   );
@@ -146,6 +150,7 @@ export class ReviewOrchestrator {
     private options: OrchestratorOptions = {},
   ) {}
 
+  /** Run extraction, review, publication, and lifecycle persistence for one PR. */
   async reviewPullRequest(params: ReviewParams): Promise<ReviewResult> {
     const { owner, repo, pullNumber, headSha } = params;
     const sticky = this.config.review.comments.mode === 'sticky';
@@ -187,10 +192,10 @@ export class ReviewOrchestrator {
       }
       logger.info({ pullNumber, scope: scope.mode, reason: scope.reason, migration }, 'Review scope decided');
 
-      if (scope.mode === 'skip' && stickyRef?.state) {
+      if (scope.mode === 'skip' && state && stickyRef) {
         return await this.completeSkippedRun(
           { owner, repo, checkRunId },
-          stickyRef.state,
+          state,
           scope.reason,
           { commentId: stickyRef.commentId, pullNumber, body: stickyRef.body, headSha },
         );
@@ -224,10 +229,10 @@ export class ReviewOrchestrator {
       }
 
       if (filteredFiles.length === 0) {
-        if (stickyRef?.state) {
+        if (state && stickyRef) {
           return await this.completeSkippedRun(
             { owner, repo, checkRunId },
-            stickyRef.state,
+            state,
             'no reviewable files in scope',
             { commentId: stickyRef.commentId, pullNumber, body: stickyRef.body, headSha },
           );
@@ -323,6 +328,7 @@ export class ReviewOrchestrator {
       );
     }
   }
+  /** Reuse a valid check run for this head or create a replacement. */
   private async ensureCheckRun(input: {
     owner: string;
     repo: string;
@@ -374,9 +380,10 @@ export class ReviewOrchestrator {
       });
     }
     if (
-      target.checkRunId !== null &&
       sticky?.body !== undefined &&
-      (state.checkRunId !== target.checkRunId || state.checkRunHeadSha !== sticky.headSha)
+      (state.migratedFromV1 === true ||
+        (target.checkRunId !== null &&
+          (state.checkRunId !== target.checkRunId || state.checkRunHeadSha !== sticky.headSha)))
     ) {
       await saveStickyComment(this.octokit, {
         owner: target.owner,
@@ -479,20 +486,22 @@ export class ReviewOrchestrator {
       logger.warn({ err }, 'Could not list review threads — lifecycle remains threadless');
     }
 
+    const reviewedPaths = scope.mode === 'full' ? result.reviewedPaths : [];
     const plan = planStickyPublication({
       result,
       config: this.config,
       state,
       threads,
       threadsAvailable,
+      reviewedPaths,
       headSha,
     });
-    if (commentsCfg.resolveOutdated && state) {
+    if (commentsCfg.resolveOutdated && state && threadsAvailable) {
       const resolved = await resolveOutdatedThreads(this.octokit, {
         owner,
         repo,
         pullNumber,
-        changedPaths: new Set(result.reviewedPaths),
+        changedPaths: new Set(reviewedPaths),
         currentFingerprints: new Set(
           (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
         ),
@@ -555,6 +564,26 @@ export class ReviewOrchestrator {
         plan.blocking,
       ),
     });
+    let findings = plan.findings;
+    if (outcome.posted.length > 0) {
+      try {
+        const refreshedThreads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
+        const postedFingerprints = new Set(outcome.posted.map((annotation) => fingerprintAnnotation(annotation)));
+        const threadByFingerprint = new Map(
+          refreshedThreads
+            .filter((thread) => !thread.isResolved)
+            .map((thread) => [thread.fingerprint, thread.id]),
+        );
+        findings = findings.map((finding) =>
+          postedFingerprints.has(finding.fingerprint)
+            ? { ...finding, threadId: threadByFingerprint.get(finding.fingerprint) ?? finding.threadId }
+            : finding,
+        );
+      } catch (err) {
+        logger.warn({ err }, 'Could not refresh newly posted review threads — preserving current state');
+      }
+    }
+
     if (plan.blocking) blockingReviewId = outcome.reviewId;
 
     // State is saved last, only after all publication side effects succeeded.
@@ -564,7 +593,7 @@ export class ReviewOrchestrator {
       lastReviewedSha: headSha,
       baseSha: prContext.baseSha,
       blockingReviewId,
-      findings: plan.findings,
+      findings,
       recentEvents: state?.recentEvents ?? [],
       autoResolvedThreads: [
         ...(state?.autoResolvedThreads ?? []),
@@ -613,6 +642,7 @@ export class ReviewOrchestrator {
     return { ...result, stats: plan.openCounts };
   }
 
+  /** Render the short body used for incremental review comments. */
   private buildIncrementalBody(
     result: ReviewResult,
     scope: ScopeDecision,
