@@ -21,15 +21,18 @@ const SEVERITY_ORDER: Severity[] = ['critical', 'warning', 'suggestion', 'nitpic
 /** Criticals survive the confidence filter down to this floor, flagged as low-confidence. */
 const CRITICAL_CONFIDENCE_FLOOR = 0.4;
 
+/** Rank severities from most to least important. */
 function severityRank(severity: Severity): number {
   return SEVERITY_ORDER.indexOf(severity);
 }
 
+/** Convert finding counts into a bounded deterministic review score. */
 export function deterministicScore(stats: Record<Severity, number>): number {
   const raw = 100 - 15 * stats.critical - 5 * stats.warning - 1 * stats.suggestion;
   return Math.max(0, Math.min(100, Math.round(raw)));
 }
 
+/** Count annotations by severity for check and summary output. */
 export function countBySeverity(annotations: ReviewAnnotation[]): Record<Severity, number> {
   const stats: Record<Severity, number> = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
   for (const a of annotations) stats[a.severity]++;
@@ -58,18 +61,22 @@ const PLAIN_WORD_SUBSTITUTIONS: Array<[RegExp, string]> = [
   [/\badditionally\b/gi, 'also'],
 ];
 
+/** Count whitespace-delimited words in a summary fragment. */
 function wordCount(text: string): number {
   return (text.match(/\S+/g) ?? []).length;
 }
 
+/** Capitalize a sentence when it begins with a lowercase word. */
 function capitalizeFirst(text: string): string {
   return text.replace(/^[a-z](?=[a-z]*\s|$)/, (char) => char.toUpperCase());
 }
 
+/** Check whether a line is formatted as a list item. */
 function isListItem(line: string): boolean {
   return /^\s*(?:[-*•]|\d+\.)\s+/.test(line);
 }
 
+/** Normalize prose for duplicate-summary comparison. */
 function normalizeForDedupe(text: string): string {
   return text
     .toLowerCase()
@@ -79,6 +86,7 @@ function normalizeForDedupe(text: string): string {
     .trim();
 }
 
+/** Remove repeated or redundant summary lines while preserving meaning. */
 function dedupeSummaryLines(text: string): string {
   const keptLines: string[] = [];
   const seen: string[] = [];
@@ -111,12 +119,14 @@ function dedupeSummaryLines(text: string): string {
   return keptLines.join('\n');
 }
 
+/** Split a prose line at sentence boundaries without common abbreviation breaks. */
 function splitIntoSentences(line: string): string[] {
   return line.split(
     /(?<!\b[A-Z]\.)(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\betc)(?<=[.!?])\s+(?=["'A-Za-z0-9])/,
   );
 }
 
+/** Choose a word boundary near the midpoint of a long sentence. */
 function findBestSplit(text: string): number {
   const total = wordCount(text);
   const midpoint = total / 2;
@@ -150,6 +160,7 @@ function findBestSplit(text: string): number {
   return bestIndex;
 }
 
+/** Shorten a sentence at a safe boundary unless code-like text is present. */
 function enforceSentenceLength(sentence: string): string {
   if (wordCount(sentence) <= MAX_SUMMARY_SENTENCE_WORDS) return sentence;
   if (/[`]|:\/\/|https?:|e\.g\./i.test(sentence)) return sentence;
@@ -167,6 +178,7 @@ function enforceSentenceLength(sentence: string): string {
   return `${first} ${capitalizeFirst(second)}`;
 }
 
+/** Simplify one summary line through bounded sentence-length passes. */
 function simplifySummaryLine(line: string, capitalizeStarts: boolean): string {
   let current = line;
   for (let attempt = 0; attempt < 5; attempt++) {

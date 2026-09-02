@@ -15,6 +15,7 @@ Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS
 | `pull_request.opened` / `synchronize` / `reopened` / `ready_for_review` | Auto-review, gated by `review.auto.{enabled,drafts,onOpen,onPush}` (reopened/ready follow `onOpen`) |
 | `issue_comment.created` | `parseFiscalCRCommand` matches `@fiscalcr [review|help]`. `review` → full re-review (`forceFull: true`); `help` → posts command table. Bare `@fiscalcr` defaults to `review`. Non-PR issue comments are ignored |
 | `pull_request.review_requested` | Gated by `review.auto.onReviewRequest` |
+| `pull_request_review_thread.resolved` / `unresolved` | Resolve matching FiscalCR threads to `dismissed`; unresolved events wait for the next review |
 
 Each handler: resolve installation Octokit → `loadConfig` → `createLLMProvider` (env overrides config) → `new ReviewOrchestrator(octokit, llm, config)` → `reviewPullRequest`.
 
@@ -52,8 +53,7 @@ location, thread identity, and bounded transitions. Open counts are derived
 from current open records; `postedFingerprints` and aggregate counter deltas
 are not lifecycle state.
 
-- `loadReviewState` scans comment pages by marker, never author. v1 is detected
-  separately for lazy migration.
+- `loadReviewState` scans comment pages for app-authored markers; user-authored markers are ignored. v1 is detected separately for lazy migration.
 - v1 migration forces the next review full and is explicitly lossy: old
   fixed/dismissed history is not fabricated. A failed migration save leaves v1
   intact.

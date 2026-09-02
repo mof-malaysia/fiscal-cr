@@ -175,13 +175,14 @@ for API calls.
 
 ### Webhook events
 
-| Event                           | Trigger                     |
-| ------------------------------- | --------------------------- |
-| `pull_request.opened`           | PR created                  |
-| `pull_request.synchronize`      | New commits pushed          |
-| `pull_request.review_requested` | Review requested            |
-| `issue_comment.created`         | `@fiscalcr` command comment |
-
+| Event                                      | Trigger                     |
+| ------------------------------------------ | --------------------------- |
+| `pull_request.opened`                      | PR created                  |
+| `pull_request.synchronize`                 | New commits pushed          |
+| `pull_request.review_requested`            | Review requested            |
+| `pull_request_review_thread.resolved`      | FiscalCR thread resolved    |
+| `pull_request_review_thread.unresolved`    | FiscalCR thread reopened    |
+| `issue_comment.created`                    | `@fiscalcr` command comment |
 ## Configuration
 
 Create `.fiscalcr-review.yml` in your repository root:
@@ -418,7 +419,9 @@ is used in Action and App mode.
 
 **Limitations**: fork PRs run with a read-only token, so reviews cannot be posted
 (pre-existing GitHub Actions restriction). Thread auto-resolution needs the
-default `pull-requests: write` permission; when unavailable it degrades to a
+default `pull-requests: write` permission; manual resolution additionally
+requires the App's `pull_request_review_thread` webhook subscription (read
+access to Pull requests). When unavailable, lifecycle cleanup degrades to a
 log line. Webhook transient failures return non-2xx for observability, but
 GitHub redelivery durability is not guaranteed by FiscalCR. Use the
 `concurrency` group shown in the Quick Start so concurrent runs on the same PR
