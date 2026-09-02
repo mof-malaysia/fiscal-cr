@@ -37,62 +37,93 @@ Triggered by workflow `on: pull_request` events. Reads inputs, loads repo config
 
 ## Sticky state (`review-state.ts`)
 
-The single source of persisted state — a hidden HTML marker embedded in one sticky summary comment per PR, identical in both modes, no external storage:
+The single persisted state is a bounded hidden `v2` marker embedded in one
+sticky summary comment per PR:
 
 ```
-<!-- fiscalcr:state:v1 {json} -->
+<!-- fiscalcr:state:v2 {json} -->
 ```
 
-`ReviewState`: `{ v: 1, lastReviewedSha, baseSha, blockingReviewId, postedFingerprints[], openCounts{}, runs[] }`.
+`ReviewState` stores `{ v: 2, lastReviewedSha, baseSha, blockingReviewId,
+findings[], recentEvents[], autoResolvedThreads[], checkRunId,
+checkRunHeadSha, runs[] }`. Each finding record is keyed by the existing
+fingerprint and has `open`, `fixed`, or `dismissed` status, current severity,
+location, thread identity, and bounded transitions. Open counts are derived
+from current open records; `postedFingerprints` and aggregate counter deltas
+are not lifecycle state.
 
-- `loadReviewState` scans comment pages for the marker prefix — **by marker, never by author** (works for both `github-actions[bot]` and App bot users).
-- `parseStateMarker` validates and fills defaults for optional fields; corrupt/unknown markers → `null` (treated as no state).
-- `saveStickyComment` updates in place; re-checks for a concurrently created sticky comment before creating; on update failure (deleted comment) creates a new one.
-- FIFO caps: `postedFingerprints` 300, `runs` 20.
-- `renderStickyComment` renders summary + walkthrough + open counts + demoted findings + run history + the marker.
+- `loadReviewState` scans comment pages by marker, never author. v1 is detected
+  separately for lazy migration.
+- v1 migration forces the next review full and is explicitly lossy: old
+  fixed/dismissed history is not fabricated. A failed migration save leaves v1
+  intact.
+- Reviews reconcile a complete finding inventory against an explicit successful
+  reviewed-path manifest. Failed detector groups cannot fix findings.
+- Active records render in the summary; fixed/dismissed records stay hidden.
+  Transition history, terminal records, recent event identities, and run
+  metadata are bounded. Old terminal records are evicted to fit a conservative
+  marker budget; active state is never silently truncated.
+- `saveStickyComment` updates in place, re-checks before creating, rejects an
+  oversized body before replacement, and creates a replacement after a deleted
+  comment.
 
 ## Fingerprints (`fingerprint.ts`)
 
-Stable identity for a finding across runs: `sha256(path \0 category \0 normalizedTitle)` truncated to 16 hex. `normalizeTitle` lowercases, strips backticks, maps digits → `#` and non-alphanumerics → spaces, so cosmetic drift (casing, backticks, line numbers, counts) never produces a "new" finding. Deliberately excludes line numbers and body text.
-
-Every inline comment we post carries a hidden marker `<!-- fiscalcr:fp:v1:<fp> -->`; `extractFingerprint` reads it back from thread comments. Dedupe compares against `postedFingerprints` from state — including findings whose comments a human deleted (deleting a bot comment never causes a re-nag).
+Stable identity remains `sha256(path \0 category \0 normalizedTitle)` truncated
+to 16 hex. Severity changes update a record in place. Inline comments retain
+their existing `fiscalcr:fp:v1` marker.
 
 ## Reviews & comments (`comments.ts`)
 
-- `partitionPlaceable` splits annotations by whether `endLine` is a commentable line on the diff right side (`diff-analyzer.commentableLines`); unplaceable → check-run annotations + sticky section.
-- `createIncrementalReview` (sticky mode): posts only this run's new findings; nitpicks never inline; zero placeable + `COMMENT` event → nothing posted; a 422 on inline comments retries once body-only.
-- `dismissBlockingReview`: always dismisses the old blocking review before re-posting; failures degrade to a log line.
-- `createPRReview` (legacy mode): one full stacked review per run, `REQUEST_CHANGES` when `failOn` threshold hit.
+- `partitionPlaceable` separates inline-capable annotations from check-run
+  annotations and summary metadata.
+- `createIncrementalReview` posts only newly-open publishable findings;
+  threadless/demoted findings remain in the lifecycle inventory but cannot be
+  manually dismissed.
+- `dismissBlockingReview` always dismisses the old blocking review before a
+  replacement; failures degrade to a log line.
 
 ## Threads (`threads.ts`)
 
-- `listFiscalcrThreads`: GraphQL-paginated review threads; keeps only threads whose first comment carries a fingerprint marker; parses severity from the `**[severity]**` prefix.
-- `resolveOutdatedThreads`: resolves unresolved threads whose file changed in this run and whose fingerprint did not recur; replies with "Resolved automatically" then resolves. Every failure (403 on default tokens, per-thread mutation errors) degrades to logging — cleanup never fails a review.
+`listFiscalcrThreads` keeps only current, FiscalCR-marked threads. Fixed inline
+findings are automatically resolved when enabled. Manual resolution is handled
+by the App's `pull_request_review_thread.resolved` webhook only when the current
+thread and record identity match; only an open thread-backed record can become
+dismissed. Unresolved events have no immediate lifecycle effect. Automatic
+resolution remains `fixed`, never `dismissed`.
+
+## Checks (`checks.ts`)
+
+App reviews persist check id plus head SHA. A missing, inaccessible, deleted, or
+wrong-head check receives a replacement; old check annotations are not rewritten.
+Action mode keeps `createCheckRun: false` and remains review-time only.
 
 ## Data/control flow
 
 ```text
 webhook / action inputs
   → octokit (installation-scoped or workflow token)
-  → loadConfig(octokit, owner, repo)
   → ReviewOrchestrator.reviewPullRequest
-      → checks.create → … (see review-pipeline.md)
-      → publishSticky:
-          dedupe via postedFingerprints
-          → resolveOutdatedThreads (GraphQL)
-          → checks.update (cumulative conclusion)
-          → pulls.dismissReview (old blocking) → pulls.createReview (new findings)
-          → issues.updateComment / createComment (sticky state) — LAST
+      → load v2/v1 state → force full on v1 migration → decide scope
+      → complete successful inventory + reviewed-path manifest
+      → reconcile records → resolve fixed threads → complete check
+      → dismiss/repost blocking review → post newly-open inline findings
+      → update sticky marker LAST
 ```
+
+State updates use bounded event identities and idempotent reread/retry. The
+latest completed review is eventual authority; strict linearizable review-wins
+ordering is not claimed.
 
 ## Invariants
 
 - State is saved last, only after posting succeeded.
-- Check run conclusion reflects cumulative open counts, not the current run's delta.
-- One live blocking review at a time, always re-anchored to the newest commit.
-- Marker-based identification everywhere (state + fingerprints) — never author-based.
-- Dedupe persists across full re-reviews and human deletion of bot comments.
-- All cleanup failures (thread resolve, review dismiss, sticky update) degrade to logs — never fail the review.
+- Check conclusion derives from current open records.
+- The successful reviewed-scope manifest is the only authority that can mark an
+  absent open finding fixed.
+- Current thread events are marker-identified, status-gated, and idempotent.
+- Cleanup failures degrade to logs; webhook transient failures propagate as
+  non-2xx while permanent stale/unsupported events are acknowledged.
 
 ## Relevant tests
 

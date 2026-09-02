@@ -37,9 +37,13 @@ Token budget: `estimateTokens(patches) + estimateTokens(contents)` over changed 
 
 ## Publishing
 
-- **Legacy** (`review.comments.mode: 'legacy'`): `publishLegacy` → `createPRReview` stacks a full review per run. No state, no dedupe.
-- **Sticky** (`publishSticky`): dedupe new annotations against `state.postedFingerprints`; overflow past `maxOpenComments` demotes to check-run annotations; `resolveOutdatedThreads` cleans fixed findings; open counts re-derived (full) or adjusted (delta); check run conclusion from cumulative `openCounts`; old blocking review always dismissed, new one posted if still failing; one small incremental review with only new findings (zero + non-blocking → nothing posted); **sticky comment with the new state is saved last**.
-
+- **Legacy** (`review.comments.mode: 'legacy'`): `publishLegacy` stacks a full
+  review per run. No lifecycle state.
+- **Sticky** (`publishSticky`): the pipeline returns a complete lifecycle
+  finding inventory plus the paths covered by successful detectors. The
+  orchestrator reconciles v2 per-fingerprint records, derives open counts,
+  resolves fixed inline threads, publishes only newly-open annotations, then
+  saves the sticky marker last.
 ## Data/control flow
 
 ```text

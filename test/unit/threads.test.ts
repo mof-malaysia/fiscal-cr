@@ -10,6 +10,7 @@ function threadNode(input: {
   path: string;
   fp?: string;
   isResolved?: boolean;
+  isOutdated?: boolean;
   severity?: string;
 }) {
   const body = input.fp
@@ -18,6 +19,7 @@ function threadNode(input: {
   return {
     id: input.id,
     isResolved: input.isResolved ?? false,
+    isOutdated: input.isOutdated ?? false,
     path: input.path,
     comments: { nodes: [{ body }] },
   };
@@ -61,12 +63,19 @@ describe('listFiscalcrThreads', () => {
       { id: 't1', isResolved: false, path: 'src/a.ts', fingerprint: FP_A, severity: 'warning' },
     ]);
   });
+  it('excludes outdated threads from the current-thread view', async () => {
+    const { octokit } = graphqlOctokit([
+      threadNode({ id: 'current', path: 'src/a.ts', fp: FP_A }),
+      threadNode({ id: 'outdated', path: 'src/a.ts', fp: FP_B, isOutdated: true }),
+    ]);
+    const threads = await listFiscalcrThreads(octokit, params);
+    expect(threads.map((thread) => thread.id)).toEqual(['current']);
+  });
 });
-
 describe('resolveOutdatedThreads', () => {
   it('resolves unresolved threads on changed paths whose finding did not recur', async () => {
     const { octokit, graphql } = graphqlOctokit([
-      threadNode({ id: 'gone', path: 'src/a.ts', fp: FP_A }), // fixed → resolve
+      threadNode({ id: 'gone', path: 'src/a.ts', fp: FP_A, isOutdated: true }), // fixed → resolve outdated thread
       threadNode({ id: 'still', path: 'src/a.ts', fp: FP_B }), // recurred → keep
       threadNode({ id: 'other', path: 'src/untouched.ts', fp: FP_A }), // path not in scope → keep
       threadNode({ id: 'done', path: 'src/a.ts', fp: FP_A, isResolved: true }), // already resolved
