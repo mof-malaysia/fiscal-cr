@@ -1,12 +1,22 @@
 import type { Octokit } from '@octokit/rest';
 import type { Webhooks } from '@octokit/webhooks';
+import {
+  applyManualThreadReopening,
+  applyManualThreadResolution,
+  loadReviewState,
+  migrateLegacyState,
+  refreshStickyCommentState,
+  saveStickyComment,
+  withReviewStateLock,
+  type FindingRecord,
+} from './review-state.js';
+import { listFiscalcrThreads } from './threads.js';
 import { ReviewOrchestrator } from '../review/orchestrator.js';
 import { loadConfig } from '../config/loader.js';
 import { modelForRole } from '../config/schema.js';
 import { applyModelOverride, applyProviderOverride } from '../config/overrides.js';
 import { createLLMProvider } from '../providers/factory.js';
 import { logger } from '../utils/logger.js';
-
 interface AppContext {
   apiKey: string;
   provider?: string;
@@ -19,6 +29,7 @@ interface AppContext {
 type FiscalCRCommand = 'review' | 'help' | 'unknown';
 
 
+/** Register App-mode review, command, and review-thread lifecycle handlers. */
 export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
   // Auto-review on PR opened, new commits pushed, reopened, or marked ready
   webhooks.on(
@@ -178,8 +189,127 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     });
     await orchestrator.reviewPullRequest({ owner, repo, pullNumber, headSha });
   });
+  webhooks.on(
+    ['pull_request_review_thread.resolved', 'pull_request_review_thread.unresolved'] as unknown as Parameters<
+      Webhooks['on']
+    >[0],
+    async ({ payload, id }) => {
+      const event = payload as unknown as ThreadWebhookPayload;
+      const installationId = event.installation?.id;
+      if (!installationId) return;
+      const octokit = await appCtx.getInstallationOctokit(installationId);
+      await handleFiscalcrThreadEvent(octokit, {
+        owner: event.repository.owner.login,
+        repo: event.repository.name,
+        pullNumber: event.pull_request.number,
+        headSha: event.pull_request.head.sha,
+        threadId: event.thread.node_id ?? event.thread.id,
+        action: event.action,
+        eventId: id,
+      });
+    },
+  );
 }
 
+interface ThreadWebhookPayload {
+  action: 'resolved' | 'unresolved';
+  installation?: { id?: number };
+  repository: { owner: { login: string }; name: string };
+  pull_request: { number: number; head: { sha: string } };
+  thread: { id?: string | number; node_id?: string };
+}
+
+
+/** Apply one thread lifecycle delivery while serializing updates per pull request. */
+export async function handleFiscalcrThreadEvent(
+  octokit: Octokit,
+  input: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    headSha: string;
+    threadId?: string | number;
+    action: 'resolved' | 'unresolved';
+    eventId?: string;
+  },
+): Promise<void> {
+  if (!input.threadId) return;
+  const threadId = String(input.threadId);
+  const eventKey = input.eventId ?? `${input.action}:${threadId}:${input.headSha}`;
+  const lockKey = `${input.owner}/${input.repo}#${input.pullNumber}`;
+  return withReviewStateLock(lockKey, async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const sticky = await loadReviewState(octokit, input);
+      const state = sticky?.state ?? (sticky?.legacyState ? migrateLegacyState(sticky.legacyState) : null);
+      const threads = await listFiscalcrThreads(octokit, input);
+      if (!sticky || !state) {
+        const thread = threads.find((candidate) => candidate.id === threadId);
+        if (thread && thread.isResolved === (input.action === 'resolved')) {
+          throw new Error('FiscalCR lifecycle state unavailable; retrying thread webhook');
+        }
+        return;
+      }
+      const thread = threads.find((candidate) => candidate.id === threadId);
+      if (!thread || thread.isResolved !== (input.action === 'resolved')) return;
+
+      let stateForEvent = state;
+      if (
+        input.action === 'resolved' &&
+        !stateForEvent.findings.some((finding) => finding.fingerprint === thread.fingerprint)
+      ) {
+        const migratedFinding: FindingRecord = {
+          fingerprint: thread.fingerprint,
+          status: 'open',
+          severity: thread.severity ?? 'suggestion',
+          path: thread.path,
+          startLine: 0,
+          endLine: 0,
+          title: '',
+          threadId,
+          lastSeenSha: input.headSha,
+          transitions: [],
+        };
+        stateForEvent = {
+          ...stateForEvent,
+          findings: [...stateForEvent.findings, migratedFinding],
+        };
+      }
+      const updated =
+        input.action === 'resolved'
+          ? applyManualThreadResolution(stateForEvent, {
+              fingerprint: thread.fingerprint,
+              threadId,
+              eventKey,
+              at: new Date().toISOString(),
+            })
+          : applyManualThreadReopening(stateForEvent, {
+              fingerprint: thread.fingerprint,
+              threadId,
+              eventKey,
+              at: new Date().toISOString(),
+            });
+      if (updated === stateForEvent) return;
+      try {
+        await saveStickyComment(octokit, {
+          owner: input.owner,
+          repo: input.repo,
+          pullNumber: input.pullNumber,
+          commentId: sticky.commentId,
+          expectedEtag: sticky.etag,
+          body: refreshStickyCommentState(sticky.body, updated),
+        });
+        return;
+      } catch (err) {
+        if (attempt === 1) throw err;
+        logger.warn({ err, threadId }, 'Thread event state save failed — rereading and retrying');
+      }
+    }
+  });
+}
+
+
+
+/** Parse a supported FiscalCR command from an issue-comment body. */
 function parseFiscalCRCommand(body: string): FiscalCRCommand {
   const match = body.match(/(?:^|\s)@fiscalcr(?:\s+(\w+))?(?=$|\s|[.,!?:;])/i);
   if (!match) return 'unknown';

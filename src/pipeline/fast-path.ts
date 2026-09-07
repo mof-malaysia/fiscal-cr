@@ -13,9 +13,10 @@ import {
 } from './pass3-synthesis.js';
 import { reviewTemperature } from './temperature.js';
 import { reviewMaxOutputTokens } from './max-output.js';
-import type { UsageTracker } from './usage.js';
+import { commentableRanges } from '../review/diff-analyzer.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import type { UsageTracker } from './usage.js';
 
 /**
  * Fast path: one combined call for lightweight PRs (and the `pipeline.enabled: false`
@@ -80,7 +81,9 @@ export async function runFastPath(
     );
   }
 
-  const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config);
+  const annotations = validateAndRankFindings(parsed.findings, ctx.changedFiles, config, {
+    capAnnotations: false,
+  });
   const stats = countBySeverity(annotations);
   usage.emit({
     type: 'stage_result',
@@ -99,7 +102,14 @@ export async function runFastPath(
       ? formatSummaryProse(parsed.summary || 'Automated review completed.')
       : formatSummaryLines(parsed.summary || 'Automated review completed.'),
     score: parsed.score ?? deterministicScore(stats),
-    annotations,
+    findings: annotations,
+    annotations: annotations.slice(0, config.review.maxAnnotations),
+    reviewedPaths: truncated
+      ? []
+      : ctx.changedFiles.filter((file) => Boolean(file.patch)).map((file) => file.filename),
+    reviewedRanges: truncated
+      ? []
+      : ctx.changedFiles.flatMap((file) => (file.patch ? commentableRanges(file.filename, file.patch) : [])),
     stats,
     tokensUsed: usage.total(),
     walkthrough: parsed.walkthrough,

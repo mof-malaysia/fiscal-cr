@@ -3,8 +3,9 @@ import { ReviewOrchestrator } from '../../src/review/orchestrator.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import type { ReviewConfig } from '../../src/config/schema.js';
 import type { ChatCompletionParams } from '../../src/providers/interface.js';
-import type { TelemetryEvent } from '../../src/pipeline/usage.js';
-
+import { UsageTracker, type TelemetryEvent } from '../../src/pipeline/usage.js';
+import { runFastPath } from '../../src/pipeline/fast-path.js';
+import type { PullRequestContext } from '../../src/types/review.js';
 const PATCH = '@@ -1,2 +1,3 @@\n line one\n+line two\n+line three';
 
 function fakeOctokit(files: Array<{ filename: string; patch?: string }>) {
@@ -92,6 +93,55 @@ function cfg(pipelineOverrides: Partial<ReviewConfig['pipeline']> = {}): ReviewC
     pipeline: { ...DEFAULT_CONFIG.pipeline, maxRetries: 0, ...pipelineOverrides },
   };
 }
+
+describe('fast-path lifecycle coverage', () => {
+  it('does not claim changed paths when a file has no patch', async () => {
+    const ctx: PullRequestContext = {
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      baseSha: 'base',
+      headSha: 'head',
+      title: 'Change',
+      body: '',
+      diff: PATCH,
+      changedFiles: [
+        {
+          filename: 'src/a.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 0,
+          patch: PATCH,
+        },
+        {
+          filename: 'src/generated.ts',
+          status: 'modified',
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      fileContents: new Map([
+        ['src/a.ts', 'const value = 1;'],
+        ['src/generated.ts', 'const generated = true;'],
+      ]),
+    };
+    const llm = {
+      chatCompletion: vi.fn(async () => ({
+        content: JSON.stringify({
+          summary: 'Partial',
+          score: 80,
+          findings: [],
+        }),
+        usage: { input: 1, output: 1, cached: 0 },
+        finishReason: 'stop' as const,
+      })),
+    };
+
+    const result = await runFastPath(llm, ctx, cfg(), new UsageTracker());
+
+    expect(result.reviewedPaths).toEqual(['src/a.ts']);
+  });
+});
 
 const groupResponse = (title: string) => ({
   groupSummary: 'Group reviewed',

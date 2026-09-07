@@ -29,8 +29,8 @@ Router for this repo. Full walkthrough: [`index.md`](index.md). Subsystem deep-d
 - **`action/dist/` is generated** by `pnpm build:action` (ncc bundle) and committed. Rebuild and commit the result; never hand-edit. `tsconfig` excludes it.
 - **Config changes touch schema + defaults together.** Invalid repo config fails fast by design (`loadConfig` throws `ConfigError`); missing config falls back to defaults.
 - **Behavioral changes need focused tests** (`pnpm test`, vitest) and a green `pnpm lint` (`tsc --noEmit`).
-- **Review state is a hidden marker** inside the sticky PR comment (`<!-- fiscalcr:state:v1 … -->`) — no external storage. Changing the `ReviewState` shape requires bumping the marker version and handling old markers.
-- **Don't break review invariants**: check run reflects *cumulative* PR health (open counts), fingerprints are stable identities (dedupe), state is saved last, and every GitHub cleanup failure degrades to a log line.
+- **Review state is a bounded v2 hidden marker** inside the sticky PR comment (`<!-- fiscalcr:state:v2 … -->`) — no external storage. It tracks open/fixed/dismissed records, recent event identities, check identity, and bounded runs; v1 migration is lazy and explicitly lossy.
+- **Don't break review invariants**: check run reflects *cumulative* PR health derived from open records, fingerprints are stable identities (dedupe), successful reviewed paths are the only fix authority, state is saved last, and every GitHub cleanup failure degrades to a log line.
 
 ## Task → path quick map
 

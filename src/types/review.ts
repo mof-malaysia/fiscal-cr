@@ -23,15 +23,27 @@ export interface ReviewAnnotation {
   confidence?: number;
 }
 
+export interface ReviewedRange {
+  path: string;
+  startLine: number;
+  endLine: number;
+}
+
 export interface WalkthroughEntry {
   path: string;
   summary: string;
 }
-
 export interface ReviewResult {
   summary: string;
   score: number; // 0-100
+  /** Complete, validated findings inventory used for lifecycle reconciliation. */
+  findings: ReviewAnnotation[];
+  /** Findings eligible for publication after annotation caps. */
   annotations: ReviewAnnotation[];
+  /** Paths whose detector execution completed successfully for this result. */
+  reviewedPaths: string[];
+  /** Line ranges covered by successful detector execution, when available. */
+  reviewedRanges?: ReviewedRange[];
   stats: Record<Severity, number>;
   tokensUsed: {
     input: number;

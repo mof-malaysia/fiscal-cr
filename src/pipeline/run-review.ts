@@ -1,4 +1,4 @@
-import type { PullRequestContext, ReviewResult } from '../types/review.js';
+import type { PullRequestContext, ReviewResult, ReviewedRange } from '../types/review.js';
 import type { ReviewConfig } from '../config/schema.js';
 import type { LLMProvider } from '../providers/interface.js';
 import { runIntentPass } from './pass1-intent.js';
@@ -9,6 +9,7 @@ import { runFastPath } from './fast-path.js';
 import type { UsageTracker } from './usage.js';
 import { estimateTokens } from '../utils/tokens.js';
 import { ReviewError } from '../utils/errors.js';
+import { commentableRanges } from '../review/diff-analyzer.js';
 import { logger } from '../utils/logger.js';
 
 export type ReviewRoute = 'fast-path' | 'multi-pass';
@@ -89,11 +90,33 @@ export async function runReviewPipeline(
     throw new ReviewError('All review groups failed', 'review-pass');
   }
 
-  // Pass 3: deterministic validation + LLM synthesis
+  // Lifecycle reconciliation needs every validated finding, not only the
+  // bounded set that can be published as annotations.
   const findings = validateAndRankFindings(
     outcomes.flatMap((o) => o.findings),
     ctx.changedFiles,
     config,
+    { capAnnotations: false },
   );
-  return synthesize(llm, { ctx, intent, outcomes, findings }, config, usage);
+  const successfulFiles = outcomes
+    .filter((outcome) => !outcome.failed)
+    .flatMap((outcome) => outcome.group.files)
+    .filter((file) => Boolean(file.patch));
+  const reviewedPaths = successfulFiles.map((file) => file.filename);
+  const reviewedRanges: ReviewedRange[] = successfulFiles.flatMap((file) =>
+    file.patch ? commentableRanges(file.filename, file.patch) : [],
+  );
+  return synthesize(
+    llm,
+    {
+      ctx,
+      intent,
+      outcomes,
+      findings,
+      reviewedPaths: [...new Set(reviewedPaths)],
+      reviewedRanges,
+    },
+    config,
+    usage,
+  );
 }

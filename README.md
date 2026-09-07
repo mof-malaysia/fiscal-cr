@@ -175,12 +175,16 @@ for API calls.
 
 ### Webhook events
 
-| Event                           | Trigger                     |
-| ------------------------------- | --------------------------- |
-| `pull_request.opened`           | PR created                  |
-| `pull_request.synchronize`      | New commits pushed          |
-| `pull_request.review_requested` | Review requested            |
-| `issue_comment.created`         | `@fiscalcr` command comment |
+| Event                                      | Trigger                     |
+| ------------------------------------------ | --------------------------- |
+| `pull_request.opened`                      | PR created                  |
+| `pull_request.synchronize`                 | New commits pushed          |
+| `pull_request.reopened`                    | PR reopened                 |
+| `pull_request.ready_for_review`            | Draft PR marked ready       |
+| `pull_request.review_requested`            | Review requested            |
+| `pull_request_review_thread.resolved`      | Thread marked resolved      |
+| `pull_request_review_thread.unresolved`    | Thread reopened             |
+| `issue_comment.created`                    | `@fiscalcr` command comment |
 
 ## Configuration
 
@@ -385,30 +389,47 @@ PR Event -> Extract Context -> Filter Files
 
 ### Incremental reviews & comment lifecycle
 
-FiscalCR keeps its review state in a hidden marker inside one **sticky summary
-comment** per PR — no external storage, works identically in Action and App mode.
+FiscalCR keeps a bounded findings lifecycle in a hidden `v2` marker inside one
+sticky summary comment per PR — no external storage, and the same state model
+is used in Action and App mode.
 
-- **First run** reviews the whole PR and posts the sticky summary plus inline comments.
-- **Each push** re-reviews only the files changed since the last reviewed commit
-  (`review.incremental`). The sticky comment is updated in place; a small review
-  with **only new findings** is posted — zero new findings means no review at all.
-- **Findings are fingerprinted** (`path + category + normalized title`), so the same
-  issue is never posted twice, even across full re-reviews. Deleting a bot comment
-  will not cause a re-nag.
-- **Fixed findings are cleaned up**: threads whose file changed but whose finding
-  did not recur are resolved automatically, and a passing run dismisses the
-  blocking REQUEST_CHANGES review ("Issues addressed as of `abc1234`").
-- **The check run reflects cumulative PR health** — an unfixed critical from an
-  earlier run keeps the check red even when a later push adds nothing new.
-- `@fiscalcr review` always forces a full re-review (still deduped).
-- Base branch changes, force-pushes, and oversized deltas automatically fall back
-  to a full review.
+- Each record is keyed by the existing stable fingerprint and has status
+  `open`, `fixed`, or `dismissed`. Re-observation reopens fixed/dismissed
+  records and updates severity in place.
+- A successful review reconciles only its explicit reviewed-path manifest.
+  Findings absent from that manifest remain unchanged; failed detector groups
+  therefore never fix findings. Fixed inline threads are resolved
+  automatically when permissions allow.
+- Human resolution of a current FiscalCR thread marks an open, thread-backed
+  finding `dismissed`. Threadless and demoted findings cannot be dismissed.
+- An `unresolved` event reopens a matching dismissed finding after validating
+  the current FiscalCR thread identity. Action mode has no manual-resolution
+  webhook path.
+- The summary renders active findings only. Transition history, terminal
+  records, recent event identities, and run display history are bounded.
+  Terminal records are evicted oldest-first when needed; active state is never
+  silently truncated, and an oversized marker leaves the prior valid comment
+  unchanged. Evicted fingerprints can return as new records.
+- v1 migration is lazy, forces an explicitly lossy full review, and does not
+  invent old fixed/dismissed statuses. If migration persistence fails, the v1
+  marker remains intact.
+- App check identity and head SHA are persisted. Missing, inaccessible, or
+  wrong-head checks get replacements; old check annotations are not rewritten.
+- State writes happen last. Retries use idempotent rereads and bounded event
+  identities. The latest completed review is the eventual authority; FiscalCR
+  does not claim strict linearizable review ordering.
+- `@fiscalcr review` always forces a full re-review. Base branch changes,
+  force-pushes, and oversized deltas automatically fall back to a full review.
 
 **Limitations**: fork PRs run with a read-only token, so reviews cannot be posted
 (pre-existing GitHub Actions restriction). Thread auto-resolution needs the
-default `pull-requests: write` permission; when unavailable it degrades to a log
-line. Use the `concurrency` group shown in the Quick Start so concurrent runs on
-the same PR don't race each other's state.
+default `pull-requests: write` permission; manual resolution additionally
+requires the App's `pull_request_review_thread` webhook subscription (read
+access to Pull requests). When unavailable, lifecycle cleanup degrades to a
+log line. Webhook transient failures return non-2xx for observability, but
+GitHub redelivery durability is not guaranteed by FiscalCR. Use the
+`concurrency` group shown in the Quick Start so concurrent runs on the same PR
+do not race state.
 
 ## Cost model
 
