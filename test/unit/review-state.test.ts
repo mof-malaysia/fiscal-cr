@@ -15,8 +15,10 @@ import {
   renderStickyComment,
   saveStickyComment,
   MAX_STATE_MARKER_BYTES,
+  MAX_STICKY_COMMENT_BYTES,
   type ReviewState,
 } from '../../src/github/review-state.js';
+import type { DiagramArtifact } from '../../src/types/diagram.js';
 import type { ReviewResult } from '../../src/types/review.js';
 
 function state(overrides: Partial<ReviewState> = {}): ReviewState {
@@ -69,6 +71,33 @@ function result(): ReviewResult {
     tokensUsed: { input: 100, output: 50, cached: 0 },
     intent: 'Adds a feature',
     walkthrough: [{ path: 'src/a.ts', summary: 'tweak' }],
+  };
+}
+function diagram(): DiagramArtifact {
+  return {
+    nodes: [{ id: 'n1', label: 'Auth handler', change: 'modified', evidence: ['e1'] }],
+    edges: [],
+    evidence: [{ id: 'e1', path: 'src/auth.ts' }],
+    headSha: 'abc1234def567890',
+    scope: 'full',
+    partial: false,
+  };
+}
+
+// A large artifact used to push the sticky body over its byte budget.
+function bigDiagram(): DiagramArtifact {
+  return {
+    nodes: Array.from({ length: 60 }, (_, i) => ({
+      id: `n${i}`,
+      label: 'x'.repeat(200),
+      change: 'modified' as const,
+      evidence: [],
+    })),
+    edges: [],
+    evidence: [],
+    headSha: 'abc1234def567890',
+    scope: 'full',
+    partial: false,
   };
 }
 
@@ -342,6 +371,96 @@ describe('renderStickyComment', () => {
     expect(refreshed).toContain('Open findings: 0');
     expect(refreshed).not.toContain('| Existing |');
     expect(parseStateMarker(refreshed)).toEqual(updated);
+  });
+  it('renders the optional diagram once, after the walkthrough and before open findings', () => {
+    const body = renderStickyComment({
+      result: { ...result(), diagram: diagram() },
+      state: state(),
+      demoted: [],
+    });
+    expect(body).toContain('### Visual changes');
+    expect(body).toContain('```mermaid');
+    expect(body.indexOf('### Visual changes')).toBeGreaterThan(body.indexOf('Walkthrough'));
+    expect(body.indexOf('### Visual changes')).toBeLessThan(body.indexOf('### Open findings:'));
+    expect(body.match(/### Visual changes/g)).toHaveLength(1);
+    expect(body.match(/```mermaid/g)).toHaveLength(1);
+    expect(body).toContain('### Open findings: 1');
+    expect(parseStateMarker(body)).toEqual(state());
+  });
+
+  it('keeps the state marker and findings valid while rendering the diagram', () => {
+    const body = renderStickyComment({
+      result: { ...result(), diagram: diagram() },
+      state: state(),
+      demoted: [],
+    });
+    expect(parseStateMarker(body)).toEqual(state());
+    expect(body).toContain('critical | 1');
+  });
+
+  it('preserves the diagram across a lifecycle refresh', () => {
+    const body = renderStickyComment({
+      result: { ...result(), diagram: diagram() },
+      state: state(),
+      demoted: [],
+    });
+    const updated = state({ findings: [{ ...state().findings[0], status: 'dismissed' }] });
+    const refreshed = refreshStickyCommentState(body, updated);
+    expect(refreshed).toContain('### Visual changes');
+    expect(refreshed).toContain('```mermaid');
+    expect(refreshed).toContain('Open findings: 0');
+    expect(refreshed).not.toContain('| Existing |');
+    expect(parseStateMarker(refreshed)).toEqual(updated);
+  });
+
+  it('omits the diagram but keeps findings and state when it would overflow the sticky budget', () => {
+    const body = renderStickyComment({
+      result: { ...result(), summary: 'x'.repeat(50_000), diagram: bigDiagram() },
+      state: state(),
+      demoted: [],
+    });
+    expect(body).not.toContain('### Visual changes');
+    expect(body).toContain('### Open findings: 1');
+    expect(parseStateMarker(body)).toEqual(state());
+    expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
+  });
+
+  it('publishes the baseline (no diagram) when the diagram artifact is malformed', () => {
+    const malformed = { nodes: undefined } as unknown as DiagramArtifact;
+    const body = renderStickyComment({
+      result: { ...result(), diagram: malformed },
+      state: state(),
+      demoted: [],
+    });
+    expect(body).not.toContain('### Visual changes');
+    expect(body).toContain('### Open findings: 1');
+    expect(parseStateMarker(body)).toEqual(state());
+  });
+  it('drops only the optional diagram (never findings or state) when a refresh grows the body past the sticky cap', () => {
+    // A body that originally fit because the optional diagram was small relative
+    // to the cap. A webhook refresh that reopens many findings grows the table
+    // and marker, pushing the candidate over 60000 bytes.
+    const baseBody = renderStickyComment({
+      result: { ...result(), summary: 'x'.repeat(35_000), diagram: bigDiagram() },
+      state: state(),
+      demoted: [],
+    });
+    expect(baseBody).toContain('### Visual changes'); // diagram was included because it fit
+
+    const reopened: ReviewState = {
+      ...state(),
+      findings: Array.from({ length: 40 }, (_, i) => ({
+        ...state().findings[0],
+        fingerprint: `${(i + 1).toString(16).padStart(16, '0')}`,
+        title: `Reopened finding ${i} ${'y'.repeat(40)}`,
+      })),
+    };
+
+    const refreshed = refreshStickyCommentState(baseBody, reopened);
+    expect(refreshed).not.toContain('### Visual changes'); // optional diagram dropped
+    expect(refreshed).toContain('### Open findings: 40');
+    expect(parseStateMarker(refreshed)).toEqual(reopened); // state preserved, not trimmed
+    expect(Buffer.byteLength(refreshed, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
   });
 });
 

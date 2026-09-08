@@ -3,6 +3,7 @@ import type { ChangedFile, ReviewAnnotation, ReviewResult, Severity } from '../t
 import { commentableLines } from '../review/diff-analyzer.js';
 import { fingerprintAnnotation, fingerprintMarker } from './fingerprint.js';
 import { calculateCostForModel } from '../utils/tokens.js';
+import { renderDiagramSection } from '../review/diagram-renderer.js';
 import { logger } from '../utils/logger.js';
 
 const SEVERITY_EMOJI: Record<Severity, string> = {
@@ -11,6 +12,9 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
   suggestion: '🔵',
   nitpick: '⚪',
 };
+/** Conservative budget for the serialized legacy review body, matching the sticky cap. */
+const LEGACY_REVIEW_MAX_BYTES = 60_000;
+const LEGACY_FALLBACK_NOTE = '> _Note: Some inline comments could not be placed on the diff._';
 
 export interface PlacementPartition {
   placeable: ReviewAnnotation[];
@@ -216,7 +220,7 @@ export async function createPRReview(
     event,
     body,
     comments,
-  }, '> _Note: Some inline comments could not be placed on the diff._');
+  }, LEGACY_FALLBACK_NOTE);
   logger.info(
     { pullNumber, event, commentCount: review.bodyOnly ? 0 : comments.length },
     'PR review created',
@@ -225,49 +229,75 @@ export async function createPRReview(
 
 function buildReviewBody(result: ReviewResult): string {
   const cost = result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {});
-  const lines: string[] = [];
 
-  lines.push('## 🤖 FiscalCR Code Review\n');
+  // Head: everything up to and including the walkthrough block.
+  const head: string[] = [];
+  head.push('## 🤖 FiscalCR Code Review\n');
   if (result.intent) {
-    lines.push(`> ${result.intent}\n`);
+    head.push(`> ${result.intent}\n`);
   }
-  lines.push(result.summary);
-  lines.push('');
-  lines.push(`**Score:** ${result.score}/100`);
-  lines.push('');
+  head.push(result.summary);
+  head.push('');
+  head.push(`**Score:** ${result.score}/100`);
+  head.push('');
 
   if (result.walkthrough && result.walkthrough.length > 0) {
-    lines.push('<details>');
-    lines.push('<summary>📝 Walkthrough</summary>\n');
-    lines.push('| File | Change Summary |');
-    lines.push('|------|----------------|');
+    head.push('<details>');
+    head.push('<summary>📝 Walkthrough</summary>\n');
+    head.push('| File | Change Summary |');
+    head.push('|------|----------------|');
     for (const entry of result.walkthrough) {
-      lines.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
+      head.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
     }
-    lines.push('</details>\n');
+    head.push('</details>\n');
   }
 
-  lines.push('| Severity | Count |');
-  lines.push('|----------|-------|');
+  // Tail: findings severity table, cost details, and footer.
+  const tail: string[] = [];
+  tail.push('| Severity | Count |');
+  tail.push('|----------|-------|');
   for (const [severity, count] of Object.entries(result.stats)) {
     if (count > 0) {
-      lines.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
+      tail.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
     }
   }
 
-  lines.push('');
-  lines.push('<details>');
-  lines.push('<summary>Token Usage & Cost</summary>\n');
-  lines.push(`- Input: ${result.tokensUsed.input.toLocaleString()} tokens`);
-  lines.push(`- Output: ${result.tokensUsed.output.toLocaleString()} tokens`);
-  lines.push(`- Cached: ${result.tokensUsed.cached.toLocaleString()} tokens`);
-  lines.push(`- Estimated cost: $${cost} (${result.costEstimate?.source ?? 'fallback'} pricing)`);
-  lines.push('</details>\n');
+  tail.push('');
+  tail.push('<details>');
+  tail.push('<summary>Token Usage & Cost</summary>\n');
+  tail.push(`- Input: ${result.tokensUsed.input.toLocaleString()} tokens`);
+  tail.push(`- Output: ${result.tokensUsed.output.toLocaleString()} tokens`);
+  tail.push(`- Cached: ${result.tokensUsed.cached.toLocaleString()} tokens`);
+  tail.push(`- Estimated cost: $${cost} (${result.costEstimate?.source ?? 'fallback'} pricing)`);
+  tail.push('</details>\n');
 
-  lines.push('---');
-  lines.push('*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
+  tail.push('---');
+  tail.push('*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
 
-  return lines.join('\n');
+  // Baseline preserves the existing body byte-for-byte when no diagram is present.
+  const baseline = [...head, ...tail].join('\n');
+
+  const diagram = result.diagram;
+  if (!diagram) return baseline;
+
+  // Diagram-specific failures must not prevent the baseline review from publishing.
+  let section: string;
+  try {
+    section = renderDiagramSection(diagram, 'mermaid');
+  } catch {
+    return baseline;
+  }
+
+  // Insert after the walkthrough and before the findings severity table. Omit
+  // the diagram when the whole serialized body (including the 422 fallback
+  // suffix) would exceed the conservative legacy budget, so findings are never
+  // truncated to fit and the body-only retry stays within the cap.
+  const fallbackSuffix = `\n\n${LEGACY_FALLBACK_NOTE}`;
+  const candidate = [...head, section, ...tail].join('\n');
+  if (Buffer.byteLength(candidate, 'utf8') + Buffer.byteLength(fallbackSuffix, 'utf8') > LEGACY_REVIEW_MAX_BYTES) {
+    return baseline;
+  }
+  return candidate;
 }
 
 function formatAnnotationComment(a: ReviewAnnotation): string {

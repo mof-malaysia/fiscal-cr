@@ -9,6 +9,13 @@ import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
 import { modelParamsFromActionInput } from "./model-params.js";
+import { renderDiagramSection } from "../src/review/diagram-renderer.js";
+/**
+ * Conservative UTF-8 budget for the complete Action job summary body. The
+ * optional change-diagram section is omitted if it would push the body past
+ * this limit, preserving the baseline conclusion and findings.
+ */
+const JOB_SUMMARY_BUDGET_BYTES = 1024 * 1024;
 
 async function run(): Promise<void> {
   try {
@@ -174,6 +181,28 @@ async function run(): Promise<void> {
         ["Warning", result.stats.warning.toString()],
         ["Suggestion", result.stats.suggestion.toString()],
       ]);
+
+    // Optional change-diagram section. Text-only (no Mermaid fences): GitHub
+    // renders Mermaid only in PR/issues/Markdown, not in check/Action job
+    // summaries. Rendering failure is isolated so it never breaks the baseline
+    // job summary. The bounded diagram is still guarded against the 1 MiB
+    // job-summary budget using the current raw buffer length.
+    if (result.diagram) {
+      try {
+        const diagramSection = renderDiagramSection(result.diagram, 'text');
+        // Guard the 1 MiB job-summary budget; the diagram is bounded and the
+        // current stringify API is always present.
+        const fits =
+          Buffer.byteLength(`${core.summary.stringify()}\n\n${diagramSection}`, 'utf8') <=
+          JOB_SUMMARY_BUDGET_BYTES;
+        if (fits) {
+          core.summary.addRaw(`\n\n${diagramSection}`);
+        }
+      } catch {
+        // Keep the baseline job summary intact on any diagram rendering error.
+      }
+    }
+
     await core.summary.write();
 
     // Fail the action if needed

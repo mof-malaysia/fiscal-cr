@@ -25,7 +25,7 @@ import {
   applyManualThreadResolution,
   reconcileFindingInventory,
   renderStickyComment,
-  replaceStateMarker,
+  replaceStateMarkerWithinBudget,
   saveStickyComment,
   withReviewStateLock,
   type FindingRecord,
@@ -39,6 +39,7 @@ import { buildSummary } from './summary-builder.js';
 import { ApiFileSource, LocalFileSource } from './file-source.js';
 import { countBySeverity, deterministicScore } from '../pipeline/pass3-synthesis.js';
 import { runReviewPipeline } from '../pipeline/run-review.js';
+import { generateChangeDiagram } from '../pipeline/change-diagram.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
 import { resolvePricingAsync, type PricingContext } from '../utils/pricing.js';
@@ -301,6 +302,30 @@ export class ReviewOrchestrator {
         workspaceRoot: this.options.workspaceRoot,
         deltaHint,
       });
+
+      // Step 5b: Optionally generate a bounded change diagram before the final
+      // cost accounting. A disabled config or unusable evidence makes no model
+      // call; any auxiliary failure is contained locally so the ordinary review
+      // result and conclusion are never affected.
+      if (this.config.review.diagram.enabled) {
+        try {
+          const diagram = await generateChangeDiagram(this.llm, prContext, this.config, usage, {
+            scope: scope.mode === 'skip' ? 'full' : scope.mode,
+            reviewedPaths: result.reviewedPaths,
+          });
+          if (diagram) {
+            result.diagram = diagram;
+          }
+        } catch {
+          // Minimal protection: the generator guards its own steps, but an
+          // unexpected rejection must not leak into the review outcome.
+          logger.warn('Change diagram generation failed; continuing without diagram');
+        }
+        // Refresh token/call totals so diagram spend — including any invalid or
+        // failed call — is reflected in the returned accounting.
+        result.tokensUsed = usage.total();
+        result.callCount = usage.calls();
+      }
       result.costEstimate = {
         usd: roundCost(usage.cost()),
         ...pricingResolution,
@@ -404,7 +429,7 @@ export class ReviewOrchestrator {
         repo: target.repo,
         pullNumber: sticky.pullNumber,
         commentId: sticky.commentId,
-        body: replaceStateMarker(sticky.body, {
+        body: replaceStateMarkerWithinBudget(sticky.body, {
           ...state,
           checkRunId: target.checkRunId,
           checkRunHeadSha: sticky.headSha,
