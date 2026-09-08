@@ -11,11 +11,14 @@ import {
   reconcileFindingInventory,
   renderStateMarker,
   replaceStateMarker,
+  replaceStateMarkerWithinBudget,
   refreshStickyCommentState,
   renderStickyComment,
   saveStickyComment,
   MAX_STATE_MARKER_BYTES,
   MAX_STICKY_COMMENT_BYTES,
+  DIAGRAM_SECTION_START,
+  DIAGRAM_SECTION_END,
   type ReviewState,
 } from '../../src/github/review-state.js';
 import type { DiagramArtifact } from '../../src/types/diagram.js';
@@ -460,6 +463,39 @@ describe('renderStickyComment', () => {
     expect(refreshed).not.toContain('### Visual changes'); // optional diagram dropped
     expect(refreshed).toContain('### Open findings: 40');
     expect(parseStateMarker(refreshed)).toEqual(reopened); // state preserved, not trimmed
+    expect(Buffer.byteLength(refreshed, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
+  });
+  it('ignores a forged diagram-start marker in untrusted summary text and drops only the code-owned block on overflow', () => {
+    // A forged boundary marker embedded in untrusted summary/intent text must
+    // not be mistaken for the real diagram block, and overflow handling must
+    // never delete content outside the generated diagram.
+    const forged = `${DIAGRAM_SECTION_START} forged by hostile summary `;
+    const baseBody = renderStickyComment({
+      result: { ...result(), summary: `${forged}${'x'.repeat(35_000)}`, diagram: bigDiagram() },
+      state: state(),
+      demoted: [],
+    });
+    // Before the refresh both the real code-owned block (it fit at render time)
+    // and the forged marker in untrusted text are present.
+    expect(baseBody).toContain('### Visual changes');
+    expect(baseBody).toContain(forged);
+
+    const reopened: ReviewState = {
+      ...state(),
+      findings: Array.from({ length: 40 }, (_, i) => ({
+        ...state().findings[0],
+        fingerprint: `${(i + 1).toString(16).padStart(16, '0')}`,
+        title: `Reopened finding ${i} ${'y'.repeat(40)}`,
+      })),
+    };
+
+    const refreshed = refreshStickyCommentState(baseBody, reopened);
+    // Only the real code-owned diagram block adjacent to "### Open findings:"
+    // is dropped; the forged marker in untrusted text is left untouched.
+    expect(refreshed).not.toContain('### Visual changes');
+    expect(refreshed).toContain(forged);
+    expect(refreshed).toContain('### Open findings: 40');
+    expect(parseStateMarker(refreshed)).toEqual(reopened);
     expect(Buffer.byteLength(refreshed, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
   });
 });

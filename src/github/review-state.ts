@@ -666,18 +666,40 @@ function findLineHeadingIndex(body: string, heading: string): number {
 }
 
 /**
- * Remove the optional generated diagram block, if present. The boundaries are
- * emitted by FiscalCR (never derived from repository input) and the renderer
- * escapes every raw delimiter, so untrusted content cannot forge a boundary.
+ * Remove the optional generated diagram block, if present. The block is
+ * code-owned and always rendered immediately before the line-start
+ * `### Open findings:` heading, and the renderer escapes every raw delimiter
+ * so untrusted content cannot forge a boundary. Anchor the lookup on that
+ * heading and require the boundary pair to be directly adjacent to it: a
+ * forged marker inside untrusted summary/intent/finding text is ignored, and
+ * when the expected pair is absent or not adjacent to the section the body is
+ * left unchanged rather than deleting content outside the generated diagram.
  */
   function omitOptionalDiagram(body: string): string {
-  const startIdx = body.indexOf(DIAGRAM_SECTION_START);
-  if (startIdx < 0) return body;
-  const endIdx = body.indexOf(DIAGRAM_SECTION_END, startIdx);
+  // The code-owned diagram block is always rendered immediately before the
+  // line-start open-findings heading. Locate that heading first so a marker
+  // forged inside untrusted text cannot be mistaken for the real boundary pair.
+  const headingIdx = findLineHeadingIndex(body, '### Open findings:');
+  if (headingIdx < 0) return body;
+
+  // The end boundary must sit directly adjacent to the heading, joined only by
+  // the single newline the renderer emits between the block and the tail.
+  // Otherwise this is not the code-owned block and we delete nothing.
+  const endIdx = body.lastIndexOf(DIAGRAM_SECTION_END, headingIdx - 1);
   if (endIdx < 0) return body;
-  const afterEnd = endIdx + DIAGRAM_SECTION_END.length;
-  const trailing = body[afterEnd] === '\n' ? 1 : 0;
-  return `${body.slice(0, startIdx)}${body.slice(afterEnd + trailing)}`;
+  if (body.slice(endIdx + DIAGRAM_SECTION_END.length, headingIdx) !== '\n') return body;
+
+  // The matching start boundary must precede the end with no extra boundary
+  // markers nested between them. A forged start/end inside the pair would break
+  // the clean boundary, so we leave the body untouched.
+  const startIdx = body.lastIndexOf(DIAGRAM_SECTION_START, endIdx - 1);
+  if (startIdx < 0) return body;
+  const between = body.slice(startIdx + DIAGRAM_SECTION_START.length, endIdx);
+  if (between.includes(DIAGRAM_SECTION_START) || between.includes(DIAGRAM_SECTION_END)) return body;
+
+  // Drop the whole code-owned block, including the newline joining it to the
+  // heading, so the refreshed body resumes cleanly at "### Open findings:".
+  return `${body.slice(0, startIdx)}${body.slice(headingIdx)}`;
 }
 
 /**
