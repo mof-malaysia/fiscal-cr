@@ -62,7 +62,7 @@ export function promptCallMetadata(messages: readonly { role: string; content: s
 
 /** Stage outcomes are reported by UsageTracker stage events (stage truth). */
 export interface StageOutcome {
-  stage: 'intent' | 'group-review' | 'synthesis' | 'fast-path';
+  stage: TelemetryStage;
   status: 'success' | 'failed';
   groupIndex?: number;
 }

@@ -1,23 +1,49 @@
 /**
  * Try multiple strategies to extract a JSON object from an LLM response.
+ *
+ * By default the final strategy repairs a response truncated mid-generation
+ * (the model hit its output-token cap). Pass `{ repairTruncated: false }` to
+ * reject truncated input instead — used by callers that must treat a payload
+ * as an all-or-nothing unit (e.g. a change-diagram graph).
  */
-export function extractJson(raw: string): unknown | null {
-  // Strategy 1: Direct JSON parse
+export interface ExtractJsonOptions {
+  repairTruncated?: boolean;
+}
+
+export function extractJson(raw: string, opts: ExtractJsonOptions = {}): unknown | null {
+  const { repairTruncated = true } = opts;
+
+  // Strategy 1: Direct JSON parse of the whole input.
   try {
     return JSON.parse(raw);
   } catch { /* continue */ }
 
-  // Strategy 2: Extract from markdown code block
+  // Strategy 2: Extract from a markdown code block.
   const codeBlockMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
   if (codeBlockMatch) {
     try {
       return JSON.parse(codeBlockMatch[1]);
-    } catch { /* continue */ }
+    } catch {
+      // A fenced block whose body is not valid JSON is a broken envelope. In
+      // no-repair mode we must not fall through and probe for a fragment
+      // nested inside it — reject outright.
+      if (!repairTruncated) return null;
+    }
   }
 
-  // Strategy 3: Find the outermost JSON object { ... } in the text
+  // Strategy 3: Find the outermost JSON object { ... } in the text.
   const firstBrace = raw.indexOf('{');
   if (firstBrace >= 0) {
+    // In no-repair mode an outer container opener ([ or {) at the start of the
+    // (trimmed) content means the payload was a JSON container that is itself
+    // malformed/truncated. Accepting an object nested inside such a container
+    // would let a truncated envelope smuggle in an otherwise-valid object, so
+    // reject before probing for an inner fragment.
+    if (!repairTruncated) {
+      const lead = raw.trimStart()[0];
+      if (lead === '[' || lead === '{') return null;
+    }
+
     // Find the matching closing brace by tracking depth
     let depth = 0;
     let inString = false;
@@ -51,6 +77,7 @@ export function extractJson(raw: string): unknown | null {
   }
 
   // Strategy 4: Repair a truncated object (response cut off at the token cap).
+  if (!repairTruncated) return null;
   return repairTruncatedJson(raw);
 }
 

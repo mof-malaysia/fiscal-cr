@@ -118,6 +118,11 @@ export const reviewConfigSchema = z.object({
           testing: z.boolean().default(false),
         })
         .default({}),
+      diagram: z
+        .object({
+          enabled: z.boolean().default(false),
+        })
+        .default({}),
 
       minSeverity: z
         .enum(["critical", "warning", "suggestion", "nitpick"])

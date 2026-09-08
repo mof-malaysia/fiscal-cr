@@ -41,6 +41,30 @@ That concludes my review.`;
       findings: [{ path: 'a.ts', title: 'one' }],
     });
   });
+  it('rejects truncated JSON when repairTruncated is false (caller owns repair policy)', () => {
+    const raw = '{"summary":"ok","findings":[{"path":"a.ts","title":"one"},{"pa';
+    expect(extractJson(raw, { repairTruncated: false })).toBeNull();
+    // Default behavior is unchanged: truncated input is still repaired.
+    expect(extractJson(raw)).not.toBeNull();
+  });
+  it('rejects a valid object smuggled inside a truncated outer array when repair is off', () => {
+    const graph = JSON.stringify({
+      outcome: 'diagram',
+      nodes: [{ id: 'a', label: 'Validation', change: 'modified', evidence: [] }],
+      edges: [],
+    });
+    const raw = '[' + graph + ',';
+    expect(extractJson(raw, { repairTruncated: false })).toBeNull();
+  });
+  it('rejects a fenced block whose JSON body is malformed when repair is off', () => {
+    const raw = '```json\n{"outcome":"diagram"},\n```';
+    expect(extractJson(raw, { repairTruncated: false })).toBeNull();
+  });
+  it('still accepts a complete fenced JSON object when repair is off', () => {
+    const graph = { outcome: 'diagram', nodes: [], edges: [] };
+    const raw = '```json\n' + JSON.stringify(graph) + '\n```';
+    expect(extractJson(raw, { repairTruncated: false })).toEqual(graph);
+  });
 });
 
 describe('repairTruncatedJson', () => {
