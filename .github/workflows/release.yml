@@ -24,6 +24,8 @@ jobs:
           cache: "pnpm"
 
       - run: pnpm install --frozen-lockfile
+      - name: Generate prompts
+        run: pnpm generate:prompts
 
       - name: Type check
         run: pnpm exec tsc --noEmit
@@ -32,7 +34,7 @@ jobs:
         run: pnpm test
 
       - name: Build Action
-        run: pnpm exec ncc build action/index.ts -o action/dist
+        run: pnpm build:action
 
       - name: Commit build and move tags
         env:
