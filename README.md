@@ -226,6 +226,8 @@ review:
   minSeverity: suggestion
   maxAnnotations: 30
   failOn: critical
+  diagram:
+    enabled: false # opt-in: publish a visual change diagram alongside the review
   incremental:
     enabled: true # re-review only files changed since the last reviewed commit
     maxDeltaFiles: 150 # larger deltas fall back to a full review
@@ -430,6 +432,26 @@ log line. Webhook transient failures return non-2xx for observability, but
 GitHub redelivery durability is not guaranteed by FiscalCR. Use the
 `concurrency` group shown in the Quick Start so concurrent runs on the same PR
 do not race state.
+
+### Visual change diagrams
+
+Set `review.diagram.enabled: true` in `.fiscalcr-review.yml` to publish an
+optional visual change diagram alongside the review. The feature is opt-in and
+disabled by default.
+
+- Diagrams are generated from bounded evidence of the reviewed patch only
+  (the diff and changed files). Generation introduces no new analysis and
+  never changes any finding, severity, or review state.
+- PR surfaces render the diagram as Mermaid: both the sticky summary comment
+  and the `legacy` comment mode embed a Mermaid diagram.
+- App check runs and GitHub Action check-run summaries use a readable text
+  fallback instead of Mermaid.
+- Generation is auxiliary and nonfatal. If it fails, the review is still
+  published without the diagram; findings and state are unaffected.
+- Incremental summaries do not duplicate the diagram; only full reviews
+  publish it.
+- When the feature is disabled, a normal re-render removes any previously
+  published diagram.
 
 ## Cost model
 
