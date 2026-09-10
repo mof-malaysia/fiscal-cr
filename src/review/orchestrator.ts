@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from '../github/client.js';
 import { modelForRole, type ReviewConfig } from '../config/schema.js';
 import type {
   PullRequestContext,
@@ -32,7 +32,7 @@ import {
   type StickyComment,
   type ReviewState,
 } from '../github/review-state.js';
-import { listFiscalcrThreads, resolveOutdatedThreads, type FiscalcrThread } from '../github/threads.js';
+import { hasGraphql, listFiscalcrThreads, resolveOutdatedThreads, type FiscalcrThread } from '../github/threads.js';
 import { decideScope, type ScopeDecision } from './delta.js';
 import { filterFiles } from './file-filter.js';
 import { buildSummary } from './summary-builder.js';
@@ -155,7 +155,7 @@ function planStickyPublication(input: {
 
 export class ReviewOrchestrator {
   constructor(
-    private octokit: Octokit,
+    private octokit: FiscalcrOctokit,
     private llm: LLMProvider,
     private config: ReviewConfig,
     private options: OrchestratorOptions = {},
@@ -521,12 +521,16 @@ export class ReviewOrchestrator {
     const { owner, repo, pullNumber, headSha } = prContext;
     const commentsCfg = this.config.review.comments;
     let threads: Array<{ fingerprint: string; id: string; isResolved: boolean }> = [];
-    let threadsAvailable = true;
-    try {
-      threads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
-    } catch (err) {
-      threadsAvailable = false;
-      logger.warn({ err }, 'Could not list review threads — lifecycle remains threadless');
+    let threadsAvailable = hasGraphql(this.octokit);
+    if (threadsAvailable) {
+      try {
+        threads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
+      } catch (err) {
+        threadsAvailable = false;
+        logger.warn({ err }, 'Could not list review threads — lifecycle remains threadless');
+      }
+    } else {
+      logger.warn('GraphQL unavailable — lifecycle remains threadless');
     }
 
     const reviewedPaths = scope.mode === 'full' ? result.reviewedPaths : [];
@@ -684,13 +688,11 @@ export class ReviewOrchestrator {
     }
     let stateToSave = newState;
     let stickyCommentId = input.commentId;
-    let expectedEtag: string | undefined;
     try {
       const latestSticky = await loadReviewState(this.octokit, { owner, repo, pullNumber });
       if (latestSticky?.state) {
         stateToSave = mergeConcurrentReviewState(stateForPublication, newState, latestSticky.state);
         stickyCommentId = latestSticky.commentId;
-        expectedEtag = latestSticky.etag;
       }
     } catch (err) {
       logger.warn({ err }, 'Could not reread lifecycle state before save — preserving planned state');
@@ -700,7 +702,6 @@ export class ReviewOrchestrator {
       repo,
       pullNumber,
       commentId: stickyCommentId,
-      expectedEtag,
       body: renderStickyComment({
         result,
         state: stateToSave,

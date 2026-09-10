@@ -1,6 +1,7 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { ReviewOrchestrator } from "../src/review/orchestrator.js";
+import { createActionOctokit } from "./github-client.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
 import { modelForRole } from "../src/config/schema.js";
@@ -57,12 +58,11 @@ async function run(): Promise<void> {
 
     core.info(`Reviewing PR #${pullNumber} (${headSha.slice(0, 7)}, event: ${eventAction})`);
 
-    // @actions/github getOctokit puts REST methods under .rest,
-    // but our code expects @octokit/rest shape (octokit.checks, octokit.pulls, etc.)
-    const restOctokit = octokit.rest;
+    // Keep the Action client's REST namespace and GraphQL method together.
+    const fiscalcrOctokit = createActionOctokit(octokit);
 
-    // Load config from repo
-    const config = await loadConfig(restOctokit as any, owner, repo, configPath);
+    // Load config from the reviewed PR head, not the repository default branch.
+    const config = await loadConfig(fiscalcrOctokit, owner, repo, configPath, headSha);
     if (languageInput) {
       config.language = languageInput as typeof config.language;
     }
@@ -114,7 +114,7 @@ async function run(): Promise<void> {
     // Run review
     const telemetry = telemetryFromActionInput(core);
     const orchestrator = new ReviewOrchestrator(
-      restOctokit as any,
+      fiscalcrOctokit,
       llm,
       config,
       {

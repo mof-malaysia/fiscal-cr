@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from './client.js';
 import type { ChangedFile, ReviewAnnotation, ReviewResult, Severity } from '../types/review.js';
 import { commentableLines } from '../review/diff-analyzer.js';
 import { fingerprintAnnotation, fingerprintMarker } from './fingerprint.js';
@@ -77,7 +77,7 @@ function statusOf(error: unknown): number | undefined {
 }
 
 async function postReview(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   request: ReviewRequest,
   fallbackNote: string,
 ): Promise<{ reviewId: number; bodyOnly: boolean }> {
@@ -103,7 +103,7 @@ async function postReview(
  * A 422 on the inline comments retries once body-only (last resort).
  */
 export async function createIncrementalReview(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: {
     owner: string;
     repo: string;
@@ -155,7 +155,7 @@ export async function createIncrementalReview(
  * log line — a stale blocking review is annoying, not fatal.
  */
 export async function dismissBlockingReview(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: { owner: string; repo: string; pullNumber: number; reviewId: number; message: string },
 ): Promise<boolean> {
   try {
@@ -179,7 +179,7 @@ export async function dismissBlockingReview(
  * run, stacked on top of previous runs. Kept as an opt-out from sticky mode.
  */
 export async function createPRReview(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: {
     owner: string;
     repo: string;

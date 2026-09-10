@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from './client.js';
 import type { ReviewAnnotation, ReviewResult, ReviewedRange, Severity, WalkthroughEntry } from '../types/review.js';
 import { fingerprintAnnotation } from './fingerprint.js';
 import { renderDiagramSection } from '../review/diagram-renderer.js';
@@ -537,13 +537,11 @@ export interface StickyComment {
   legacyState?: LegacyReviewState;
   /** Original body, preserved as a normal enumerable field. */
   body: string;
-  /** ETag from the matched comment resource, used for optimistic updates. */
-  etag?: string;
 }
 
 /** Find the app-authored sticky FiscalCR comment by marker. */
 export async function loadReviewState(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: { owner: string; repo: string; pullNumber: number },
 ): Promise<StickyComment | null> {
   const { owner, repo, pullNumber } = params;
@@ -564,27 +562,11 @@ export async function loadReviewState(
         comment.user?.login === 'github-actions[bot]' ||
         ('performed_via_github_app' in comment && comment.performed_via_github_app !== null);
       if ((hasV2 || hasV1) && appAuthored) {
-        let etag: string | undefined;
-        const getComment = (
-          octokit.issues as typeof octokit.issues & {
-            getComment?: (params: { owner: string; repo: string; comment_id: number }) => Promise<{
-              headers?: { etag?: string };
-            }>;
-          }
-        ).getComment;
-        if (getComment) {
-          try {
-            etag = (await getComment({ owner, repo, comment_id: comment.id })).headers?.etag;
-          } catch (err) {
-            logger.debug({ err, commentId: comment.id }, 'Could not read sticky comment ETag');
-          }
-        }
         return {
           commentId: comment.id,
           state: parseV2StateMarker(body),
           body,
           ...(hasV1 ? { legacyState: parseLegacyStateMarker(body) ?? undefined } : {}),
-          ...(etag ? { etag } : {}),
         };
       }
     }
@@ -595,14 +577,13 @@ export async function loadReviewState(
 
 /** Create/update only after the caller has completed all other side effects. */
 export async function saveStickyComment(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: {
     owner: string;
     repo: string;
     pullNumber: number;
     commentId: number | null;
     body: string;
-    expectedEtag?: string;
   },
 ): Promise<number> {
   if (Buffer.byteLength(params.body, 'utf8') > MAX_STICKY_COMMENT_BYTES) {
@@ -610,11 +591,9 @@ export async function saveStickyComment(
   }
   const { owner, repo, pullNumber, body } = params;
   let commentId = params.commentId;
-  let expectedEtag = params.expectedEtag;
   if (commentId === null) {
     const existing = await loadReviewState(octokit, { owner, repo, pullNumber });
     commentId = existing?.commentId ?? null;
-    expectedEtag ??= existing?.etag;
   }
   if (commentId !== null) {
     try {
@@ -623,7 +602,6 @@ export async function saveStickyComment(
         repo,
         comment_id: commentId,
         body,
-        ...(expectedEtag ? { headers: { 'If-Match': expectedEtag } } : {}),
       });
       return commentId;
     } catch (err) {

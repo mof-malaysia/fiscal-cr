@@ -549,19 +549,21 @@ describe('sticky state persistence', () => {
       .resolves.toMatchObject({ commentId: 4, state: state(), body });
   });
 
-  it('returns the marker ETag for optimistic updates', async () => {
+  it('loads sticky comments without fetching unsupported ETags', async () => {
     const body = renderStateMarker(state());
+    const getComment = vi.fn();
     const octokit = {
       issues: {
         listComments: vi.fn(async () => ({
           data: [{ id: 6, body, performed_via_github_app: { id: 1 } }],
         })),
-        getComment: vi.fn(async () => ({ headers: { etag: 'etag-6' } })),
+        getComment,
       },
     };
 
     await expect(loadReviewState(octokit as never, { owner: 'o', repo: 'r', pullNumber: 1 }))
-      .resolves.toMatchObject({ commentId: 6, etag: 'etag-6' });
+      .resolves.toMatchObject({ commentId: 6, body });
+    expect(getComment).not.toHaveBeenCalled();
   });
 
   it('returns commentId with null state for a corrupt marker (treated as no state)', async () => {
@@ -580,7 +582,7 @@ describe('sticky state persistence', () => {
     });
   });
 
-  it('updates in place when a comment id is known', async () => {
+  it('updates in place without an unsupported conditional header', async () => {
     const octokit = {
       issues: {
         updateComment: vi.fn(async () => ({})),
@@ -589,12 +591,15 @@ describe('sticky state persistence', () => {
       },
     };
     const id = await saveStickyComment(octokit as never, {
-      owner: 'o', repo: 'r', pullNumber: 1, commentId: 3, body: 'updated', expectedEtag: 'etag-3',
+      owner: 'o', repo: 'r', pullNumber: 1, commentId: 3, body: 'updated',
     });
     expect(id).toBe(3);
-    expect(octokit.issues.updateComment).toHaveBeenCalledWith(
-      expect.objectContaining({ comment_id: 3, body: 'updated', headers: { 'If-Match': 'etag-3' } }),
-    );
+    expect(octokit.issues.updateComment).toHaveBeenCalledWith({
+      owner: 'o',
+      repo: 'r',
+      comment_id: 3,
+      body: 'updated',
+    });
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
   });
 

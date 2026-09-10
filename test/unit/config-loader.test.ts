@@ -30,6 +30,26 @@ describe('loadConfig', () => {
     expect(config.experimental).toBe(true);
   });
 
+  it('passes the reviewed ref when loading PR-head config', async () => {
+    const getContent = vi.fn().mockResolvedValue({
+      data: {
+        content: Buffer.from('model: pr-head-model\n', 'utf8').toString('base64'),
+        encoding: 'base64',
+      },
+    });
+    const octokit = { repos: { getContent } } as any;
+
+    const config = await loadConfig(octokit, 'owner', 'repo', '.fiscalcr-review.yml', 'head-sha');
+
+    expect(getContent).toHaveBeenCalledWith({
+      owner: 'owner',
+      repo: 'repo',
+      path: '.fiscalcr-review.yml',
+      ref: 'head-sha',
+    });
+    expect(config.model).toBe('pr-head-model');
+  });
+
   it('keeps arbitrary modelParams keys via passthrough and validates typed ones', async () => {
     const yaml = [
       'provider: openai',
