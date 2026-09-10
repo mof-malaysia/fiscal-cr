@@ -228,6 +228,8 @@ review:
   failOn: critical
   diagram:
     enabled: false # opt-in: publish a visual change diagram alongside the review
+    minChangedFiles: 2 # minimum reviewable files before diagram generation
+    minChangedLines: 20 # minimum additions plus deletions before generation
   incremental:
     enabled: true # re-review only files changed since the last reviewed commit
     maxDeltaFiles: 150 # larger deltas fall back to a full review
@@ -438,6 +440,8 @@ do not race state.
 Set `review.diagram.enabled: true` in `.fiscalcr-review.yml` to publish an
 optional visual change diagram alongside the review. The feature is opt-in and
 disabled by default.
+- To avoid noisy diagrams and unnecessary model spend, generation is skipped
+  before the model call unless the configured file and line thresholds are met.
 
 - Diagrams are generated from bounded evidence of the reviewed patch only
   (the diff and changed files). Generation introduces no new analysis and

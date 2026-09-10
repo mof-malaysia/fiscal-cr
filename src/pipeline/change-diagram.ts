@@ -24,6 +24,34 @@ const DIAGRAM_CALL_TIMEOUT_MS = 60_000;
 const DIAGRAM_MAX_EVIDENCE = 40;
 /** Maximum length of a file path included in evidence; longer paths are unusable. */
 const DIAGRAM_MAX_PATH_LENGTH = 1_024;
+/** Minimum changed files before a diagram can justify cross-file visualization. */
+export const DIAGRAM_MIN_CHANGED_FILES = 2;
+/** Minimum additions plus deletions before a diagram can justify its call. */
+export const DIAGRAM_MIN_CHANGED_LINES = 20;
+
+/**
+ * Keep diagram generation for changes where a graph can add signal: at least
+ * the configured number of reviewable files and enough churn to imply a
+ * non-trivial relationship. This gate runs before evidence selection and the
+ * provider call.
+ */
+export function shouldGenerateChangeDiagram(
+  ctx: PullRequestContext,
+  thresholds: Partial<Pick<ReviewConfig['review']['diagram'], 'minChangedFiles' | 'minChangedLines'>> = {},
+): boolean {
+  const minChangedFiles = thresholds.minChangedFiles ?? DIAGRAM_MIN_CHANGED_FILES;
+  const minChangedLines = thresholds.minChangedLines ?? DIAGRAM_MIN_CHANGED_LINES;
+  let changedFiles = 0;
+  let changedLines = 0;
+  for (const file of ctx.changedFiles) {
+    if (!file.patch || file.additions + file.deletions === 0) continue;
+    changedFiles++;
+    changedLines += file.additions + file.deletions;
+    if (changedFiles >= minChangedFiles && changedLines >= minChangedLines) return true;
+  }
+  return false;
+}
+
 
 /** Preferred sampling temperature, resolved through the shared review helper. */
 const DIAGRAM_PREFERRED_TEMPERATURE = 0.3;

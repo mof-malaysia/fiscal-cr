@@ -39,7 +39,7 @@ import { buildSummary } from './summary-builder.js';
 import { ApiFileSource, LocalFileSource } from './file-source.js';
 import { countBySeverity, deterministicScore } from '../pipeline/pass3-synthesis.js';
 import { runReviewPipeline } from '../pipeline/run-review.js';
-import { generateChangeDiagram } from '../pipeline/change-diagram.js';
+import { generateChangeDiagram, shouldGenerateChangeDiagram } from '../pipeline/change-diagram.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
 import { resolvePricingAsync, type PricingContext } from '../utils/pricing.js';
@@ -307,7 +307,10 @@ export class ReviewOrchestrator {
       // cost accounting. A disabled config or unusable evidence makes no model
       // call; any auxiliary failure is contained locally so the ordinary review
       // result and conclusion are never affected.
-      if (this.config.review.diagram.enabled) {
+      if (
+        this.config.review.diagram.enabled &&
+        shouldGenerateChangeDiagram(prContext, this.config.review.diagram)
+      ) {
         try {
           const diagram = await generateChangeDiagram(this.llm, prContext, this.config, usage, {
             scope: scope.mode === 'skip' ? 'full' : scope.mode,

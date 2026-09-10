@@ -9,7 +9,7 @@ import type { PullRequestContext } from '../../src/types/review.js';
 import { CHANGE_DIAGRAM_PROMPT } from '../../src/pipeline/generated/change-diagram-prompt.js';
 const PATCH = '@@ -1,1 +1,3 @@\n line one\n+line two\n+line three';
 
-function fakeOctokit(files: Array<{ filename: string; patch?: string }>) {
+function fakeOctokit(files: Array<{ filename: string; patch?: string; additions?: number; deletions?: number }>) {
   return {
     checks: {
       create: vi.fn(async () => ({ data: { id: 42 } })),
@@ -32,9 +32,8 @@ function fakeOctokit(files: Array<{ filename: string; patch?: string }>) {
           ? {
               data: files.map((f) => ({
                 filename: f.filename,
-                status: 'modified',
-                additions: 2,
-                deletions: 0,
+                additions: f.additions ?? 2,
+                deletions: f.deletions ?? 0,
                 patch: f.patch ?? PATCH,
               })),
             }
@@ -161,9 +160,25 @@ const groupResponse = (title: string) => ({
     },
   ],
 });
+const BIG_PATCH = `@@ -1,1 +1,11 @@
+ line one
++line two
++line three
++line four
++line five
++line six
++line seven
++line eight
++line nine
++line ten
++line eleven`;
+
 
 function bigPrOctokit() {
-  const octokit = fakeOctokit([{ filename: 'src/a.ts' }, { filename: 'lib/b.ts' }]);
+  const octokit = fakeOctokit([
+    { filename: 'src/a.ts', patch: BIG_PATCH, additions: 10 },
+    { filename: 'lib/b.ts', patch: BIG_PATCH, additions: 10 },
+  ]);
   octokit.repos.getContent = vi.fn(async ({ path }: { path: string }) => ({
     data: {
       content: Buffer.from(`// ${path}\n${'x'.repeat(90_000)}`).toString('base64'),
@@ -251,6 +266,36 @@ describe('ReviewOrchestrator pipeline routing', () => {
       ]),
     );
   });
+  it('small PR with diagrams enabled skips the auxiliary diagram call', async () => {
+    const octokit = fakeOctokit([{ filename: 'src/a.ts' }]);
+    const llm = scriptedLLM([
+      {
+        match: isFastPathCall,
+        content: {
+          intent: 'Small change',
+          summary: 'Looks fine',
+          score: 95,
+          walkthrough: [{ path: 'src/a.ts', summary: 'tweak' }],
+          findings: [],
+        },
+      },
+    ]);
+    const config = {
+      ...cfg(),
+      review: { ...DEFAULT_CONFIG.review, diagram: { enabled: true } },
+    };
+    const result = await new ReviewOrchestrator(octokit as never, llm, config).reviewPullRequest({
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      headSha: 'head-sha',
+    });
+
+    expect(llm.calls).toHaveLength(1);
+    expect(llm.calls.some(isDiagramCall)).toBe(false);
+    expect(result.diagram).toBeUndefined();
+  });
+
 
   it('large PR runs intent + N groups + synthesis and aggregates usage', async () => {
     // Two files with big contents so the pipeline splits them into 2 groups.

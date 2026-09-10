@@ -121,6 +121,10 @@ export const reviewConfigSchema = z.object({
       diagram: z
         .object({
           enabled: z.boolean().default(false),
+          /** Minimum reviewable changed files before diagram generation. */
+          minChangedFiles: z.number().int().min(1).max(100).default(2),
+          /** Minimum additions plus deletions before diagram generation. */
+          minChangedLines: z.number().int().min(1).max(100_000).default(20),
         })
         .default({}),
 

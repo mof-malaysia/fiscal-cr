@@ -15,7 +15,7 @@ import type { ReviewAnnotation } from '../../src/types/review.js';
 import type { ChatCompletionParams } from '../../src/providers/interface.js';
 import { CHANGE_DIAGRAM_PROMPT } from '../../src/pipeline/generated/change-diagram-prompt.js';
 
-const PATCH = '@@ -1,1 +1,3 @@\n line one\n+line two\n+line three';
+const PATCH = '@@ -1,1 +1,11 @@\n line one\n+line two\n+line three\n+line four\n+line five\n+line six\n+line seven\n+line eight\n+line nine\n+line ten\n+line eleven';
 
 const FINDING: ReviewAnnotation = {
   path: 'src/a.ts',
@@ -91,7 +91,7 @@ function fakeOctokit(fixture: Fixture = {}) {
               data: (fixture.changedFiles ?? ['src/a.ts', 'src/b.ts']).map((filename) => ({
                 filename,
                 status: 'modified',
-                additions: 2,
+                additions: 10,
                 deletions: 0,
                 patch: PATCH,
               })),
@@ -114,7 +114,7 @@ function fakeOctokit(fixture: Fixture = {}) {
           files: (fixture.compareFiles ?? ['src/a.ts']).map((filename) => ({
             filename,
             status: 'modified',
-            additions: 2,
+            additions: 10,
             deletions: 0,
             patch: PATCH,
           })),
@@ -595,18 +595,17 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     expect(body).not.toContain('### Visual changes');
   });
 
-  it('delta: scopes the graph to selected files with the incremental caption', async () => {
+  it('delta below the complexity threshold skips diagram generation', async () => {
     const octokit = fakeOctokit({ stickyState: priorState() });
     const llm = diagramLLM(DIAGRAM_E0);
     const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg({ diagram: { enabled: true } }));
 
     const result = await orchestrator.reviewPullRequest(params);
 
-    expect(result.diagram?.scope).toBe('delta');
+    expect(result.diagram).toBeUndefined();
+    expect(llm.chatCompletion.mock.calls.some(([p]) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
     const body = savedBody(octokit);
-    expect(body).toContain('### Visual changes');
-    expect(body).toContain('PR changes in the files selected for this incremental review.');
-    expect(body).not.toContain('Changes in the filtered pull-request patches supplied as diagram input');
+    expect(body).not.toContain('### Visual changes');
   });
 
   it('disabled normal run removes a previously published graph via a fresh render', async () => {
@@ -666,8 +665,8 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
       page === 1
         ? {
             data: [
-              { filename: 'src/a.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
-              { filename: 'src/partial.ts', status: 'modified', additions: 0, deletions: 0, patch: '@@ -1,3 +1,3 @@\n context\n-old\n+new' },
+              { filename: 'src/a.ts', status: 'modified', additions: 10, deletions: 10, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
+              { filename: 'src/partial.ts', status: 'modified', additions: 10, deletions: 0, patch: '@@ -1,3 +1,3 @@\n context\n-old\n+new' },
             ],
           }
         : { data: [] },

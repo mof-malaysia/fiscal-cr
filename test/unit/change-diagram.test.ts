@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import {
   generateChangeDiagram,
+  shouldGenerateChangeDiagram,
   DIAGRAM_MAX_INPUT_TOKENS,
 } from '../../src/pipeline/change-diagram.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
@@ -85,6 +86,51 @@ function dataBlockOf(userMsg: string): SentData {
 }
 
 describe('generateChangeDiagram', () => {
+  it('gates diagrams to complex multi-file changes', () => {
+    expect(
+      shouldGenerateChangeDiagram(
+        makeCtx({
+          changedFiles: [
+            { filename: 'a.ts', status: 'modified', additions: 10, deletions: 0, patch: 'patch' },
+            { filename: 'b.ts', status: 'modified', additions: 10, deletions: 0, patch: 'patch' },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldGenerateChangeDiagram(
+        makeCtx({
+          changedFiles: [
+            { filename: 'a.ts', status: 'modified', additions: 19, deletions: 0, patch: 'patch' },
+            { filename: 'b.ts', status: 'modified', additions: 0, deletions: 0, patch: 'patch' },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldGenerateChangeDiagram(
+        makeCtx({
+          changedFiles: [
+            { filename: 'a.ts', status: 'modified', additions: 20, deletions: 0, patch: 'patch' },
+          ],
+        }),
+      ),
+    ).toBe(false);
+  });
+  it('uses configured complexity thresholds', () => {
+    const ctx = makeCtx({
+      changedFiles: [
+        { filename: 'a.ts', status: 'modified', additions: 5, deletions: 0, patch: 'patch' },
+        { filename: 'b.ts', status: 'modified', additions: 5, deletions: 0, patch: 'patch' },
+      ],
+    });
+
+    expect(shouldGenerateChangeDiagram(ctx)).toBe(false);
+    expect(shouldGenerateChangeDiagram(ctx, { minChangedLines: 10 })).toBe(true);
+    expect(shouldGenerateChangeDiagram(ctx, { minChangedFiles: 3 })).toBe(false);
+  });
+
+
   it('returns undefined and makes no call when disabled', async () => {
     const llm = makeLlm('{}');
     const ctx = makeCtx({

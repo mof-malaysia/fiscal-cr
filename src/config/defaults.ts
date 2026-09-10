@@ -26,6 +26,8 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     },
     diagram: {
       enabled: false,
+      minChangedFiles: 2,
+      minChangedLines: 20,
     },
     minSeverity: "suggestion",
     maxAnnotations: 30,
