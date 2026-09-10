@@ -28,6 +28,17 @@ const FINDING: ReviewAnnotation = {
   confidence: 0.95,
 };
 const FP = fingerprintAnnotation(FINDING);
+const DELETION_FINDING: ReviewAnnotation = {
+  path: 'src/b.ts',
+  startLine: 4,
+  endLine: 4,
+  severity: 'warning',
+  category: 'bug',
+  title: 'Stale branch after deletion',
+  body: 'This finding belongs to a deletion-only file',
+  confidence: 0.9,
+};
+const DELETION_FP = fingerprintAnnotation(DELETION_FINDING);
 const NEW_FINDING: ReviewAnnotation = {
   path: 'src/a.ts',
   startLine: 3,
@@ -72,7 +83,16 @@ interface Fixture {
   compareFiles?: string[];
   changedFiles?: string[];
   patch?: string;
-  threads?: Array<{ id: string; fp: string; path: string; severity: string; isOutdated?: boolean }>;
+  patches?: Record<string, string>;
+  threads?: Array<{
+    id: string;
+    fp: string;
+    path: string;
+    severity: string;
+    isOutdated?: boolean;
+    line?: number | null;
+    originalLine?: number | null;
+  }>;
 }
 function fakeOctokit(fixture: Fixture = {}) {
   const stickyBody = fixture.legacyState
@@ -105,7 +125,7 @@ function fakeOctokit(fixture: Fixture = {}) {
                 status: 'modified',
                 additions: 10,
                 deletions: 0,
-                patch: fixture.patch ?? PATCH,
+                patch: fixture.patches?.[filename] ?? fixture.patch ?? PATCH,
               })),
             }
           : { data: [] },
@@ -152,6 +172,8 @@ function fakeOctokit(fixture: Fixture = {}) {
                   isResolved: false,
                   isOutdated: t.isOutdated ?? false,
                   path: t.path,
+                  line: t.line ?? null,
+                  originalLine: t.originalLine ?? null,
                   comments: {
                     nodes: [{ body: `🔴 **[${t.severity}]** x\n\n${fingerprintMarker(t.fp)}` }],
                   },
@@ -356,6 +378,17 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
 
     expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.threadId).toBe('t1');
   });
+  it('drops a thread ID when the GitHub thread no longer exists', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [],
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([FINDING]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.threadId).toBeNull();
+  });
   it('posts inline comments for findings inserted into an existing sticky state', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
@@ -428,6 +461,47 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(
       octokit.graphql.mock.calls.filter(([query]) => (query as string).includes('resolveReviewThread')),
     ).toHaveLength(1);
+  });
+  it('covers mixed delta files with and without commentable ranges', async () => {
+    const secondFinding = {
+      fingerprint: DELETION_FP,
+      status: 'open' as const,
+      severity: 'warning' as const,
+      path: DELETION_FINDING.path,
+      startLine: DELETION_FINDING.startLine,
+      endLine: DELETION_FINDING.endLine,
+      title: DELETION_FINDING.title,
+      threadId: 't2',
+      lastSeenSha: 'old-sha',
+      transitions: [{ status: 'open' as const, at: '2026-01-01', source: 'review' as const }],
+    };
+    const octokit = fakeOctokit({
+      stickyState: priorState({
+        findings: [...priorState().findings, secondFinding],
+      }),
+      changedFiles: ['src/a.ts', 'src/b.ts'],
+      compareFiles: ['src/a.ts', 'src/b.ts'],
+      patches: {
+        'src/a.ts': PATCH,
+        'src/b.ts': '@@ -4,1 +4,0 @@\n-removed line',
+      },
+      threads: [
+        { id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', line: 2, originalLine: 2 },
+        { id: 't2', fp: DELETION_FP, path: 'src/b.ts', severity: 'warning', line: null, originalLine: 4 },
+      ],
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    const state = savedState(octokit);
+    expect(state!.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ fingerprint: FP, status: 'fixed' }),
+        expect.objectContaining({ fingerprint: DELETION_FP, status: 'fixed' }),
+      ]),
+    );
+    expect(state!.autoResolvedThreads).toEqual(expect.arrayContaining(['t1', 't2']));
   });
 
   it('migrates a v1 marker before skipping a PR with no reviewable files', async () => {

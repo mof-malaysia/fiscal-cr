@@ -418,11 +418,11 @@ export function reconcileFindingInventory(
   const fixed: string[] = [];
   for (let position = 0; position < findings.length; position++) {
     const finding = findings[position];
+    const rangesForPath = reviewedRanges.filter((range) => range.path === finding.path);
     const coveredByReviewedScope =
-      reviewedRanges.length > 0
-        ? reviewedRanges.some(
+      rangesForPath.length > 0
+        ? rangesForPath.some(
             (range) =>
-              range.path === finding.path &&
               range.startLine <= finding.endLine &&
               finding.startLine <= range.endLine,
           )

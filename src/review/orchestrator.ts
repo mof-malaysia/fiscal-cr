@@ -106,7 +106,7 @@ function planStickyPublication(input: {
   const inventory = result.findings ?? result.annotations;
   const threadByFingerprint = new Map(threads.map((thread) => [thread.fingerprint, thread.id]));
   const threadIdFor = (finding: FindingRecord): string | null =>
-    threadsAvailable ? threadByFingerprint.get(finding.fingerprint) ?? finding.threadId : finding.threadId;
+    threadsAvailable ? threadByFingerprint.get(finding.fingerprint) ?? null : finding.threadId;
   const stateWithThreads = state
     ? {
         ...state,
@@ -546,7 +546,11 @@ export class ReviewOrchestrator {
     let threadsAvailable = hasGraphql(this.octokit);
     if (threadsAvailable) {
       try {
-        threads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
+        threads = await listFiscalcrThreads(
+          this.octokit,
+          { owner, repo, pullNumber },
+          { includeOutdated: true },
+        );
       } catch (err) {
         threadsAvailable = false;
         logger.warn({ err }, 'Could not list review threads — lifecycle remains threadless');
@@ -585,11 +589,7 @@ export class ReviewOrchestrator {
         owner,
         repo,
         pullNumber,
-        changedPaths: new Set(
-          scope.mode === 'delta' && reviewedRanges.length > 0
-            ? reviewedRanges.map((range) => range.path)
-            : reviewedPaths,
-        ),
+        changedPaths: new Set(reviewedPaths),
         reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
         currentFingerprints: new Set(
           (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),

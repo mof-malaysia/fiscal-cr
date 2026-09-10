@@ -98,7 +98,7 @@ describe('resolveOutdatedThreads', () => {
     ]);
     const resolved = await resolveOutdatedThreads(octokit, {
       ...params,
-      changedPaths: new Set(['src/a.ts', 'src/untouched.ts']),
+      changedPaths: new Set(['src/a.ts']),
       reviewedRanges: [{ path: 'src/a.ts', startLine: 464, endLine: 464 }],
       currentFingerprints: new Set([FP_B]),
     });

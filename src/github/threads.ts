@@ -146,14 +146,14 @@ export async function resolveOutdatedThreads(
   if (!hasGraphql(octokit)) return [];
   const graphql = octokit.graphql;
   const outdated = threads.filter((t) => {
+    const rangesForPath = params.reviewedRanges?.filter((range) => range.path === t.path) ?? [];
     const lineCovered =
-      !params.reviewedRanges?.length ||
+      rangesForPath.length === 0 ||
       [t.line, t.originalLine].some(
         (line) =>
           line != null &&
-          params.reviewedRanges!.some(
+          rangesForPath.some(
             (range) =>
-              range.path === t.path &&
               range.startLine <= line &&
               line <= range.endLine,
           ),
