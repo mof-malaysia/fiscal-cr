@@ -52,8 +52,11 @@ function makeConfig(enabled: boolean, language: ReviewConfig['language'] = 'en')
   return {
     ...DEFAULT_CONFIG,
     language,
-    review: { ...DEFAULT_CONFIG.review, diagram: { enabled } },
-  } as ReviewConfig;
+    review: {
+      ...DEFAULT_CONFIG.review,
+      diagram: { ...DEFAULT_CONFIG.review.diagram, enabled },
+    },
+  };
 }
 
 /** A minimal strict-schema-valid diagram response referencing evidence id e0. */
@@ -87,6 +90,7 @@ function dataBlockOf(userMsg: string): SentData {
 
 describe('generateChangeDiagram', () => {
   it('gates diagrams to complex multi-file changes', () => {
+    const thresholds = DEFAULT_CONFIG.review.diagram;
     expect(
       shouldGenerateChangeDiagram(
         makeCtx({
@@ -95,6 +99,7 @@ describe('generateChangeDiagram', () => {
             { filename: 'b.ts', status: 'modified', additions: 10, deletions: 0, patch: 'patch' },
           ],
         }),
+        thresholds,
       ),
     ).toBe(true);
     expect(
@@ -105,6 +110,7 @@ describe('generateChangeDiagram', () => {
             { filename: 'b.ts', status: 'modified', additions: 0, deletions: 0, patch: 'patch' },
           ],
         }),
+        thresholds,
       ),
     ).toBe(false);
     expect(
@@ -114,6 +120,7 @@ describe('generateChangeDiagram', () => {
             { filename: 'a.ts', status: 'modified', additions: 20, deletions: 0, patch: 'patch' },
           ],
         }),
+        thresholds,
       ),
     ).toBe(false);
   });
@@ -125,9 +132,19 @@ describe('generateChangeDiagram', () => {
       ],
     });
 
-    expect(shouldGenerateChangeDiagram(ctx)).toBe(false);
-    expect(shouldGenerateChangeDiagram(ctx, { minChangedLines: 10 })).toBe(true);
-    expect(shouldGenerateChangeDiagram(ctx, { minChangedFiles: 3 })).toBe(false);
+    expect(shouldGenerateChangeDiagram(ctx, DEFAULT_CONFIG.review.diagram)).toBe(false);
+    expect(
+      shouldGenerateChangeDiagram(ctx, {
+        ...DEFAULT_CONFIG.review.diagram,
+        minChangedLines: 10,
+      }),
+    ).toBe(true);
+    expect(
+      shouldGenerateChangeDiagram(ctx, {
+        ...DEFAULT_CONFIG.review.diagram,
+        minChangedFiles: 3,
+      }),
+    ).toBe(false);
   });
 
 

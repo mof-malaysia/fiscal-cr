@@ -9,7 +9,9 @@ import type { PullRequestContext } from '../../src/types/review.js';
 import { CHANGE_DIAGRAM_PROMPT } from '../../src/pipeline/generated/change-diagram-prompt.js';
 const PATCH = '@@ -1,1 +1,3 @@\n line one\n+line two\n+line three';
 
-function fakeOctokit(files: Array<{ filename: string; patch?: string; additions?: number; deletions?: number }>) {
+function fakeOctokit(
+  files: Array<{ filename: string; patch?: string; additions?: number; deletions?: number }>,
+) {
   return {
     checks: {
       create: vi.fn(async () => ({ data: { id: 42 } })),
@@ -32,6 +34,7 @@ function fakeOctokit(files: Array<{ filename: string; patch?: string; additions?
           ? {
               data: files.map((f) => ({
                 filename: f.filename,
+                status: 'modified',
                 additions: f.additions ?? 2,
                 deletions: f.deletions ?? 0,
                 patch: f.patch ?? PATCH,
@@ -282,7 +285,10 @@ describe('ReviewOrchestrator pipeline routing', () => {
     ]);
     const config = {
       ...cfg(),
-      review: { ...DEFAULT_CONFIG.review, diagram: { enabled: true } },
+      review: {
+        ...DEFAULT_CONFIG.review,
+        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+      },
     };
     const result = await new ReviewOrchestrator(octokit as never, llm, config).reviewPullRequest({
       owner: 'o',
@@ -702,7 +708,10 @@ describe('change diagram generation in pipeline', () => {
     ]);
     const config = {
       ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
-      review: { ...DEFAULT_CONFIG.review, diagram: { enabled: true } },
+      review: {
+        ...DEFAULT_CONFIG.review,
+        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+      },
       modelPreset: 'team',
       modelPresets: {
         team: {

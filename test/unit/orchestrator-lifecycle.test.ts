@@ -560,7 +560,11 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
   it('enabled: publishes a mermaid graph for a clean review and counts its spend', async () => {
     const octokit = fakeOctokit();
     const llm = diagramLLM(DIAGRAM_E0E1, fastPathLLM([]));
-    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg({ diagram: { enabled: true } }));
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+    );
 
     const result = await orchestrator.reviewPullRequest(params);
 
@@ -598,7 +602,11 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
   it('delta below the complexity threshold skips diagram generation', async () => {
     const octokit = fakeOctokit({ stickyState: priorState() });
     const llm = diagramLLM(DIAGRAM_E0);
-    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg({ diagram: { enabled: true } }));
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+    );
 
     const result = await orchestrator.reviewPullRequest(params);
 
@@ -645,7 +653,11 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     }));
 
     const llm = diagramLLM(DIAGRAM_E0); // would generate if reached, but skip returns before the call
-    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg({ diagram: { enabled: true } }));
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+    );
 
     const result = await orchestrator.reviewPullRequest(params);
 
@@ -672,7 +684,11 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
         : { data: [] },
     );
     const llm = diagramLLM(DIAGRAM_E0);
-    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg({ diagram: { enabled: true } }));
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+    );
 
     const result = await orchestrator.reviewPullRequest(params);
 
@@ -689,7 +705,11 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     async (mode) => {
       const octokit = fakeOctokit();
       const llm = diagramFailingLLM(mode);
-      const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg({ diagram: { enabled: true } }));
+      const orchestrator = new ReviewOrchestrator(
+        octokit as never,
+        llm,
+        cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+      );
 
       const result = await orchestrator.reviewPullRequest(params);
 
