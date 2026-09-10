@@ -160,7 +160,7 @@ function fakeOctokit(fixture: Fixture = {}) {
       createComment: vi.fn(async () => ({ data: { id: 9 } })),
       updateComment: vi.fn(async () => ({})),
     },
-    graphql: vi.fn(async (query: string) => {
+    graphql: vi.fn(async (query: string, variables?: { threadId?: string }) => {
       if (query.includes('reviewThreads')) {
         return {
           repository: {
@@ -182,6 +182,16 @@ function fakeOctokit(fixture: Fixture = {}) {
             },
           },
         };
+      }
+      if (query.includes('resolveReviewThread')) {
+        return {
+          resolveReviewThread: {
+            thread: { id: variables?.threadId ?? '', isResolved: true },
+          },
+        };
+      }
+      if (query.includes('addPullRequestReviewThreadReply')) {
+        return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
       }
       return {};
     }),

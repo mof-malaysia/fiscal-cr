@@ -169,20 +169,42 @@ export async function resolveOutdatedThreads(
   const resolved: FiscalcrThread[] = [];
   for (const thread of outdated) {
     try {
-      await graphql(
-        `mutation($threadId: ID!, $body: String!) {
-          addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
-            comment { id }
-          }
+      const response = (await graphql(
+        `mutation($threadId: ID!) {
           resolveReviewThread(input: { threadId: $threadId }) {
-            thread { id }
+            thread { id isResolved }
           }
         }`,
-        {
-          threadId: thread.id,
-          body: `✅ Resolved automatically — code changed in \`${params.headSha.slice(0, 7)}\`.`,
-        },
-      );
+        { threadId: thread.id },
+      )) as {
+        resolveReviewThread?: {
+          thread?: { id: string; isResolved: boolean } | null;
+        } | null;
+      };
+      const resolvedThread = response.resolveReviewThread?.thread;
+      if (resolvedThread?.id !== thread.id || resolvedThread.isResolved !== true) {
+        throw new Error('GitHub did not confirm the review thread was resolved');
+      }
+      try {
+        await graphql(
+          `mutation($threadId: ID!, $body: String!) {
+            addPullRequestReviewThreadReply(
+              input: {
+                pullRequestReviewThreadId: $threadId
+                body: $body
+              }
+            ) {
+              comment { id }
+            }
+          }`,
+          {
+            threadId: thread.id,
+            body: `✅ Resolved automatically — code changed in \`${params.headSha.slice(0, 7)}\`.`,
+          },
+        );
+      } catch (err) {
+        logger.warn({ err, threadId: thread.id }, 'Could not add review thread resolution audit reply');
+      }
       resolved.push(thread);
     } catch (err) {
       logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');

@@ -31,7 +31,7 @@ function threadNode(input: {
 }
 
 function graphqlOctokit(nodes: unknown[], opts: { failMutations?: boolean } = {}) {
-  const graphql = vi.fn(async (query: string) => {
+  const graphql = vi.fn(async (query: string, variables?: { threadId?: string }) => {
     if (query.includes('reviewThreads')) {
       return {
         repository: {
@@ -45,6 +45,16 @@ function graphqlOctokit(nodes: unknown[], opts: { failMutations?: boolean } = {}
       };
     }
     if (opts.failMutations) throw new Error('403 Resource not accessible');
+    if (query.includes('resolveReviewThread')) {
+      return {
+        resolveReviewThread: {
+          thread: { id: variables?.threadId ?? '', isResolved: true },
+        },
+      };
+    }
+    if (query.includes('addPullRequestReviewThreadReply')) {
+      return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
+    }
     return {};
   });
   return { graphql, octokit: { graphql } as never };
@@ -103,9 +113,17 @@ describe('resolveOutdatedThreads', () => {
       currentFingerprints: new Set([FP_B]),
     });
     expect(resolved.map((t) => t.id)).toEqual(['gone']);
-    const mutation = graphql.mock.calls.find(([q]) => (q as string).includes('resolveReviewThread'));
-    expect(mutation).toBeDefined();
-    expect(mutation![1]).toMatchObject({ threadId: 'gone', body: expect.stringContaining('abcdef1') });
+    const resolveIndex = graphql.mock.calls.findIndex(([q]) => (q as string).includes('resolveReviewThread'));
+    const replyIndex = graphql.mock.calls.findIndex(([q]) =>
+      (q as string).includes('addPullRequestReviewThreadReply'),
+    );
+    expect(resolveIndex).toBeGreaterThan(-1);
+    expect(replyIndex).toBe(resolveIndex + 1);
+    expect(graphql.mock.calls[resolveIndex][1]).toEqual({ threadId: 'gone' });
+    expect(graphql.mock.calls[replyIndex][1]).toMatchObject({
+      threadId: 'gone',
+      body: expect.stringContaining('abcdef1'),
+    });
   });
 
   it('degrades to empty when listing fails (403 on default token)', async () => {
@@ -121,6 +139,41 @@ describe('resolveOutdatedThreads', () => {
     });
     expect(resolved).toEqual([]);
   });
+  it('does not report a thread resolved without GitHub confirmation', async () => {
+    const graphql = vi.fn(async (query: string) => {
+      if (query.includes('reviewThreads')) {
+        return {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [threadNode({ id: 'gone', path: 'src/a.ts', fp: FP_A })],
+              },
+            },
+          },
+        };
+      }
+      if (query.includes('resolveReviewThread')) {
+        return { resolveReviewThread: { thread: { id: 'gone', isResolved: false } } };
+      }
+      throw new Error('audit reply must not run after an unconfirmed resolve');
+    });
+    const warning = vi.spyOn(logger, 'warn');
+
+    const resolved = await resolveOutdatedThreads({ graphql } as never, {
+      ...params,
+      changedPaths: new Set(['src/a.ts']),
+      currentFingerprints: new Set(),
+    });
+
+    expect(resolved).toEqual([]);
+    expect(graphql.mock.calls.filter(([query]) => (query as string).includes('addPullRequestReviewThreadReply'))).toHaveLength(0);
+    expect(warning).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: 'gone' }),
+      'Could not resolve review thread — skipping',
+    );
+    warning.mockRestore();
+  });
 
   it('reports unresolved thread cleanup failures', async () => {
     const nodes = [
@@ -129,7 +182,7 @@ describe('resolveOutdatedThreads', () => {
     ];
     let mutations = 0;
     const octokit = {
-      graphql: vi.fn(async (query: string) => {
+      graphql: vi.fn(async (query: string, variables?: { threadId?: string }) => {
         if (query.includes('reviewThreads')) {
           return {
             repository: {
@@ -140,8 +193,15 @@ describe('resolveOutdatedThreads', () => {
           };
         }
         mutations++;
-        if (mutations === 1) throw new Error('403');
-        return {};
+        if (query.includes('resolveReviewThread')) {
+          if (mutations === 1) throw new Error('403');
+          return {
+            resolveReviewThread: {
+              thread: { id: variables?.threadId ?? '', isResolved: true },
+            },
+          };
+        }
+        return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
       }),
     } as never;
     const warning = vi.spyOn(logger, 'warn');
