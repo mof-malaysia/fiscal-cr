@@ -83,17 +83,16 @@ jobs:
 
 ### Notes on precedence and PR-head configuration
 
-- Action mode loads `.fiscalcr-review.yml` from the reviewed pull request's
-  `headSha`, so review settings describe the revision being reviewed rather
-  than the repository default branch. Non-PR contexts keep the default branch
-  lookup behavior.
+- Action mode loads review policy from `.fiscalcr-review.yml` at the reviewed
+  pull request's `headSha`, while `provider` and `base_url` are pinned to the
+  same file at the trusted base revision. Non-PR contexts keep the default
+  branch lookup behavior.
 - Explicit Action inputs override repository configuration only when provided.
   In particular, `provider`, `model`, `base_url`, `language`, `fail_on`, and
   `experimental` inputs take precedence over their config-file values.
-- Treat PR-head configuration as untrusted input for forked or otherwise
-  untrusted pull requests. Pin `provider`, `model`, and `base_url` explicitly
-  in the workflow when secrets must never be sent to a PR-controlled provider
-  endpoint.
+- Treat other PR-head configuration as untrusted input for forked or otherwise
+  untrusted pull requests. The trusted base revision prevents PR config from
+  redirecting the provider request containing the API key.
 - Model presets (`modelPreset` selector, `modelPresets` custom maps) are
   configured in the repo's `.fiscalcr-review.yml`; there is no Action input
   for preset selection. The `model` input remains a global override and wins

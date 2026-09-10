@@ -347,6 +347,7 @@ export class ReviewOrchestrator {
           scope,
           state,
           commentId: stickyRef?.commentId ?? null,
+          commentBody: stickyRef?.body,
         }),
       );
     } catch (err) {
@@ -438,6 +439,7 @@ export class ReviewOrchestrator {
           checkRunId: target.checkRunId,
           checkRunHeadSha: sticky.headSha,
         }),
+        expectedBody: sticky.body,
       });
     }
 
@@ -516,6 +518,7 @@ export class ReviewOrchestrator {
     scope: ScopeDecision;
     state: ReviewState | null;
     commentId: number | null;
+    commentBody?: string;
   }): Promise<ReviewResult> {
     const { checkRunId, prContext, result, scope, state } = input;
     const { owner, repo, pullNumber, headSha } = prContext;
@@ -688,8 +691,12 @@ export class ReviewOrchestrator {
     }
     let stateToSave = newState;
     let stickyCommentId = input.commentId;
+    let expectedBody = input.commentBody;
     try {
       const latestSticky = await loadReviewState(this.octokit, { owner, repo, pullNumber });
+      if (latestSticky) {
+        expectedBody = latestSticky.body;
+      }
       if (latestSticky?.state) {
         stateToSave = mergeConcurrentReviewState(stateForPublication, newState, latestSticky.state);
         stickyCommentId = latestSticky.commentId;
@@ -702,6 +709,7 @@ export class ReviewOrchestrator {
       repo,
       pullNumber,
       commentId: stickyCommentId,
+      expectedBody,
       body: renderStickyComment({
         result,
         state: stateToSave,

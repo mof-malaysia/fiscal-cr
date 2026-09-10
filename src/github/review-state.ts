@@ -584,6 +584,8 @@ export async function saveStickyComment(
     pullNumber: number;
     commentId: number | null;
     body: string;
+    /** Body observed before composing the update; detects external changes. */
+    expectedBody?: string;
   },
 ): Promise<number> {
   if (Buffer.byteLength(params.body, 'utf8') > MAX_STICKY_COMMENT_BYTES) {
@@ -596,6 +598,12 @@ export async function saveStickyComment(
     commentId = existing?.commentId ?? null;
   }
   if (commentId !== null) {
+    if (params.expectedBody !== undefined) {
+      const current = await loadReviewState(octokit, { owner, repo, pullNumber });
+      if (current?.commentId === commentId && current.body !== params.expectedBody) {
+        throw new Error('Sticky comment changed before update; retrying with fresh state');
+      }
+    }
     try {
       await octokit.issues.updateComment({
         owner,
@@ -800,7 +808,7 @@ export function refreshStickyCommentState(body: string, state: ReviewState): str
     lines.push('| Severity | Location | Finding |', '|----------|----------|---------|');
     for (const finding of [...active].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])) {
       lines.push(
-        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${finding.title.replace(/\|/g, '\\|')} |`,
+        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${escapeOpenFindingsHeading(finding.title).replace(/\|/g, '\\|')} |`,
       );
     }
     lines.push('', '| Severity | Open |', '|----------|------|');

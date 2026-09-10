@@ -2,6 +2,7 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { ReviewOrchestrator } from "../src/review/orchestrator.js";
 import { createActionOctokit } from "./github-client.js";
+import { mergeActionConfig } from "./config.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
 import { modelForRole } from "../src/config/schema.js";
@@ -61,8 +62,17 @@ async function run(): Promise<void> {
     // Keep the Action client's REST namespace and GraphQL method together.
     const fiscalcrOctokit = createActionOctokit(octokit);
 
-    // Load config from the reviewed PR head, not the repository default branch.
-    const config = await loadConfig(fiscalcrOctokit, owner, repo, configPath, headSha);
+    // Load review policy from the PR head, but keep network routing pinned to
+    // the trusted base revision so PR config cannot exfiltrate the API key.
+    const headConfig = await loadConfig(fiscalcrOctokit, owner, repo, configPath, headSha);
+    const trustedConfig = await loadConfig(
+      fiscalcrOctokit,
+      owner,
+      repo,
+      configPath,
+      context.payload.pull_request.base.sha,
+    );
+    const config = mergeActionConfig(headConfig, trustedConfig);
     if (languageInput) {
       config.language = languageInput as typeof config.language;
     }

@@ -515,6 +515,22 @@ describe('renderStickyComment', () => {
     expect(refreshed).toContain('### Open findings: 0');
     expect(parseStateMarker(refreshed)).toEqual(state({ findings: [] }));
   });
+
+  it('escapes titles inserted during refresh so the next refresh keeps one lifecycle boundary', () => {
+    const hostile = state({
+      findings: [{ ...state().findings[0], title: 'Finding\n### Open findings: forged' }],
+    });
+    const body = renderStickyComment({ result: result(), state: state(), demoted: [] });
+
+    const refreshed = refreshStickyCommentState(body, hostile);
+    expect(refreshed).toContain('###\\ Open findings: forged');
+
+    const refreshedAgain = refreshStickyCommentState(refreshed, state({ findings: [] }));
+    expect(refreshedAgain).toContain('### Open findings: 0');
+    expect(refreshedAgain.match(/^### Open findings:/gm)).toHaveLength(1);
+    expect(parseStateMarker(refreshedAgain)).toEqual(state({ findings: [] }));
+  });
+
 });
 
 describe('sticky state persistence', () => {
@@ -601,6 +617,30 @@ describe('sticky state persistence', () => {
       body: 'updated',
     });
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale update before sending an unconditional comment mutation', async () => {
+    const currentBody = renderStateMarker(state({ lastReviewedSha: 'new-sha' }));
+    const updateComment = vi.fn();
+    const octokit = {
+      issues: {
+        listComments: vi.fn(async () => ({
+          data: [{ id: 3, body: currentBody, performed_via_github_app: { id: 1 } }],
+        })),
+        updateComment,
+        createComment: vi.fn(),
+      },
+    };
+
+    await expect(saveStickyComment(octokit as never, {
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      commentId: 3,
+      expectedBody: 'old-body',
+      body: 'updated',
+    })).rejects.toThrow('Sticky comment changed before update');
+    expect(updateComment).not.toHaveBeenCalled();
   });
 
   it('re-checks for a concurrently created sticky comment before creating', async () => {
