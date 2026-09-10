@@ -39,6 +39,7 @@ jobs:
       - name: Commit build and move tags
         env:
           TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -48,7 +49,15 @@ jobs:
           # Move the exact release tag onto the build commit (never touches main).
           git tag -f "$TAG"
           git push -f origin "$TAG"
-          # Move the floating major tag (e.g. v1) onto the same build commit.
+
+          # Beta releases are opt-in test builds. Never point stable v1 at one.
+          TAG_LOWER="${TAG,,}"
+          if [[ "$RELEASE_PRERELEASE" == "true" || "$TAG_LOWER" == *-beta* ]]; then
+            echo "Skipping stable major tag for beta release $TAG"
+            exit 0
+          fi
+
+          # Move the floating major tag (e.g. v1) onto the stable build.
           MAJOR=$(echo "$TAG" | grep -oE '^v[0-9]+')
           if [ -n "$MAJOR" ]; then
             git tag -f "$MAJOR"
