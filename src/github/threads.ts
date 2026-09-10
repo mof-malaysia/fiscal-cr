@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from './client.js';
 import type { ReviewedRange, Severity } from '../types/review.js';
 import { extractFingerprint } from './fingerprint.js';
 import { logger } from '../utils/logger.js';
@@ -49,6 +49,13 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
   }
 }`;
 
+/** Return whether the host supplied the optional GraphQL capability. */
+export function hasGraphql(
+  octokit: FiscalcrOctokit,
+): octokit is FiscalcrOctokit & { graphql: NonNullable<FiscalcrOctokit['graphql']> } {
+  return typeof octokit.graphql === 'function';
+}
+
 const SEVERITY_RE = /\*\*\[(critical|warning|suggestion|nitpick)\]\*\*/;
 
 /**
@@ -56,16 +63,21 @@ const SEVERITY_RE = /\*\*\[(critical|warning|suggestion|nitpick)\]\*\*/;
  * hidden fingerprint marker in the thread's first comment.
  */
 export async function listFiscalcrThreads(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: { owner: string; repo: string; pullNumber: number },
   options: { includeOutdated?: boolean } = {},
 ): Promise<FiscalcrThread[]> {
+  if (!hasGraphql(octokit)) {
+    logger.warn('GraphQL unavailable — skipping FiscalCR thread lifecycle operations');
+    return [];
+  }
+  const graphql = octokit.graphql;
   const includeOutdated = options.includeOutdated ?? false;
   const threads: FiscalcrThread[] = [];
   let cursor: string | null = null;
 
   do {
-    const response: ThreadsQueryResponse = await octokit.graphql(THREADS_QUERY, {
+    const response: ThreadsQueryResponse = await graphql(THREADS_QUERY, {
       owner: params.owner,
       repo: params.repo,
       number: params.pullNumber,
@@ -101,7 +113,7 @@ export async function listFiscalcrThreads(
  * review over cleanup.
  */
 export async function resolveOutdatedThreads(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: {
     owner: string;
     repo: string;
@@ -122,7 +134,8 @@ export async function resolveOutdatedThreads(
     logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
     return [];
   }
-
+  if (!hasGraphql(octokit)) return [];
+  const graphql = octokit.graphql;
   const outdated = threads.filter((t) => {
     const lineCovered =
       !params.reviewedRanges?.length ||
@@ -144,7 +157,7 @@ export async function resolveOutdatedThreads(
   const resolved: FiscalcrThread[] = [];
   for (const thread of outdated) {
     try {
-      await octokit.graphql(
+      await graphql(
         `mutation($threadId: ID!, $body: String!) {
           addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
             comment { id }

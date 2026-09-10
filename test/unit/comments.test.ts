@@ -7,6 +7,7 @@ import {
 } from '../../src/github/comments.js';
 import { fingerprintAnnotation } from '../../src/github/fingerprint.js';
 import type { ChangedFile, ReviewAnnotation, ReviewResult } from '../../src/types/review.js';
+import type { DiagramArtifact } from '../../src/types/diagram.js';
 
 // New-file patch: lines 1-3 are additions → commentable; anything else is not.
 const PATCH = '@@ -0,0 +1,3 @@\n+line one\n+line two\n+line three';
@@ -29,6 +30,31 @@ function annotation(overrides: Partial<ReviewAnnotation> = {}): ReviewAnnotation
     title: 'Something is off',
     body: 'details',
     ...overrides,
+  };
+}
+function diagram(): DiagramArtifact {
+  return {
+    nodes: [{ id: 'n1', label: 'Auth handler', change: 'modified', evidence: ['e1'] }],
+    edges: [],
+    evidence: [{ id: 'e1', path: 'src/auth.ts' }],
+    headSha: 'head-sha',
+    scope: 'full',
+    partial: false,
+  };
+}
+function bigDiagram(): DiagramArtifact {
+  return {
+    nodes: Array.from({ length: 60 }, (_, i) => ({
+      id: `n${i}`,
+      label: 'x'.repeat(200),
+      change: 'modified' as const,
+      evidence: [],
+    })),
+    edges: [],
+    evidence: [],
+    headSha: 'head-sha',
+    scope: 'full',
+    partial: false,
   };
 }
 
@@ -134,6 +160,19 @@ describe('createIncrementalReview', () => {
     })).rejects.toThrow('timeout');
     expect(createReview).toHaveBeenCalledTimes(1);
   });
+  it('does not inject a diagram into the incremental review body', async () => {
+    const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 99 } })) } };
+    await createIncrementalReview(octokit as never, {
+      ...params,
+      annotations: [annotation()],
+      changedFiles: [file('src/a.ts')],
+      event: 'COMMENT',
+      body: 'incremental summary',
+    });
+    const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
+    expect(call.body).toBe('incremental summary');
+    expect(call.body).not.toContain('### Visual changes');
+  });
 });
 
 describe('dismissBlockingReview', () => {
@@ -185,5 +224,46 @@ describe('createPRReview (legacy mode)', () => {
         comments: [expect.objectContaining({ path: 'src/a.ts', line: 2 })],
       }),
     );
+  });
+  it('includes the optional diagram between the walkthrough and the severity table', async () => {
+    const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 1 } })) } };
+    await createPRReview(octokit as never, {
+      ...params,
+      result: {
+        ...result,
+        walkthrough: [{ path: 'src/a.ts', summary: 'tweak' }],
+        diagram: diagram(),
+      },
+      failOn: 'never',
+    });
+    const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
+    expect(call.body).toContain('### Visual changes');
+    expect(call.body).toContain('```mermaid');
+    expect(call.body.indexOf('### Visual changes')).toBeGreaterThan(call.body.indexOf('Walkthrough'));
+    expect(call.body.indexOf('### Visual changes')).toBeLessThan(call.body.indexOf('| Severity | Count |'));
+  });
+  it('keeps the 422 fallback body within the cap, omitting the optional diagram when needed', async () => {
+    const createReview = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('Validation Failed'), { status: 422 }))
+      .mockResolvedValueOnce({ data: { id: 1 } });
+    const octokit = { pulls: { createReview } };
+    await createPRReview(octokit as never, {
+      ...params,
+      result: {
+        ...result,
+        summary: 'x'.repeat(58_000),
+        walkthrough: [{ path: 'src/a.ts', summary: 'tweak' }],
+        diagram: bigDiagram(),
+      },
+      failOn: 'never',
+    });
+    const fallbackCall = createReview.mock.calls[1][0] as { body: string };
+    // The 422 retry appends a fallback note; the whole body must stay within the cap.
+    expect(fallbackCall.body).toContain('could not be placed');
+    expect(Buffer.byteLength(fallbackCall.body, 'utf8')).toBeLessThanOrEqual(60_000);
+    // Only the optional diagram is dropped to make room — findings are preserved.
+    expect(fallbackCall.body).not.toContain('### Visual changes');
+    expect(fallbackCall.body).toContain('| 🔴 critical | 1 |');
   });
 });

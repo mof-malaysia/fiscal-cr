@@ -1,3 +1,5 @@
+import type { DiagramArtifact } from './diagram.js';
+
 export type Severity = 'critical' | 'warning' | 'suggestion' | 'nitpick';
 
 export type AnnotationCategory =
@@ -60,6 +62,8 @@ export interface ReviewResult {
   };
   /** One-line-per-file walkthrough table (multi-pass pipeline output). */
   walkthrough?: WalkthroughEntry[];
+  /** Optional change diagram generated from bounded patch evidence. */
+  diagram?: DiagramArtifact;
   /** Short description of what the PR is trying to do. */
   intent?: string;
   /** Number of LLM calls made to produce this review. */

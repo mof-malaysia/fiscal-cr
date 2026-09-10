@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from '../github/client.js';
 import type { ReviewConfig } from '../config/schema.js';
 import type { ChangedFile } from '../types/review.js';
 import type { ReviewState } from '../github/review-state.js';
@@ -23,7 +23,7 @@ const COMPARE_FILE_CAP = 300;
  * a full review — a wasted full review is cheap, a missed finding is not.
  */
 export async function decideScope(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: {
     owner: string;
     repo: string;

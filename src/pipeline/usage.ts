@@ -3,7 +3,7 @@ import { calculateCostWithPricing, resolvePricing } from '../utils/pricing.js';
 import type { LLMTokenUsage } from '../providers/interface.js';
 import type { ChatMessage } from '../types/review.js';
 import { estimateTokens } from '../utils/tokens.js';
-export type TelemetryStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path';
+export type TelemetryStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path' | 'diagram';
 export type TelemetryFinishReason =
   | 'stop'
   | 'length'

@@ -12,8 +12,10 @@ import {
   type ReviewState,
 } from '../../src/github/review-state.js';
 import type { ReviewAnnotation } from '../../src/types/review.js';
+import type { ChatCompletionParams } from '../../src/providers/interface.js';
+import { CHANGE_DIAGRAM_PROMPT } from '../../src/pipeline/generated/change-diagram-prompt.js';
 
-const PATCH = '@@ -1,2 +1,3 @@\n line one\n+line two\n+line three';
+const PATCH = '@@ -1,1 +1,11 @@\n line one\n+line two\n+line three\n+line four\n+line five\n+line six\n+line seven\n+line eight\n+line nine\n+line ten\n+line eleven';
 
 const FINDING: ReviewAnnotation = {
   path: 'src/a.ts',
@@ -89,7 +91,7 @@ function fakeOctokit(fixture: Fixture = {}) {
               data: (fixture.changedFiles ?? ['src/a.ts', 'src/b.ts']).map((filename) => ({
                 filename,
                 status: 'modified',
-                additions: 2,
+                additions: 10,
                 deletions: 0,
                 patch: PATCH,
               })),
@@ -112,7 +114,7 @@ function fakeOctokit(fixture: Fixture = {}) {
           files: (fixture.compareFiles ?? ['src/a.ts']).map((filename) => ({
             filename,
             status: 'modified',
-            additions: 2,
+            additions: 10,
             deletions: 0,
             patch: PATCH,
           })),
@@ -475,4 +477,270 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(review.event).toBe('REQUEST_CHANGES');
     expect(review.body).toContain('FiscalCR Code Review');
   });
+});
+
+describe('change diagram (opt-in) in sticky lifecycle', () => {
+  // Two-hunk diagram (one per changed file) — evidence ids e0/e1.
+  const DIAGRAM_E0E1 = {
+    outcome: 'diagram',
+    nodes: [
+      { id: 'n1', label: 'Request handler', change: 'modified', evidence: ['e0'] },
+      { id: 'n2', label: 'Input validation', change: 'added', evidence: ['e1'] },
+      { id: 'n3', label: 'Persistence', change: 'context', evidence: ['e0', 'e1'] },
+    ],
+    edges: [
+      { from: 'n1', to: 'n2', label: 'validates', change: 'added', evidence: ['e0'] },
+      { from: 'n2', to: 'n3', label: 'persists', change: 'modified', evidence: ['e1'] },
+    ],
+  };
+  // Single-hunk diagram (delta scope reviews only one selected file) — id e0.
+  const DIAGRAM_E0 = {
+    outcome: 'diagram',
+    nodes: [
+      { id: 'n1', label: 'Request handler', change: 'modified', evidence: ['e0'] },
+      { id: 'n2', label: 'Input validation', change: 'added', evidence: ['e0'] },
+    ],
+    edges: [{ from: 'n1', to: 'n2', label: 'validates', change: 'added', evidence: ['e0'] }],
+  };
+
+  // LLM that answers the diagram call with `diagramJson` and delegates every
+  // other call to `base` (a real fast-path responder).
+  function diagramLLM(diagramJson: unknown, base = fastPathLLM([FINDING])) {
+    return {
+      chatCompletion: vi.fn(async (params: ChatCompletionParams) => {
+        if (params.messages[0].content === CHANGE_DIAGRAM_PROMPT) {
+          return {
+            content: JSON.stringify(diagramJson),
+            usage: { input: 100, output: 50, cached: 10 },
+          };
+        }
+        return base.chatCompletion(params);
+      }),
+    };
+  }
+
+  // LLM whose diagram call fails in the given way; the review must survive.
+  function diagramFailingLLM(mode: 'throw' | 'malformed' | 'truncated') {
+    return {
+      chatCompletion: vi.fn(async (params: ChatCompletionParams) => {
+        if (params.messages[0].content === CHANGE_DIAGRAM_PROMPT) {
+          if (mode === 'throw') throw new Error('diagram provider exploded');
+          if (mode === 'malformed') {
+            // Valid JSON but a dangling edge endpoint -> rejected by the parser.
+            return {
+              content: JSON.stringify({
+                outcome: 'diagram',
+                nodes: [{ id: 'n1', label: 'Handler', change: 'modified', evidence: ['e0'] }],
+                edges: [{ from: 'n1', to: 'nX', label: 'x', change: 'added', evidence: ['e0'] }],
+              }),
+              usage: { input: 100, output: 50, cached: 10 },
+            };
+          }
+          // Truncated JSON -> extractJson rejects it as a unit.
+          return {
+            content: '{"outcome":"diagram","nodes":[{"id":"n1"',
+            usage: { input: 100, output: 50, cached: 10 },
+          };
+        }
+        return fastPathLLM([FINDING]).chatCompletion(params);
+      }),
+    };
+  }
+
+  function savedBody(octokit: ReturnType<typeof fakeOctokit>): string | undefined {
+    const update = octokit.issues.updateComment.mock.calls.at(-1)?.[0] as
+      | { body?: string }
+      | undefined;
+    const create = octokit.issues.createComment.mock.calls.at(-1)?.[0] as
+      | { body?: string }
+      | undefined;
+    return update?.body ?? create?.body;
+  }
+
+  it('enabled: publishes a mermaid graph for a clean review and counts its spend', async () => {
+    const octokit = fakeOctokit();
+    const llm = diagramLLM(DIAGRAM_E0E1, fastPathLLM([]));
+    const config: ReviewConfig = {
+      ...DEFAULT_CONFIG,
+      models: {
+        ...DEFAULT_CONFIG.models,
+        fastPath: 'fast-path-test',
+        synthesis: 'synthesis-test',
+      },
+      review: {
+        ...DEFAULT_CONFIG.review,
+        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+      },
+    };
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, config);
+
+    const result = await orchestrator.reviewPullRequest(params);
+
+    const allCalls = llm.chatCompletion.mock.calls.map(([p]) => p);
+    const diagramCalls = allCalls.filter((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT);
+    expect(diagramCalls).toHaveLength(1);
+    expect(diagramCalls[0].model).toBe('synthesis-test');
+    expect(result.callCount).toBe(allCalls.length);
+    // Shared usage totals fold in the diagram call (its 10 cached tokens; pipeline calls carry 0).
+    expect(result.tokensUsed).toEqual({
+      input: allCalls.length * 100,
+      output: allCalls.length * 50,
+      cached: diagramCalls.length * 10,
+    });
+
+    const body = savedBody(octokit);
+    expect(body).toContain('### Visual changes');
+    expect(body).toContain('```mermaid');
+    expect(result.diagram?.scope).toBe('full');
+  });
+
+  it('default off: no diagram call and no graph in the published body', async () => {
+    const octokit = fakeOctokit();
+    const llm = fastPathLLM([FINDING]);
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg());
+
+    const result = await orchestrator.reviewPullRequest(params);
+
+    const allCalls = llm.chatCompletion.mock.calls.map(([p]) => p);
+    expect(allCalls.some((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
+    expect(result.diagram).toBeUndefined();
+    const body = savedBody(octokit);
+    expect(body).not.toContain('### Visual changes');
+  });
+
+  it('delta scope never generates a diagram, even for complex changes', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      compareFiles: ['src/a.ts', 'src/b.ts'],
+    });
+    const llm = diagramLLM(DIAGRAM_E0);
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+    );
+
+    const result = await orchestrator.reviewPullRequest(params);
+
+    expect(result.diagram).toBeUndefined();
+    expect(llm.chatCompletion.mock.calls.some(([p]) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
+    const body = savedBody(octokit);
+    expect(body).not.toContain('### Visual changes');
+  });
+
+  it('disabled normal run removes a previously published graph via a fresh render', async () => {
+    const prior = priorState();
+    const historicalGraph =
+      '### Visual changes\nSource commit: old-sha\n\n```mermaid\nflowchart TD\n```\n\nEvidence:\n- (none referenced)\n';
+    const octokit = fakeOctokit({ stickyState: prior });
+    octokit.issues.listComments = vi.fn(async () => ({
+      data: [{ id: 3, body: `${historicalGraph}\n\nsummary\n${renderStateMarker(prior)}`, performed_via_github_app: { id: 1 } }],
+    }));
+
+    const llm = fastPathLLM([FINDING]);
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg()); // diagram disabled
+
+    const result = await orchestrator.reviewPullRequest(params);
+
+    expect(result.diagram).toBeUndefined();
+    const body = savedBody(octokit);
+    expect(body).toBeDefined();
+    expect(body).not.toContain('### Visual changes');
+  });
+
+  it('skip: preserves the historical graph and makes no provider call', async () => {
+    const base = priorState().findings[0];
+    const prior = priorState({
+      lastReviewedSha: 'new-sha',
+      findings: [
+        { ...base, fingerprint: 'fp-one' },
+        { ...base, fingerprint: 'fp-two' },
+      ],
+    });
+    const historicalGraph =
+      '### Visual changes\nSource commit: old-sha\n\n```mermaid\nflowchart TD\n```\n\nEvidence:\n- (none referenced)\n';
+    const octokit = fakeOctokit({ stickyState: prior });
+    octokit.issues.listComments = vi.fn(async () => ({
+      data: [{ id: 3, body: `${historicalGraph}\n\nsummary\n${renderStateMarker(prior)}`, performed_via_github_app: { id: 1 } }],
+    }));
+
+    const llm = diagramLLM(DIAGRAM_E0); // would generate if reached, but skip returns before the call
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+    );
+
+    const result = await orchestrator.reviewPullRequest(params);
+
+    expect(llm.chatCompletion).not.toHaveBeenCalled();
+    const body = savedBody(octokit);
+    expect(body).toContain('### Visual changes');
+    expect(result.stats.critical).toBe(2);
+  });
+
+  it('partial evidence: diagram is flagged partial and does not change the review outcome', async () => {
+    const octokit = fakeOctokit();
+    // One file with a complete hunk (so a diagram is still generated) and one
+    // file whose supplied patch is a truncated/incomplete hunk, which the
+    // generator drops as a unit. The evidence coverage is therefore genuinely
+    // partial — not a side effect of a patchless file being excluded.
+    octokit.pulls.listFiles = vi.fn(async ({ page }: { page: number }) =>
+      page === 1
+        ? {
+            data: [
+              { filename: 'src/a.ts', status: 'modified', additions: 10, deletions: 10, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
+              { filename: 'src/partial.ts', status: 'modified', additions: 10, deletions: 0, patch: '@@ -1,3 +1,3 @@\n context\n-old\n+new' },
+            ],
+          }
+        : { data: [] },
+    );
+    const llm = diagramLLM(DIAGRAM_E0);
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      llm,
+      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+    );
+
+    const result = await orchestrator.reviewPullRequest(params);
+
+    expect(result.diagram).toBeDefined();
+    expect(result.diagram!.partial).toBe(true);
+    // Fix authority / conclusion come from the review, not from the (partial) diagram.
+    expect(result.stats.critical).toBe(1);
+    const check = octokit.checks.update.mock.calls.at(-1)?.[0] as { conclusion: string };
+    expect(check.conclusion).toBe('failure');
+  });
+
+  it.each(['throw', 'malformed', 'truncated'] as const)(
+    'diagram %s response preserves findings, conclusion, and state save',
+    async (mode) => {
+      const octokit = fakeOctokit();
+      const llm = diagramFailingLLM(mode);
+      const orchestrator = new ReviewOrchestrator(
+        octokit as never,
+        llm,
+        cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+      );
+
+      const result = await orchestrator.reviewPullRequest(params);
+
+      // The ordinary review result is intact.
+      expect(result.stats.critical).toBe(1);
+      expect(result.diagram).toBeUndefined();
+      expect(result.callCount).toBe(2);
+      expect(result.tokensUsed).toEqual(
+        mode === 'throw'
+          ? { input: 100, output: 50, cached: 0 }
+          : { input: 200, output: 100, cached: 10 },
+      );
+      const body = savedBody(octokit);
+      expect(body).not.toContain('### Visual changes');
+      // State was still saved and the blocking conclusion held.
+      const state = savedState(octokit);
+      expect(state?.findings.some((f) => f.fingerprint === FP && f.status === 'open')).toBe(true);
+      const check = octokit.checks.update.mock.calls.at(-1)?.[0] as { conclusion: string };
+      expect(check.conclusion).toBe('failure');
+    },
+  );
 });

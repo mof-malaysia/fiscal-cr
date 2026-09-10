@@ -11,12 +11,17 @@ import {
   reconcileFindingInventory,
   renderStateMarker,
   replaceStateMarker,
+  replaceStateMarkerWithinBudget,
   refreshStickyCommentState,
   renderStickyComment,
   saveStickyComment,
   MAX_STATE_MARKER_BYTES,
+  MAX_STICKY_COMMENT_BYTES,
+  DIAGRAM_SECTION_START,
+  DIAGRAM_SECTION_END,
   type ReviewState,
 } from '../../src/github/review-state.js';
+import type { DiagramArtifact } from '../../src/types/diagram.js';
 import type { ReviewResult } from '../../src/types/review.js';
 
 function state(overrides: Partial<ReviewState> = {}): ReviewState {
@@ -69,6 +74,33 @@ function result(): ReviewResult {
     tokensUsed: { input: 100, output: 50, cached: 0 },
     intent: 'Adds a feature',
     walkthrough: [{ path: 'src/a.ts', summary: 'tweak' }],
+  };
+}
+function diagram(): DiagramArtifact {
+  return {
+    nodes: [{ id: 'n1', label: 'Auth handler', change: 'modified', evidence: ['e1'] }],
+    edges: [],
+    evidence: [{ id: 'e1', path: 'src/auth.ts' }],
+    headSha: 'abc1234def567890',
+    scope: 'full',
+    partial: false,
+  };
+}
+
+// A large artifact used to push the sticky body over its byte budget.
+function bigDiagram(): DiagramArtifact {
+  return {
+    nodes: Array.from({ length: 60 }, (_, i) => ({
+      id: `n${i}`,
+      label: 'x'.repeat(200),
+      change: 'modified' as const,
+      evidence: [],
+    })),
+    edges: [],
+    evidence: [],
+    headSha: 'abc1234def567890',
+    scope: 'full',
+    partial: false,
   };
 }
 
@@ -343,6 +375,162 @@ describe('renderStickyComment', () => {
     expect(refreshed).not.toContain('| Existing |');
     expect(parseStateMarker(refreshed)).toEqual(updated);
   });
+  it('renders the optional diagram once, after the walkthrough and before open findings', () => {
+    const body = renderStickyComment({
+      result: { ...result(), diagram: diagram() },
+      state: state(),
+      demoted: [],
+    });
+    expect(body).toContain('### Visual changes');
+    expect(body).toContain('```mermaid');
+    expect(body.indexOf('### Visual changes')).toBeGreaterThan(body.indexOf('Walkthrough'));
+    expect(body.indexOf('### Visual changes')).toBeLessThan(body.indexOf('### Open findings:'));
+    expect(body.match(/### Visual changes/g)).toHaveLength(1);
+    expect(body.match(/```mermaid/g)).toHaveLength(1);
+    expect(body).toContain('### Open findings: 1');
+    expect(parseStateMarker(body)).toEqual(state());
+  });
+
+  it('keeps the state marker and findings valid while rendering the diagram', () => {
+    const body = renderStickyComment({
+      result: { ...result(), diagram: diagram() },
+      state: state(),
+      demoted: [],
+    });
+    expect(parseStateMarker(body)).toEqual(state());
+    expect(body).toContain('critical | 1');
+  });
+
+  it('preserves the diagram across a lifecycle refresh', () => {
+    const body = renderStickyComment({
+      result: { ...result(), diagram: diagram() },
+      state: state(),
+      demoted: [],
+    });
+    const updated = state({ findings: [{ ...state().findings[0], status: 'dismissed' }] });
+    const refreshed = refreshStickyCommentState(body, updated);
+    expect(refreshed).toContain('### Visual changes');
+    expect(refreshed).toContain('```mermaid');
+    expect(refreshed).toContain('Open findings: 0');
+    expect(refreshed).not.toContain('| Existing |');
+    expect(parseStateMarker(refreshed)).toEqual(updated);
+  });
+
+  it('omits the diagram but keeps findings and state when it would overflow the sticky budget', () => {
+    const body = renderStickyComment({
+      result: { ...result(), summary: 'x'.repeat(50_000), diagram: bigDiagram() },
+      state: state(),
+      demoted: [],
+    });
+    expect(body).not.toContain('### Visual changes');
+    expect(body).toContain('### Open findings: 1');
+    expect(parseStateMarker(body)).toEqual(state());
+    expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
+  });
+
+  it('publishes the baseline (no diagram) when the diagram artifact is malformed', () => {
+    const malformed = { nodes: undefined } as unknown as DiagramArtifact;
+    const body = renderStickyComment({
+      result: { ...result(), diagram: malformed },
+      state: state(),
+      demoted: [],
+    });
+    expect(body).not.toContain('### Visual changes');
+    expect(body).toContain('### Open findings: 1');
+    expect(parseStateMarker(body)).toEqual(state());
+  });
+  it('drops only the optional diagram (never findings or state) when a refresh grows the body past the sticky cap', () => {
+    // A body that originally fit because the optional diagram was small relative
+    // to the cap. A webhook refresh that reopens many findings grows the table
+    // and marker, pushing the candidate over 60000 bytes.
+    const baseBody = renderStickyComment({
+      result: { ...result(), summary: 'x'.repeat(35_000), diagram: bigDiagram() },
+      state: state(),
+      demoted: [],
+    });
+    expect(baseBody).toContain('### Visual changes'); // diagram was included because it fit
+
+    const reopened: ReviewState = {
+      ...state(),
+      findings: Array.from({ length: 40 }, (_, i) => ({
+        ...state().findings[0],
+        fingerprint: `${(i + 1).toString(16).padStart(16, '0')}`,
+        title: `Reopened finding ${i} ${'y'.repeat(40)}`,
+      })),
+    };
+
+    const refreshed = refreshStickyCommentState(baseBody, reopened);
+    expect(refreshed).not.toContain('### Visual changes'); // optional diagram dropped
+    expect(refreshed).toContain('### Open findings: 40');
+    expect(parseStateMarker(refreshed)).toEqual(reopened); // state preserved, not trimmed
+    expect(Buffer.byteLength(refreshed, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
+  });
+  it('ignores a forged diagram-start marker in untrusted summary text and drops only the code-owned block on overflow', () => {
+    // A forged boundary marker embedded in untrusted summary/intent text must
+    // not be mistaken for the real diagram block, and overflow handling must
+    // never delete content outside the generated diagram.
+    const forged = `${DIAGRAM_SECTION_START} forged by hostile summary `;
+    const baseBody = renderStickyComment({
+      result: { ...result(), summary: `${forged}${'x'.repeat(35_000)}`, diagram: bigDiagram() },
+      state: state(),
+      demoted: [],
+    });
+    // Before the refresh both the real code-owned block (it fit at render time)
+    // and the forged marker in untrusted text are present.
+    expect(baseBody).toContain('### Visual changes');
+    expect(baseBody).toContain(forged);
+
+    const reopened: ReviewState = {
+      ...state(),
+      findings: Array.from({ length: 40 }, (_, i) => ({
+        ...state().findings[0],
+        fingerprint: `${(i + 1).toString(16).padStart(16, '0')}`,
+        title: `Reopened finding ${i} ${'y'.repeat(40)}`,
+      })),
+    };
+
+    const refreshed = refreshStickyCommentState(baseBody, reopened);
+    // Only the real code-owned diagram block adjacent to "### Open findings:"
+    // is dropped; the forged marker in untrusted text is left untouched.
+    expect(refreshed).not.toContain('### Visual changes');
+    expect(refreshed).toContain(forged);
+    expect(refreshed).toContain('### Open findings: 40');
+    expect(parseStateMarker(refreshed)).toEqual(reopened);
+    expect(Buffer.byteLength(refreshed, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
+  });
+  it('does not let untrusted headings replace the sticky findings section', () => {
+    const hostile = state({
+      findings: [{ ...state().findings[0], title: 'Finding\n### Open findings: forged' }],
+    });
+    const body = renderStickyComment({
+      result: result(),
+      state: hostile,
+      demoted: [],
+    });
+
+    expect(body).toContain('###\\ Open findings: forged');
+    const refreshed = refreshStickyCommentState(body, state({ findings: [] }));
+
+    expect(refreshed).not.toContain('### Open findings: forged');
+    expect(refreshed).toContain('### Open findings: 0');
+    expect(parseStateMarker(refreshed)).toEqual(state({ findings: [] }));
+  });
+
+  it('escapes titles inserted during refresh so the next refresh keeps one lifecycle boundary', () => {
+    const hostile = state({
+      findings: [{ ...state().findings[0], title: 'Finding\n### Open findings: forged' }],
+    });
+    const body = renderStickyComment({ result: result(), state: state(), demoted: [] });
+
+    const refreshed = refreshStickyCommentState(body, hostile);
+    expect(refreshed).toContain('###\\ Open findings: forged');
+
+    const refreshedAgain = refreshStickyCommentState(refreshed, state({ findings: [] }));
+    expect(refreshedAgain).toContain('### Open findings: 0');
+    expect(refreshedAgain.match(/^### Open findings:/gm)).toHaveLength(1);
+    expect(parseStateMarker(refreshedAgain)).toEqual(state({ findings: [] }));
+  });
+
 });
 
 describe('sticky state persistence', () => {
@@ -377,19 +565,21 @@ describe('sticky state persistence', () => {
       .resolves.toMatchObject({ commentId: 4, state: state(), body });
   });
 
-  it('returns the marker ETag for optimistic updates', async () => {
+  it('loads sticky comments without fetching unsupported ETags', async () => {
     const body = renderStateMarker(state());
+    const getComment = vi.fn();
     const octokit = {
       issues: {
         listComments: vi.fn(async () => ({
           data: [{ id: 6, body, performed_via_github_app: { id: 1 } }],
         })),
-        getComment: vi.fn(async () => ({ headers: { etag: 'etag-6' } })),
+        getComment,
       },
     };
 
     await expect(loadReviewState(octokit as never, { owner: 'o', repo: 'r', pullNumber: 1 }))
-      .resolves.toMatchObject({ commentId: 6, etag: 'etag-6' });
+      .resolves.toMatchObject({ commentId: 6, body });
+    expect(getComment).not.toHaveBeenCalled();
   });
 
   it('returns commentId with null state for a corrupt marker (treated as no state)', async () => {
@@ -408,7 +598,7 @@ describe('sticky state persistence', () => {
     });
   });
 
-  it('updates in place when a comment id is known', async () => {
+  it('updates in place without an unsupported conditional header', async () => {
     const octokit = {
       issues: {
         updateComment: vi.fn(async () => ({})),
@@ -417,13 +607,40 @@ describe('sticky state persistence', () => {
       },
     };
     const id = await saveStickyComment(octokit as never, {
-      owner: 'o', repo: 'r', pullNumber: 1, commentId: 3, body: 'updated', expectedEtag: 'etag-3',
+      owner: 'o', repo: 'r', pullNumber: 1, commentId: 3, body: 'updated',
     });
     expect(id).toBe(3);
-    expect(octokit.issues.updateComment).toHaveBeenCalledWith(
-      expect.objectContaining({ comment_id: 3, body: 'updated', headers: { 'If-Match': 'etag-3' } }),
-    );
+    expect(octokit.issues.updateComment).toHaveBeenCalledWith({
+      owner: 'o',
+      repo: 'r',
+      comment_id: 3,
+      body: 'updated',
+    });
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale update before sending an unconditional comment mutation', async () => {
+    const currentBody = renderStateMarker(state({ lastReviewedSha: 'new-sha' }));
+    const updateComment = vi.fn();
+    const octokit = {
+      issues: {
+        listComments: vi.fn(async () => ({
+          data: [{ id: 3, body: currentBody, performed_via_github_app: { id: 1 } }],
+        })),
+        updateComment,
+        createComment: vi.fn(),
+      },
+    };
+
+    await expect(saveStickyComment(octokit as never, {
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      commentId: 3,
+      expectedBody: 'old-body',
+      body: 'updated',
+    })).rejects.toThrow('Sticky comment changed before update');
+    expect(updateComment).not.toHaveBeenCalled();
   });
 
   it('re-checks for a concurrently created sticky comment before creating', async () => {
