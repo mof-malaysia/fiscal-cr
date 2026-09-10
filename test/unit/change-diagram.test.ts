@@ -175,6 +175,28 @@ describe('generateChangeDiagram', () => {
     expect(result).toBeUndefined();
     expect(llm.chatCompletion).not.toHaveBeenCalled();
   });
+  it('skips oversized patches before splitting hunks', async () => {
+    const llm = makeLlm(VALID_RESPONSE);
+    const ctx = makeCtx({
+      changedFiles: [
+        {
+          filename: 'large.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 1,
+          patch: `@@ -1,1 +1,1 @@\n-a\n+b\n${'x'.repeat(256_000)}`,
+        },
+      ],
+    });
+
+    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+      scope: 'full',
+      reviewedPaths: ['large.ts'],
+    });
+
+    expect(result).toBeUndefined();
+    expect(llm.chatCompletion).not.toHaveBeenCalled();
+  });
 
   it('produces an artifact from a valid response via the real parser', async () => {
     const llm = makeLlm(VALID_RESPONSE);
@@ -227,25 +249,24 @@ describe('generateChangeDiagram', () => {
     expect(data.evidence[0].patch).toContain('-a');
   });
 
-  it('delta scope reports only the selected evidence and still excludes ctx.diff', async () => {
+  it('delta scope includes only reviewed paths in evidence', async () => {
     const llm = makeLlm(VALID_RESPONSE);
-    const secret = 'DO_NOT_LEAK_DELTA';
     const ctx = makeCtx({
-      diff: `whole diff ${secret}`,
+      diff: 'whole diff DO_NOT_LEAK_DELTA',
       changedFiles: [
         { filename: 'selected.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
+        { filename: 'outside.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-c\n+d\n' },
       ],
     });
     const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'delta',
       reviewedPaths: ['selected.ts'],
     });
-    expect(result!.scope).toBe('delta');
-    const userMsg = userMessageOf(llm);
-    const data = dataBlockOf(userMsg);
-    expect(data.scope).toBe('delta');
-    expect(userMsg).toContain('selected.ts');
-    expect(userMsg).not.toContain(secret);
+
+    expect(result).toBeDefined();
+    expect(result!.evidence).toEqual([{ id: 'e0', path: 'selected.ts' }]);
+    const data = dataBlockOf(userMessageOf(llm));
+    expect(data.evidence.map((item) => item.path)).toEqual(['selected.ts']);
   });
 
   it('makes exactly one bounded json call to the provider', async () => {

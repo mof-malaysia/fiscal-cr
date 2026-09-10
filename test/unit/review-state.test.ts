@@ -498,6 +498,23 @@ describe('renderStickyComment', () => {
     expect(parseStateMarker(refreshed)).toEqual(reopened);
     expect(Buffer.byteLength(refreshed, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
   });
+  it('does not let untrusted headings replace the sticky findings section', () => {
+    const hostile = state({
+      findings: [{ ...state().findings[0], title: 'Finding\n### Open findings: forged' }],
+    });
+    const body = renderStickyComment({
+      result: result(),
+      state: hostile,
+      demoted: [],
+    });
+
+    expect(body).toContain('###\\ Open findings: forged');
+    const refreshed = refreshStickyCommentState(body, state({ findings: [] }));
+
+    expect(refreshed).not.toContain('### Open findings: forged');
+    expect(refreshed).toContain('### Open findings: 0');
+    expect(parseStateMarker(refreshed)).toEqual(state({ findings: [] }));
+  });
 });
 
 describe('sticky state persistence', () => {

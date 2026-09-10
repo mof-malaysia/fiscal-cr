@@ -308,12 +308,13 @@ export class ReviewOrchestrator {
       // call; any auxiliary failure is contained locally so the ordinary review
       // result and conclusion are never affected.
       if (
+        scope.mode === 'full' &&
         this.config.review.diagram.enabled &&
         shouldGenerateChangeDiagram(prContext, this.config.review.diagram)
       ) {
         try {
           const diagram = await generateChangeDiagram(this.llm, prContext, this.config, usage, {
-            scope: scope.mode === 'skip' ? 'full' : scope.mode,
+            scope: 'full',
             reviewedPaths: result.reviewedPaths,
           });
           if (diagram) {

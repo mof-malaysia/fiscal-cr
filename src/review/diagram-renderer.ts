@@ -88,9 +88,7 @@ function escapeMermaidLabel(value: string): string {
  * emphasis, links, code spans, or headings into a surface that renders Markdown.
  */
 function escapeMarkdownText(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/([\\[\]()*_~`#!<>])/g, '\\$1');
+  return value.replace(/([\\[\]()*_~`#!<>])/g, '\\$1');
 }
 
 function renderMermaid(diagram: DiagramArtifact): string {

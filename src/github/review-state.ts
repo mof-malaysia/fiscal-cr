@@ -650,18 +650,25 @@ export interface StickyCommentInput {
 }
 
 /**
- * Locate a Markdown heading only when it begins a line (start of body or
- * immediately after a newline), so untrusted file paths or finding titles that
- * merely contain the heading text cannot be mistaken for the section anchor.
+ * Escape the code-owned open-findings heading in untrusted text so section
+ * refreshes cannot mistake model output for the generated lifecycle section.
+ */
+function escapeOpenFindingsHeading(value: string): string {
+  return value.replace(/^### Open findings:/gm, '###\\ Open findings:');
+}
+
+/**
+ * Locate a Markdown heading only when it begins a line, preferring the
+ * generated tail section over earlier untrusted text.
  */
 function findLineHeadingIndex(body: string, heading: string): number {
-  let from = 0;
+  let from = body.length;
   for (;;) {
-    const idx = body.indexOf(heading, from);
+    const idx = body.lastIndexOf(heading, from);
     if (idx < 0) return -1;
     const prev = idx === 0 ? '' : body[idx - 1];
     if (prev === '' || prev === '\n') return idx;
-    from = idx + heading.length;
+    from = idx - 1;
   }
 }
 
@@ -722,8 +729,8 @@ export function renderStickyComment(input: StickyCommentInput): string {
   // Head: everything up to and including the walkthrough block.
   const head: string[] = [];
   head.push('## 🤖 FiscalCR Code Review\n');
-  if (result.intent) head.push(`> ${result.intent}\n`);
-  head.push(result.summary, '');
+  if (result.intent) head.push(`> ${escapeOpenFindingsHeading(result.intent)}\n`);
+  head.push(escapeOpenFindingsHeading(result.summary), '');
   head.push(`**Score:** ${result.score}/100 · last reviewed \`${state.lastReviewedSha.slice(0, 7)}\``, '');
   if (state.v === 2 && state.migratedFromV1) {
     head.push('> Migrated from the v1 marker; prior finding statuses were not inferred.', '');
@@ -731,7 +738,9 @@ export function renderStickyComment(input: StickyCommentInput): string {
 
   if (walkthrough && walkthrough.length > 0) {
     head.push('<details>', '<summary>📝 Walkthrough</summary>\n', '| File | Change Summary |', '|------|----------------|');
-    for (const entry of walkthrough) head.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
+    for (const entry of walkthrough) {
+      head.push(`| \`${entry.path}\` | ${escapeOpenFindingsHeading(entry.summary).replace(/\|/g, '\\|')} |`);
+    }
     head.push('</details>\n');
   }
 
@@ -749,7 +758,7 @@ export function renderStickyComment(input: StickyCommentInput): string {
       .slice(0, MAX_VISIBLE_FINDINGS);
     for (const finding of visible) {
       tail.push(
-        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${finding.title.replace(/\|/g, '\\|')} |`,
+        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${escapeOpenFindingsHeading(finding.title).replace(/\|/g, '\\|')} |`,
       );
     }
     if (visible.length < active.length) {
@@ -764,7 +773,9 @@ export function renderStickyComment(input: StickyCommentInput): string {
 
   if (demoted.length > 0) {
     tail.push('<details>', `<summary>⚠️ ${demoted.length} finding(s) could not be placed inline</summary>\n`);
-    for (const d of demoted) tail.push(`- ${SEVERITY_EMOJI[d.severity]} \`${d.path}:${d.startLine}\` — ${d.title}`);
+    for (const d of demoted) {
+      tail.push(`- ${SEVERITY_EMOJI[d.severity]} \`${d.path}:${d.startLine}\` — ${escapeOpenFindingsHeading(d.title)}`);
+    }
     tail.push('\nSee the check-run annotations for details.', '</details>\n');
   }
   if (state.runs.length > 0) {

@@ -325,6 +325,17 @@ describe('renderDiagramSection', () => {
     expect(out).not.toContain('*bold*');
     expect(out).not.toContain('[link](x)');
   });
+  it('escapes literal backslashes exactly once in text labels', () => {
+    const out = renderDiagramSection(
+      artifact({
+        nodes: [{ id: 'n0', label: 'src\\file.ts', change: 'modified', evidence: ['e1'] }],
+        edges: [],
+      }),
+      'text',
+    );
+
+    expect(out).toContain('- [modified] n0: src\\\\file.ts');
+  });
 
   it('emits a ### Visual changes heading', () => {
     expect(renderDiagramSection(artifact())).toContain('### Visual changes');

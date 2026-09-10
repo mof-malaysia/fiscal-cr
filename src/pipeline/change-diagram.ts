@@ -24,6 +24,8 @@ const DIAGRAM_CALL_TIMEOUT_MS = 60_000;
 const DIAGRAM_MAX_EVIDENCE = 40;
 /** Maximum length of a file path included in evidence; longer paths are unusable. */
 const DIAGRAM_MAX_PATH_LENGTH = 1_024;
+/** Maximum patch size parsed for one file before evidence selection is skipped. */
+const DIAGRAM_MAX_PATCH_BYTES = 256_000;
 
 /**
  * Keep diagram generation for changes where a graph can add signal: at least
@@ -190,10 +192,19 @@ function selectEvidence(
   let evidencePartial = false;
   let coveragePartial = false;
   let index = 0;
+  const files =
+    scope === 'delta'
+      ? ctx.changedFiles.filter((file) => reviewedSet.has(file.filename))
+      : ctx.changedFiles;
 
-  for (const file of ctx.changedFiles) {
+  for (const file of files) {
     if (!file.patch || file.filename.length > DIAGRAM_MAX_PATH_LENGTH) {
       // Unusable patch or path: this file cannot be represented in evidence.
+      evidencePartial = true;
+      continue;
+    }
+    if (Buffer.byteLength(file.patch, 'utf8') > DIAGRAM_MAX_PATCH_BYTES) {
+      // Do not duplicate an untrusted oversized patch while splitting hunks.
       evidencePartial = true;
       continue;
     }

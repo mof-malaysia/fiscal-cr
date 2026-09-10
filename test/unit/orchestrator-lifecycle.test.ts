@@ -560,17 +560,26 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
   it('enabled: publishes a mermaid graph for a clean review and counts its spend', async () => {
     const octokit = fakeOctokit();
     const llm = diagramLLM(DIAGRAM_E0E1, fastPathLLM([]));
-    const orchestrator = new ReviewOrchestrator(
-      octokit as never,
-      llm,
-      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
-    );
+    const config: ReviewConfig = {
+      ...DEFAULT_CONFIG,
+      models: {
+        ...DEFAULT_CONFIG.models,
+        fastPath: 'fast-path-test',
+        synthesis: 'synthesis-test',
+      },
+      review: {
+        ...DEFAULT_CONFIG.review,
+        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+      },
+    };
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, config);
 
     const result = await orchestrator.reviewPullRequest(params);
 
     const allCalls = llm.chatCompletion.mock.calls.map(([p]) => p);
     const diagramCalls = allCalls.filter((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT);
     expect(diagramCalls).toHaveLength(1);
+    expect(diagramCalls[0].model).toBe('synthesis-test');
     expect(result.callCount).toBe(allCalls.length);
     // Shared usage totals fold in the diagram call (its 10 cached tokens; pipeline calls carry 0).
     expect(result.tokensUsed).toEqual({
@@ -599,8 +608,11 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     expect(body).not.toContain('### Visual changes');
   });
 
-  it('delta below the complexity threshold skips diagram generation', async () => {
-    const octokit = fakeOctokit({ stickyState: priorState() });
+  it('delta scope never generates a diagram, even for complex changes', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      compareFiles: ['src/a.ts', 'src/b.ts'],
+    });
     const llm = diagramLLM(DIAGRAM_E0);
     const orchestrator = new ReviewOrchestrator(
       octokit as never,
@@ -716,6 +728,12 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
       // The ordinary review result is intact.
       expect(result.stats.critical).toBe(1);
       expect(result.diagram).toBeUndefined();
+      expect(result.callCount).toBe(2);
+      expect(result.tokensUsed).toEqual(
+        mode === 'throw'
+          ? { input: 100, output: 50, cached: 0 }
+          : { input: 200, output: 100, cached: 10 },
+      );
       const body = savedBody(octokit);
       expect(body).not.toContain('### Visual changes');
       // State was still saved and the blocking conclusion held.

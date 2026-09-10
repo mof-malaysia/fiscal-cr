@@ -190,11 +190,11 @@ async function run(): Promise<void> {
     if (result.diagram) {
       try {
         const diagramSection = renderDiagramSection(result.diagram, 'text');
-        // Guard the 1 MiB job-summary budget; the diagram is bounded and the
-        // current stringify API is always present.
         const fits =
-          Buffer.byteLength(`${core.summary.stringify()}\n\n${diagramSection}`, 'utf8') <=
-          JOB_SUMMARY_BUDGET_BYTES;
+          Buffer.byteLength(
+            `${core.summary.stringify()}\n\n${diagramSection}${process.platform === "win32" ? "\r\n" : "\n"}`,
+            "utf8",
+          ) <= JOB_SUMMARY_BUDGET_BYTES;
         if (fits) {
           core.summary.addRaw(`\n\n${diagramSection}`);
         }
