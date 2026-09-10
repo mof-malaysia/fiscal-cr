@@ -8,6 +8,7 @@ export interface FiscalcrThread {
   isResolved: boolean;
   path: string;
   line?: number | null;
+  originalLine?: number | null;
   fingerprint: string;
   severity: Severity | null;
 }
@@ -16,14 +17,20 @@ interface ThreadsQueryResponse {
   repository: {
     pullRequest: {
       reviewThreads: {
-        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        pageInfo: {
+          hasNextPage: boolean;
+          endCursor: string | null;
+        };
         nodes: Array<{
           id: string;
           isResolved: boolean;
           isOutdated?: boolean;
           path: string | null;
           line?: number | null;
-          comments: { nodes: Array<{ body: string | null }> };
+          originalLine?: number | null;
+          comments: {
+            nodes: Array<{ body: string | null }>;
+          };
         }>;
       };
     };
@@ -41,8 +48,9 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
           isResolved
           isOutdated
           path
-          comments(first: 1) { nodes { body } }
           line
+          originalLine
+          comments(first: 1) { nodes { body } }
         }
       }
     }
@@ -93,7 +101,8 @@ export async function listFiscalcrThreads(
         id: node.id,
         isResolved: node.isResolved,
         path: node.path ?? '',
-        ...(node.line !== undefined ? { line: node.line } : {}),
+        line: node.line ?? null,
+        originalLine: node.originalLine ?? null,
         fingerprint,
         severity: (body.match(SEVERITY_RE)?.[1] as Severity | undefined) ?? null,
       });
@@ -139,13 +148,16 @@ export async function resolveOutdatedThreads(
   const outdated = threads.filter((t) => {
     const lineCovered =
       !params.reviewedRanges?.length ||
-      (t.line != null &&
-        params.reviewedRanges.some(
-          (range) =>
-            range.path === t.path &&
-            range.startLine <= t.line! &&
-            t.line! <= range.endLine,
-        ));
+      [t.line, t.originalLine].some(
+        (line) =>
+          line != null &&
+          params.reviewedRanges!.some(
+            (range) =>
+              range.path === t.path &&
+              range.startLine <= line &&
+              line <= range.endLine,
+          ),
+      );
     return (
       !t.isResolved &&
       params.changedPaths.has(t.path) &&
