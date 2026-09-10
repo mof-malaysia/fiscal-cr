@@ -129,10 +129,16 @@ function planStickyPublication(input: {
     threadId: threadIdFor(finding),
   }));
   const newlyOpen = new Set(reconciliation.newlyOpen);
+  const previousFingerprints = new Set(
+    (state?.findings ?? []).map((finding) => finding.fingerprint),
+  );
   const fingerprints = new Map(result.annotations.map((annotation) => [annotation, fingerprintAnnotation(annotation)]));
   const newAnnotations =
     commentsCfg.dedupe && state
-      ? result.annotations.filter((annotation) => newlyOpen.has(fingerprints.get(annotation)!))
+      ? result.annotations.filter((annotation) => {
+          const fingerprint = fingerprints.get(annotation)!;
+          return newlyOpen.has(fingerprint) || !previousFingerprints.has(fingerprint);
+        })
       : result.annotations;
   const active = findings.filter((finding) => finding.status === 'open');
   const openCounts: Record<Severity, number> = { ...EMPTY_COUNTS };

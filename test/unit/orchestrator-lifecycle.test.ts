@@ -28,6 +28,17 @@ const FINDING: ReviewAnnotation = {
   confidence: 0.95,
 };
 const FP = fingerprintAnnotation(FINDING);
+const NEW_FINDING: ReviewAnnotation = {
+  path: 'src/a.ts',
+  startLine: 3,
+  endLine: 3,
+  severity: 'warning',
+  category: 'security',
+  title: 'Newly introduced unsafe branch',
+  body: 'Allows an unsafe branch to execute',
+  confidence: 0.9,
+};
+const NEW_FP = fingerprintAnnotation(NEW_FINDING);
 
 function priorState(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
@@ -331,6 +342,30 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
       expect.objectContaining({ comment_id: 3 }),
     );
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
+  });
+  it('posts inline comments for findings inserted into an existing sticky state', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
+    });
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      fastPathLLM([FINDING, NEW_FINDING]),
+      cfg(),
+    );
+
+    await orchestrator.reviewPullRequest(params);
+
+    const review = octokit.pulls.createReview.mock.calls[0][0] as {
+      comments: Array<{ path: string; line: number; body: string }>;
+    };
+    expect(review.comments).toEqual([
+      expect.objectContaining({
+        path: NEW_FINDING.path,
+        line: NEW_FINDING.endLine,
+        body: expect.stringContaining(fingerprintMarker(NEW_FP)),
+      }),
+    ]);
   });
 
   it('delta fix candidate: closes findings only when their changed lines were reviewed', async () => {
