@@ -106,7 +106,7 @@ function planStickyPublication(input: {
   const inventory = result.findings ?? result.annotations;
   const threadByFingerprint = new Map(threads.map((thread) => [thread.fingerprint, thread.id]));
   const threadIdFor = (finding: FindingRecord): string | null =>
-    threadsAvailable ? threadByFingerprint.get(finding.fingerprint) ?? null : finding.threadId;
+    threadsAvailable ? threadByFingerprint.get(finding.fingerprint) ?? finding.threadId : finding.threadId;
   const stateWithThreads = state
     ? {
         ...state,
@@ -435,17 +435,30 @@ export class ReviewOrchestrator {
         (target.checkRunId !== null &&
           (state.checkRunId !== target.checkRunId || state.checkRunHeadSha !== sticky.headSha)))
     ) {
+      const stateToSave = {
+        ...state,
+        checkRunId: target.checkRunId,
+        checkRunHeadSha: sticky.headSha,
+      };
+      const renderSkippedBody = (body: string, nextState: ReviewState) =>
+        replaceStateMarkerWithinBudget(body, nextState);
       await saveStickyComment(this.octokit, {
         owner: target.owner,
         repo: target.repo,
         pullNumber: sticky.pullNumber,
         commentId: sticky.commentId,
-        body: replaceStateMarkerWithinBudget(sticky.body, {
-          ...state,
-          checkRunId: target.checkRunId,
-          checkRunHeadSha: sticky.headSha,
-        }),
+        body: renderSkippedBody(sticky.body, stateToSave),
         expectedBody: sticky.body,
+        onConflict: async (latest) => {
+          const mergedState = latest.state
+            ? mergeConcurrentReviewState(state, stateToSave, latest.state)
+            : stateToSave;
+          return {
+            commentId: latest.commentId,
+            expectedBody: latest.body,
+            body: renderSkippedBody(latest.body, mergedState),
+          };
+        },
       });
     }
 
@@ -542,7 +555,7 @@ export class ReviewOrchestrator {
       logger.warn('GraphQL unavailable — lifecycle remains threadless');
     }
 
-    const reviewedPaths = scope.mode === 'full' ? result.reviewedPaths : [];
+    const reviewedPaths = result.reviewedPaths;
     const reviewedRanges = scope.mode === 'delta' ? result.reviewedRanges ?? [] : [];
     let stateForPublication = state;
     try {
@@ -573,7 +586,9 @@ export class ReviewOrchestrator {
         repo,
         pullNumber,
         changedPaths: new Set(
-          scope.mode === 'delta' ? reviewedRanges.map((range) => range.path) : reviewedPaths,
+          scope.mode === 'delta' && reviewedRanges.length > 0
+            ? reviewedRanges.map((range) => range.path)
+            : reviewedPaths,
         ),
         reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
         currentFingerprints: new Set(
@@ -710,13 +725,8 @@ export class ReviewOrchestrator {
     } catch (err) {
       logger.warn({ err }, 'Could not reread lifecycle state before save — preserving planned state');
     }
-    await saveStickyComment(this.octokit, {
-      owner,
-      repo,
-      pullNumber,
-      commentId: stickyCommentId,
-      expectedBody,
-      body: renderStickyComment({
+    const renderSavedBody = () =>
+      renderStickyComment({
         result,
         state: stateToSave,
         demoted: demoted.map((annotation) => ({
@@ -725,7 +735,26 @@ export class ReviewOrchestrator {
           severity: annotation.severity,
           title: annotation.title,
         })),
-      }),
+      });
+    await saveStickyComment(this.octokit, {
+      owner,
+      repo,
+      pullNumber,
+      commentId: stickyCommentId,
+      expectedBody,
+      body: renderSavedBody(),
+      onConflict: async (latest) => {
+        if (latest.state) {
+          stateToSave = mergeConcurrentReviewState(stateForPublication, newState, latest.state);
+        }
+        stickyCommentId = latest.commentId;
+        expectedBody = latest.body;
+        return {
+          commentId: latest.commentId,
+          expectedBody: latest.body,
+          body: renderSavedBody(),
+        };
+      },
     });
 
     logger.info(

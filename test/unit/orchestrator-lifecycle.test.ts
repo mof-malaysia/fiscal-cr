@@ -71,7 +71,8 @@ interface Fixture {
   legacyState?: LegacyReviewState;
   compareFiles?: string[];
   changedFiles?: string[];
-  threads?: Array<{ id: string; fp: string; path: string; severity: string }>;
+  patch?: string;
+  threads?: Array<{ id: string; fp: string; path: string; severity: string; isOutdated?: boolean }>;
 }
 function fakeOctokit(fixture: Fixture = {}) {
   const stickyBody = fixture.legacyState
@@ -104,7 +105,7 @@ function fakeOctokit(fixture: Fixture = {}) {
                 status: 'modified',
                 additions: 10,
                 deletions: 0,
-                patch: PATCH,
+                patch: fixture.patch ?? PATCH,
               })),
             }
           : { data: [] },
@@ -149,6 +150,7 @@ function fakeOctokit(fixture: Fixture = {}) {
                 nodes: (fixture.threads ?? []).map((t) => ({
                   id: t.id,
                   isResolved: false,
+                  isOutdated: t.isOutdated ?? false,
                   path: t.path,
                   comments: {
                     nodes: [{ body: `🔴 **[${t.severity}]** x\n\n${fingerprintMarker(t.fp)}` }],
@@ -343,6 +345,17 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     );
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
   });
+  it('preserves an existing thread ID when the current thread is outdated', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', isOutdated: true }],
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([FINDING]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.threadId).toBe('t1');
+  });
   it('posts inline comments for findings inserted into an existing sticky state', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
@@ -397,6 +410,24 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
     expect(state!.blockingReviewId).toBeNull();
     expect(result.stats.critical).toBe(0);
+  });
+  it('uses reviewed paths to fix deletion-only delta findings without ranges', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      changedFiles: ['src/a.ts'],
+      patch: '@@ -2,1 +2,0 @@\n-removed line',
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    const state = savedState(octokit);
+    expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
+    expect(state!.autoResolvedThreads).toContain('t1');
+    expect(
+      octokit.graphql.mock.calls.filter(([query]) => (query as string).includes('resolveReviewThread')),
+    ).toHaveLength(1);
   });
 
   it('migrates a v1 marker before skipping a PR with no reviewable files', async () => {

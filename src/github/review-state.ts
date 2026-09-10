@@ -586,39 +586,61 @@ export async function saveStickyComment(
     body: string;
     /** Body observed before composing the update; detects external changes. */
     expectedBody?: string;
+    /** Recompose once from the latest sticky state after a concurrent update. */
+    onConflict?: (current: StickyComment) => Promise<{
+      commentId?: number;
+      body: string;
+      expectedBody: string;
+    }>;
   },
 ): Promise<number> {
   if (Buffer.byteLength(params.body, 'utf8') > MAX_STICKY_COMMENT_BYTES) {
     throw new Error(`FiscalCR sticky comment exceeds ${MAX_STICKY_COMMENT_BYTES} bytes`);
   }
-  const { owner, repo, pullNumber, body } = params;
+  const { owner, repo, pullNumber } = params;
   let commentId = params.commentId;
+  let body = params.body;
+  let expectedBody = params.expectedBody;
+  let conflictRetries = 0;
   if (commentId === null) {
     const existing = await loadReviewState(octokit, { owner, repo, pullNumber });
     commentId = existing?.commentId ?? null;
   }
-  if (commentId !== null) {
-    if (params.expectedBody !== undefined) {
-      const current = await loadReviewState(octokit, { owner, repo, pullNumber });
-      if (current?.commentId === commentId && current.body !== params.expectedBody) {
-        throw new Error('Sticky comment changed before update; retrying with fresh state');
+  for (;;) {
+    if (commentId !== null) {
+      if (expectedBody !== undefined) {
+        const current = await loadReviewState(octokit, { owner, repo, pullNumber });
+        if (current?.commentId === commentId && current.body !== expectedBody) {
+          if (conflictRetries === 0 && params.onConflict) {
+            const retry = await params.onConflict(current);
+            if (Buffer.byteLength(retry.body, 'utf8') > MAX_STICKY_COMMENT_BYTES) {
+              throw new Error(`FiscalCR sticky comment exceeds ${MAX_STICKY_COMMENT_BYTES} bytes`);
+            }
+            commentId = retry.commentId ?? current.commentId;
+            body = retry.body;
+            expectedBody = retry.expectedBody;
+            conflictRetries++;
+            continue;
+          }
+          throw new Error('Sticky comment changed before update; refusing to overwrite concurrent update');
+        }
+      }
+      try {
+        await octokit.issues.updateComment({
+          owner,
+          repo,
+          comment_id: commentId,
+          body,
+        });
+        return commentId;
+      } catch (err) {
+        if (statusOf(err) !== 404) throw err;
+        logger.warn({ err, commentId }, 'Sticky comment was deleted — creating a replacement');
       }
     }
-    try {
-      await octokit.issues.updateComment({
-        owner,
-        repo,
-        comment_id: commentId,
-        body,
-      });
-      return commentId;
-    } catch (err) {
-      if (statusOf(err) !== 404) throw err;
-      logger.warn({ err, commentId }, 'Sticky comment was deleted — creating a replacement');
-    }
+    const { data } = await octokit.issues.createComment({ owner, repo, issue_number: pullNumber, body });
+    return data.id;
   }
-  const { data } = await octokit.issues.createComment({ owner, repo, issue_number: pullNumber, body });
-  return data.id;
 }
 
 const SEVERITY_EMOJI: Record<Severity, string> = {

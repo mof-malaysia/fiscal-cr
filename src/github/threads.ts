@@ -188,7 +188,13 @@ export async function resolveOutdatedThreads(
       logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');
     }
   }
-
+  const failed = outdated.length - resolved.length;
+  if (failed > 0) {
+    logger.warn(
+      { failed, attempted: outdated.length },
+      `${failed} outdated inline thread${failed === 1 ? '' : 's'} could not be resolved`,
+    );
+  }
   if (resolved.length > 0) {
     logger.info({ resolved: resolved.length }, 'Outdated review threads resolved');
   }

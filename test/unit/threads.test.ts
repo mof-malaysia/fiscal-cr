@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { listFiscalcrThreads, resolveOutdatedThreads } from '../../src/github/threads.js';
 import { fingerprintMarker } from '../../src/github/fingerprint.js';
+import { logger } from '../../src/utils/logger.js';
 
 const FP_A = 'aaaaaaaaaaaaaaaa';
 const FP_B = 'bbbbbbbbbbbbbbbb';
@@ -121,10 +122,10 @@ describe('resolveOutdatedThreads', () => {
     expect(resolved).toEqual([]);
   });
 
-  it('skips threads whose resolve mutation fails, resolving the rest', async () => {
+  it('reports unresolved thread cleanup failures', async () => {
     const nodes = [
-      threadNode({ id: 't1', path: 'src/a.ts', fp: FP_A }),
-      threadNode({ id: 't2', path: 'src/a.ts', fp: FP_B }),
+      threadNode({ id: 'failed', path: 'src/a.ts', fp: FP_A }),
+      threadNode({ id: 'resolved', path: 'src/a.ts', fp: FP_B }),
     ];
     let mutations = 0;
     const octokit = {
@@ -143,11 +144,19 @@ describe('resolveOutdatedThreads', () => {
         return {};
       }),
     } as never;
+    const warning = vi.spyOn(logger, 'warn');
+
     const resolved = await resolveOutdatedThreads(octokit, {
       ...params,
       changedPaths: new Set(['src/a.ts']),
       currentFingerprints: new Set(),
     });
-    expect(resolved.map((t) => t.id)).toEqual(['t2']);
+
+    expect(resolved.map((t) => t.id)).toEqual(['resolved']);
+    expect(warning).toHaveBeenCalledWith(
+      expect.objectContaining({ failed: 1, attempted: 2 }),
+      '1 outdated inline thread could not be resolved',
+    );
+    warning.mockRestore();
   });
 });
