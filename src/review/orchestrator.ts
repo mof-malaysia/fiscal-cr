@@ -290,6 +290,7 @@ export class ReviewOrchestrator {
         modelForRole(this.config, 'fastPath'),
         modelForRole(this.config, 'groupReview'),
         modelForRole(this.config, 'synthesis'),
+        modelForRole(this.config, 'diagram'),
       ];
       const pricingEntries = await Promise.all(
         [...new Set(stageModels)].map(async (model) => [
@@ -309,9 +310,10 @@ export class ReviewOrchestrator {
         deltaHint,
       });
 
-      // Step 5b: Optionally generate a bounded change diagram before the final
-      // cost accounting. A disabled config or unusable evidence makes no model
-      // call; any auxiliary failure is contained locally so the ordinary review
+      // Step 5b: Full reviews may generate a bounded replacement diagram before
+      // final cost accounting. Delta reviews deliberately do not call the
+      // auxiliary model; sticky publication preserves the last full-review map.
+      // Any auxiliary failure is contained locally so the ordinary review
       // result and conclusion are never affected.
       if (
         scope.mode === 'full' &&
@@ -729,6 +731,8 @@ export class ReviewOrchestrator {
       renderStickyComment({
         result,
         state: stateToSave,
+        preserveExistingDiagram: scope.mode === 'delta',
+        existingBody: expectedBody,
         demoted: demoted.map((annotation) => ({
           path: annotation.path,
           startLine: annotation.startLine,

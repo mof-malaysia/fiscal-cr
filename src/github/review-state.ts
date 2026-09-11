@@ -655,6 +655,10 @@ export interface StickyCommentInput {
   state: ReviewState | LegacyReviewState;
   demoted: Array<{ path: string; startLine: number; severity: Severity; title: string }>;
   walkthrough?: WalkthroughEntry[];
+  /** Preserve the code-owned diagram already stored in the sticky body. */
+  preserveExistingDiagram?: boolean;
+  /** Current persisted sticky body used when no new diagram is rendered. */
+  existingBody?: string;
 }
 
 /**
@@ -681,40 +685,67 @@ function findLineHeadingIndex(body: string, heading: string): number {
 }
 
 /**
- * Remove the optional generated diagram block, if present. The block is
- * code-owned and always rendered immediately before the line-start
- * `### Open findings:` heading, and the renderer escapes every raw delimiter
- * so untrusted content cannot forge a boundary. Anchor the lookup on that
- * heading and require the boundary pair to be directly adjacent to it: a
- * forged marker inside untrusted summary/intent/finding text is ignored, and
- * when the expected pair is absent or not adjacent to the section the body is
- * left unchanged rather than deleting content outside the generated diagram.
+ * Locate a complete generated diagram block independently of the findings
+ * heading: the map precedes the walkthrough. A candidate must use the
+ * renderer-owned heading and Mermaid fence, so a marker pasted into summary
+ * text is ignored.
  */
-  function omitOptionalDiagram(body: string): string {
-  // The code-owned diagram block is always rendered immediately before the
-  // line-start open-findings heading. Locate that heading first so a marker
-  // forged inside untrusted text cannot be mistaken for the real boundary pair.
-  const headingIdx = findLineHeadingIndex(body, '### Open findings:');
-  if (headingIdx < 0) return body;
+interface OptionalDiagramBlock {
+  start: number;
+  end: number;
+  body: string;
+}
 
-  // The end boundary must sit directly adjacent to the heading, joined only by
-  // the single newline the renderer emits between the block and the tail.
-  // Otherwise this is not the code-owned block and we delete nothing.
-  const endIdx = body.lastIndexOf(DIAGRAM_SECTION_END, headingIdx - 1);
-  if (endIdx < 0) return body;
-  if (body.slice(endIdx + DIAGRAM_SECTION_END.length, headingIdx) !== '\n') return body;
+function findOptionalDiagram(body: string): OptionalDiagramBlock | null {
+  let searchFrom = body.length;
+  while (searchFrom >= 0) {
+    const startIdx = body.lastIndexOf(DIAGRAM_SECTION_START, searchFrom);
+    if (startIdx < 0) return null;
+    const startAtLine = startIdx === 0 || body[startIdx - 1] === '\n';
+    if (!startAtLine) {
+      searchFrom = startIdx - 1;
+      continue;
+    }
 
-  // The matching start boundary must precede the end with no extra boundary
-  // markers nested between them. A forged start/end inside the pair would break
-  // the clean boundary, so we leave the body untouched.
-  const startIdx = body.lastIndexOf(DIAGRAM_SECTION_START, endIdx - 1);
-  if (startIdx < 0) return body;
-  const between = body.slice(startIdx + DIAGRAM_SECTION_START.length, endIdx);
-  if (between.includes(DIAGRAM_SECTION_START) || between.includes(DIAGRAM_SECTION_END)) return body;
+    const endIdx = body.indexOf(DIAGRAM_SECTION_END, startIdx + DIAGRAM_SECTION_START.length);
+    if (endIdx < 0) return null;
+    const endAtLine = endIdx === 0 || body[endIdx - 1] === '\n';
+    const afterEnd = body[endIdx + DIAGRAM_SECTION_END.length];
+    if (!endAtLine || (afterEnd !== undefined && afterEnd !== '\n')) {
+      searchFrom = startIdx - 1;
+      continue;
+    }
 
-  // Drop the whole code-owned block, including the newline joining it to the
-  // heading, so the refreshed body resumes cleanly at "### Open findings:".
-  return `${body.slice(0, startIdx)}${body.slice(headingIdx)}`;
+    const content = body.slice(startIdx + DIAGRAM_SECTION_START.length, endIdx);
+    const rendered = content.startsWith('\n') && content.endsWith('\n')
+      ? content.slice(1, -1)
+      : '';
+    const validShape =
+      /^### (?:Concept|Implementation) map(?:\n|$)/.test(rendered) &&
+      rendered.includes('```mermaid') &&
+      !rendered.includes(DIAGRAM_SECTION_START) &&
+      !rendered.includes(DIAGRAM_SECTION_END);
+    if (!validShape) {
+      searchFrom = startIdx - 1;
+      continue;
+    }
+
+    return {
+      start: startIdx,
+      end: endIdx + DIAGRAM_SECTION_END.length,
+      body: body.slice(startIdx, endIdx + DIAGRAM_SECTION_END.length),
+    };
+  }
+  return null;
+}
+
+function omitOptionalDiagram(body: string): string {
+  const diagram = findOptionalDiagram(body);
+  return diagram ? `${body.slice(0, diagram.start)}${body.slice(diagram.end)}` : body;
+}
+
+function existingDiagramBlock(body: string | undefined): string | undefined {
+  return body === undefined ? undefined : findOptionalDiagram(body)?.body;
 }
 
 /**
@@ -734,25 +765,27 @@ export function renderStickyComment(input: StickyCommentInput): string {
   const { result, state, demoted } = input;
   const walkthrough = input.walkthrough ?? result.walkthrough;
 
-  // Head: everything up to and including the walkthrough block.
-  const head: string[] = [];
-  head.push('## 🤖 FiscalCR Code Review\n');
-  if (result.intent) head.push(`> ${escapeOpenFindingsHeading(result.intent)}\n`);
-  head.push(escapeOpenFindingsHeading(result.summary), '');
-  head.push(`**Score:** ${result.score}/100 · last reviewed \`${state.lastReviewedSha.slice(0, 7)}\``, '');
+  const head: string[] = ['## 🤖 FiscalCR Code Review\n', escapeOpenFindingsHeading(result.summary), ''];
   if (state.v === 2 && state.migratedFromV1) {
     head.push('> Migrated from the v1 marker; prior finding statuses were not inferred.', '');
   }
 
+  const walkthroughLines: string[] = [];
   if (walkthrough && walkthrough.length > 0) {
-    head.push('<details>', '<summary>📝 Walkthrough</summary>\n', '| File | Change Summary |', '|------|----------------|');
+    walkthroughLines.push(
+      '<details>',
+      '<summary>📝 Walkthrough</summary>\n',
+      '| File | Change Summary |',
+      '|------|----------------|',
+    );
     for (const entry of walkthrough) {
-      head.push(`| \`${entry.path}\` | ${escapeOpenFindingsHeading(entry.summary).replace(/\|/g, '\\|')} |`);
+      walkthroughLines.push(
+        `| \`${entry.path}\` | ${escapeOpenFindingsHeading(entry.summary).replace(/\|/g, '\\|')} |`,
+      );
     }
-    head.push('</details>\n');
+    walkthroughLines.push('</details>\n');
   }
 
-  // Tail: open findings, demoted, run history, footer, and the hidden state marker.
   const tail: string[] = [];
   const active = state.v === 2 ? state.findings.filter((finding) => finding.status === 'open') : [];
   const openCounts = state.v === 2 ? { ...EMPTY_COUNTS } : state.openCounts;
@@ -777,7 +810,7 @@ export function renderStickyComment(input: StickyCommentInput): string {
       if (count > 0) tail.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
     }
   }
-  tail.push('');
+  tail.push('', `**Score:** ${result.score}/100`, '');
 
   if (demoted.length > 0) {
     tail.push('<details>', `<summary>⚠️ ${demoted.length} finding(s) could not be placed inline</summary>\n`);
@@ -788,32 +821,34 @@ export function renderStickyComment(input: StickyCommentInput): string {
   }
   if (state.runs.length > 0) {
     tail.push('<details>', '<summary>🕘 Run history</summary>\n', '| Commit | When | Scope | New findings | Cost |', '|--------|------|-------|--------------|------|');
-    for (const run of [...state.runs].reverse()) tail.push(`| \`${run.sha}\` | ${run.at} | ${run.scope} | ${run.newFindings} | $${run.cost} |`);
+    for (const run of [...state.runs].reverse()) {
+      tail.push(`| \`${run.sha}\` | ${run.at} | ${run.scope} | ${run.newFindings} | $${run.cost} |`);
+    }
     tail.push('</details>\n');
   }
   tail.push('---', '*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*', '', renderStateMarker(state));
 
-  // Baseline preserves the existing body byte-for-byte when no diagram is present.
-  const baseline = [...head, ...tail].join('\n');
+  const baseline = [...head, ...walkthroughLines, ...tail].join('\n');
 
+  // Full reviews replace the map; incremental reviews preserve the last
+  // code-owned map when no delta diagram is intentionally generated.
   const diagram = result.diagram;
-  if (!diagram) return baseline;
+  const preservedDiagram =
+    !diagram && input.preserveExistingDiagram ? existingDiagramBlock(input.existingBody) : undefined;
+  if (!diagram && !preservedDiagram) return baseline;
 
-  // Diagram-specific failures must not prevent the baseline comment from publishing.
-  let section: string;
-  try {
-    section = renderDiagramSection(diagram, 'mermaid');
-  } catch {
-    return baseline;
+  let diagramBlock: string | undefined = preservedDiagram;
+  if (diagram) {
+    try {
+      const section = renderDiagramSection(diagram, 'mermaid');
+      diagramBlock = `${DIAGRAM_SECTION_START}\n${section}\n${DIAGRAM_SECTION_END}`;
+    } catch {
+      return baseline;
+    }
   }
 
-  // Insert after the walkthrough and before the open-findings heading, wrapped
-  // in code-owned boundaries so untrusted content cannot forge a section edge.
-  // Omit the diagram when the whole serialized body (marker included) would
-  // overflow the existing sticky budget, so findings and state are never
-  // truncated to fit.
-  const diagramBlock = `${DIAGRAM_SECTION_START}\n${section}\n${DIAGRAM_SECTION_END}`;
-  const candidate = [...head, diagramBlock, ...tail].join('\n');
+  // The map is the high-level explanation, before per-file walkthrough detail.
+  const candidate = [...head, diagramBlock!, ...walkthroughLines, ...tail].join('\n');
   if (Buffer.byteLength(candidate, 'utf8') > MAX_STICKY_COMMENT_BYTES) return baseline;
   return candidate;
 }

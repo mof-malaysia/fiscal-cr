@@ -41,18 +41,21 @@ export const MODEL_PRESETS: Record<ConcreteBuiltinModelPreset, ModelStageMap> = 
     fastPath: "k3-256k",
     groupReview: "k3",
     synthesis: "k3",
+    diagram: "k3-256k",
   },
   openai: {
     intent: "gpt-5.6-terra",
     fastPath: "gpt-5.6-terra",
     groupReview: "gpt-5.6-sol",
     synthesis: "gpt-5.6-sol",
+    diagram: "gpt-5.6-terra",
   },
   anthropic: {
     intent: "claude-sonnet-5",
     fastPath: "claude-sonnet-5",
     groupReview: "claude-opus-5",
     synthesis: "claude-opus-5",
+    diagram: "claude-sonnet-5",
   },
 };
 

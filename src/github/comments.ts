@@ -230,57 +230,41 @@ export async function createPRReview(
 function buildReviewBody(result: ReviewResult): string {
   const cost = result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {});
 
-  // Head: everything up to and including the walkthrough block.
-  const head: string[] = [];
-  head.push('## 🤖 FiscalCR Code Review\n');
-  if (result.intent) {
-    head.push(`> ${result.intent}\n`);
-  }
-  head.push(result.summary);
-  head.push('');
-  head.push(`**Score:** ${result.score}/100`);
-  head.push('');
+  const head: string[] = ['## 🤖 FiscalCR Code Review\n', result.summary, ''];
 
+  const walkthrough: string[] = [];
   if (result.walkthrough && result.walkthrough.length > 0) {
-    head.push('<details>');
-    head.push('<summary>📝 Walkthrough</summary>\n');
-    head.push('| File | Change Summary |');
-    head.push('|------|----------------|');
+    walkthrough.push(
+      '<details>',
+      '<summary>📝 Walkthrough</summary>\n',
+      '| File | Change Summary |',
+      '|------|----------------|',
+    );
     for (const entry of result.walkthrough) {
-      head.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
+      walkthrough.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
     }
-    head.push('</details>\n');
+    walkthrough.push('</details>\n');
   }
 
-  // Tail: findings severity table, cost details, and footer.
   const tail: string[] = [];
-  tail.push('| Severity | Count |');
-  tail.push('|----------|-------|');
+  tail.push('| Severity | Count |', '|----------|-------|');
   for (const [severity, count] of Object.entries(result.stats)) {
-    if (count > 0) {
-      tail.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
-    }
+    if (count > 0) tail.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
   }
-
-  tail.push('');
-  tail.push('<details>');
-  tail.push('<summary>Token Usage & Cost</summary>\n');
+  tail.push('', `**Score:** ${result.score}/100`, '');
+  tail.push('<details>', '<summary>Token Usage & Cost</summary>\n');
   tail.push(`- Input: ${result.tokensUsed.input.toLocaleString()} tokens`);
   tail.push(`- Output: ${result.tokensUsed.output.toLocaleString()} tokens`);
   tail.push(`- Cached: ${result.tokensUsed.cached.toLocaleString()} tokens`);
   tail.push(`- Estimated cost: $${cost} (${result.costEstimate?.source ?? 'fallback'} pricing)`);
   tail.push('</details>\n');
+  tail.push('---', '*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
 
-  tail.push('---');
-  tail.push('*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
-
-  // Baseline preserves the existing body byte-for-byte when no diagram is present.
-  const baseline = [...head, ...tail].join('\n');
-
+  // Baseline preserves all findings and metadata when no diagram is present.
+  const baseline = [...head, ...walkthrough, ...tail].join('\n');
   const diagram = result.diagram;
   if (!diagram) return baseline;
 
-  // Diagram-specific failures must not prevent the baseline review from publishing.
   let section: string;
   try {
     section = renderDiagramSection(diagram, 'mermaid');
@@ -288,13 +272,13 @@ function buildReviewBody(result: ReviewResult): string {
     return baseline;
   }
 
-  // Insert after the walkthrough and before the findings severity table. Omit
-  // the diagram when the whole serialized body (including the 422 fallback
-  // suffix) would exceed the conservative legacy budget, so findings are never
-  // truncated to fit and the body-only retry stays within the cap.
+  // The map is the high-level explanation, before per-file walkthrough detail.
   const fallbackSuffix = `\n\n${LEGACY_FALLBACK_NOTE}`;
-  const candidate = [...head, section, ...tail].join('\n');
-  if (Buffer.byteLength(candidate, 'utf8') + Buffer.byteLength(fallbackSuffix, 'utf8') > LEGACY_REVIEW_MAX_BYTES) {
+  const candidate = [...head, section, ...walkthrough, ...tail].join('\n');
+  if (
+    Buffer.byteLength(candidate, 'utf8') + Buffer.byteLength(fallbackSuffix, 'utf8') >
+    LEGACY_REVIEW_MAX_BYTES
+  ) {
     return baseline;
   }
   return candidate;
