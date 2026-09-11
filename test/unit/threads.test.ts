@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { listFiscalcrThreads, resolveOutdatedThreads } from '../../src/github/threads.js';
+import {
+  listFiscalcrThreads,
+  replyToFixedReviewComments,
+  resolveOutdatedThreads,
+} from '../../src/github/threads.js';
 import { fingerprintMarker } from '../../src/github/fingerprint.js';
 import { logger } from '../../src/utils/logger.js';
 
@@ -93,8 +97,68 @@ describe('listFiscalcrThreads', () => {
       threadNode({ id: 'current', path: 'src/a.ts', fp: FP_A }),
       threadNode({ id: 'outdated', path: 'src/a.ts', fp: FP_B, isOutdated: true }),
     ]);
+
     const threads = await listFiscalcrThreads(octokit, params);
     expect(threads.map((thread) => thread.id)).toEqual(['current']);
+  });
+});
+describe('replyToFixedReviewComments', () => {
+  it('paginates review comments and replies to a matching root comment', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      body: 'unrelated review comment',
+      path: 'src/other.ts',
+    }));
+    const listReviewComments = vi.fn(async ({ page }: { page: number }) => ({
+      data:
+        page === 1
+          ? firstPage
+          : page === 2
+            ? [{ id: 201, body: fingerprintMarker(FP_A), path: 'src/a.ts' }]
+            : [],
+    }));
+    const createReplyForReviewComment = vi.fn(async () => ({ data: { id: 202 } }));
+    const octokit = { pulls: { listReviewComments, createReplyForReviewComment } } as never;
+
+    await replyToFixedReviewComments(octokit, {
+      ...params,
+      fixedFingerprints: new Set([FP_A]),
+    });
+
+    expect(listReviewComments.mock.calls.map(([input]) => input)).toEqual([
+      { owner: 'o', repo: 'r', pull_number: 1, per_page: 100, page: 1 },
+      { owner: 'o', repo: 'r', pull_number: 1, per_page: 100, page: 2 },
+    ]);
+    expect(createReplyForReviewComment).toHaveBeenCalledWith({
+      owner: 'o',
+      repo: 'r',
+      pull_number: 1,
+      comment_id: 201,
+      body: '✅ Already handled — finding fixed in `abcdef1`.',
+    });
+  });
+
+  it('does not duplicate an existing inline resolution reply', async () => {
+    const listReviewComments = vi.fn(async () => ({
+      data: [
+        { id: 301, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
+        {
+          id: 302,
+          body: '✅ Already handled — finding fixed in `old-sha`.',
+          path: 'src/a.ts',
+          in_reply_to_id: 301,
+        },
+      ],
+    }));
+    const createReplyForReviewComment = vi.fn(async () => ({ data: { id: 303 } }));
+    const octokit = { pulls: { listReviewComments, createReplyForReviewComment } } as never;
+
+    await replyToFixedReviewComments(octokit, {
+      ...params,
+      fixedFingerprints: new Set([FP_A]),
+    });
+
+    expect(createReplyForReviewComment).not.toHaveBeenCalled();
   });
 });
 

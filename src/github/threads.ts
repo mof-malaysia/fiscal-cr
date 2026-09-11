@@ -115,6 +115,73 @@ export async function listFiscalcrThreads(
   return threads;
 }
 
+/**
+ * Reply to FiscalCR's original review comments through the REST API, keeping
+ * the resolution notice attached to the original inline comment.
+ */
+export async function replyToFixedReviewComments(
+  octokit: FiscalcrOctokit,
+  params: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    fixedFingerprints: Set<string>;
+    headSha: string;
+  },
+): Promise<number> {
+  if (params.fixedFingerprints.size === 0) return 0;
+
+  try {
+    const comments: Array<{
+      id: number;
+      body?: string | null;
+      in_reply_to_id?: number | null;
+    }> = [];
+    for (let page = 1; ; page++) {
+      const { data: pageComments } = await octokit.pulls.listReviewComments({
+        owner: params.owner,
+        repo: params.repo,
+        pull_number: params.pullNumber,
+        per_page: 100,
+        page,
+      });
+      comments.push(...pageComments);
+      if (pageComments.length < 100) break;
+    }
+
+    const handledRootIds = new Set(
+      comments
+        .filter((comment) => comment.in_reply_to_id != null && comment.body?.includes('✅ Already handled —'))
+        .map((comment) => comment.in_reply_to_id),
+    );
+    const roots = comments.filter(
+      (comment) =>
+        comment.in_reply_to_id == null &&
+        params.fixedFingerprints.has(extractFingerprint(comment.body ?? '') ?? ''),
+    );
+    let replied = 0;
+    for (const root of roots) {
+      if (handledRootIds.has(root.id)) continue;
+      try {
+        await octokit.pulls.createReplyForReviewComment({
+          owner: params.owner,
+          repo: params.repo,
+          pull_number: params.pullNumber,
+          comment_id: root.id,
+          body: `✅ Already handled — finding fixed in \`${params.headSha.slice(0, 7)}\`.`,
+        });
+        replied++;
+      } catch (err) {
+        logger.warn({ err, commentId: root.id }, 'Could not add inline resolution reply');
+      }
+    }
+    return replied;
+  } catch (err) {
+    logger.warn({ err, pullNumber: params.pullNumber }, 'Could not list review comments for resolution replies');
+    return 0;
+  }
+}
+
 function reviewedRangeContainsLine(range: ReviewedRange, line: number): boolean {
   if (range.startLine <= line && line <= range.endLine) return true;
   return (

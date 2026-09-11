@@ -96,6 +96,12 @@ interface Fixture {
     line?: number | null;
     originalLine?: number | null;
   }>;
+  reviewComments?: Array<{
+    id: number;
+    body: string;
+    path: string;
+    in_reply_to_id?: number;
+  }>;
 }
 function fakeOctokit(fixture: Fixture = {}) {
   const stickyBody = fixture.stickyBody ??
@@ -135,6 +141,8 @@ function fakeOctokit(fixture: Fixture = {}) {
           : { data: [] },
       ),
       createReview: vi.fn(async () => ({ data: { id: 11 } })),
+      createReplyForReviewComment: vi.fn(async () => ({ data: { id: 12 } })),
+      listReviewComments: vi.fn(async () => ({ data: fixture.reviewComments ?? [] })),
       dismissReview: vi.fn(async () => ({})),
     },
     repos: {
@@ -458,27 +466,35 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(state!.blockingReviewId).toBeNull();
     expect(result.stats.critical).toBe(0);
   });
-  it('posts a visible resolution notice when thread permissions are unavailable', async () => {
+  it('replies inline when GraphQL thread access is unavailable', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
       threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
+      reviewComments: [{ id: 101, body: fingerprintMarker(FP), path: 'src/a.ts' }],
     });
     octokit.graphql = undefined as never;
 
     await new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg()).reviewPullRequest(params);
 
-    const notices = octokit.issues.createComment.mock.calls
-      .map(([input]) => input as { body: string })
-      .filter((input) => input.body.includes('Already handled'));
-    expect(notices).toHaveLength(1);
-    expect(notices[0].body).toContain('finding fixed in `new-sha`');
-    expect(notices[0].body).toContain('lacks review-thread permissions');
+    const hasTopLevelResolutionComment = octokit.issues.createComment.mock.calls.some(([input]) => {
+      if (typeof input !== 'object' || input === null || !('body' in input)) return false;
+      return typeof input.body === 'string' && input.body.includes('Already handled');
+    });
+    expect(hasTopLevelResolutionComment).toBe(false);
+    expect(octokit.pulls.createReplyForReviewComment).toHaveBeenCalledWith({
+      owner: 'o',
+      repo: 'r',
+      pull_number: 1,
+      comment_id: 101,
+      body: '✅ Already handled — finding fixed in `new-sha`.',
+    });
     expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
   });
-  it('posts the resolution notice when thread mutation is forbidden', async () => {
+  it('replies inline when thread mutation is forbidden', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
       threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', isOutdated: true }],
+      reviewComments: [{ id: 101, body: fingerprintMarker(FP), path: 'src/a.ts' }],
     });
     const listThreads = octokit.graphql;
     octokit.graphql = vi.fn(async (query: string, variables?: { threadId?: string }) => {
@@ -488,11 +504,13 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
 
     await new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg()).reviewPullRequest(params);
 
-    const notices = octokit.issues.createComment.mock.calls
-      .map(([input]) => input as { body: string })
-      .filter((input) => input.body.includes('Already handled'));
-    expect(notices).toHaveLength(1);
-    expect(notices[0].body).toContain('finding fixed in `new-sha`');
+    expect(octokit.pulls.createReplyForReviewComment).toHaveBeenCalledWith({
+      owner: 'o',
+      repo: 'r',
+      pull_number: 1,
+      comment_id: 101,
+      body: '✅ Already handled — finding fixed in `new-sha`.',
+    });
     expect(octokit.graphql.mock.calls.some(([query]) => (query as string).includes('resolveReviewThread'))).toBe(true);
   });
 

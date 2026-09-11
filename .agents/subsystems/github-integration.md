@@ -34,7 +34,7 @@ Triggered by workflow `on: pull_request` events. Reads inputs, loads repo config
 | File contents | `src/review/file-source.ts` | `repos.getContent` (base64, concurrency 8), or local `readFile` in Action mode |
 | Scope compare | `src/review/delta.ts` | `repos.compareCommitsWithBasehead` |
 | Config fetch | `src/config/loader.ts` | `repos.getContent` (base64) |
-| Threads | `src/github/threads.ts` | GraphQL `repository.pullRequest.reviewThreads` + `resolveReviewThread`/`addPullRequestReviewThreadReply` mutations |
+| Threads | `src/github/threads.ts` | GraphQL `repository.pullRequest.reviewThreads` + thread mutations; REST `pulls.listReviewComments`/`createReplyForReviewComment` keeps fixed-finding replies attached to the original inline comment when thread mutation is unavailable |
 
 ## Sticky state (`review-state.ts`)
 

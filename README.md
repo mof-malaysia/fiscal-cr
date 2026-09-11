@@ -55,12 +55,10 @@ jobs:
           base_url: https://your-llm-provider.com/v1
 ```
 
-The default `GITHUB_TOKEN` can publish findings but may not have permission to
-resolve inline review threads through GraphQL. To enable automatic thread
-cleanup, pass a GitHub App installation token or suitably scoped PAT through
-the `github_token` input. When thread mutation is unavailable, FiscalCR still
-posts a visible `✅ Already handled` resolution notice and keeps finding status
-correct in the sticky state.
+When `review.comments.resolveOutdated` is enabled (the default), FiscalCR
+attempts to reply directly to the original inline review comment when a finding
+is fixed. The reply stays attached to the outdated comment, so the resolution
+is visible in the same review thread; cleanup failures degrade to a log line.
 
 ### Action inputs
 
@@ -433,8 +431,9 @@ is used in Action and App mode.
   records and updates severity in place.
 - A successful review reconciles only its explicit reviewed-path manifest.
   Findings absent from that manifest remain unchanged; failed detector groups
-  therefore never fix findings. Fixed inline threads are resolved
-  automatically when permissions allow.
+  therefore never fix findings. When `review.comments.resolveOutdated` is
+  enabled, fixed inline threads are resolved automatically on a best-effort
+  basis, with the resolution reply kept on the original review comment.
 - Human resolution of a current FiscalCR thread marks an open, thread-backed
   finding `dismissed`. Threadless and demoted findings cannot be dismissed.
 - An `unresolved` event reopens a matching dismissed finding after validating
