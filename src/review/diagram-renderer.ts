@@ -7,7 +7,7 @@
 import type { DiagramArtifact, DiagramRepresentation } from '../types/diagram.js';
 
 function escapeMermaidLabel(value: string): string {
-  return value.replace(/[\\"#|&<>]/g, (ch) => {
+  const escaped = value.replace(/[\\"#|&<>;]/g, (ch) => {
     switch (ch) {
       case '&':
         return '#38;';
@@ -23,15 +23,19 @@ function escapeMermaidLabel(value: string): string {
         return '#60;';
       case '>':
         return '#62;';
+      case ';':
+        return '#59;';
       default:
         return ch;
     }
   });
+  return value.toLowerCase() === 'end' ? '#101;nd' : escaped;
 }
 
 function escapeMarkdownText(value: string): string {
-  return value.replace(/([\\[\]|()*_~`#!<>])/g, '\\$1');
+  return value.replace(/([\\[\]|()*_~`#!<>@])/g, (ch) => (ch === '@' ? '&#64;' : `\\${ch}`));
 }
+
 
 function representationOf(diagram: DiagramArtifact): DiagramRepresentation {
   return diagram.representation ?? 'flowchart';

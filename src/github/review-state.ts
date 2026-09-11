@@ -741,7 +741,7 @@ function findOptionalDiagram(body: string): OptionalDiagramBlock | null {
       : '';
     const validShape =
       /^(?:### (?:Concept|Implementation) map|### Sequence diagram|### Change table)(?:\n|$)/.test(rendered) &&
-      (rendered.includes('```mermaid') || /\n\| [^|\n]+ \|/.test(rendered)) &&
+      (rendered.includes('```mermaid') || /\n\| (?:\\\||[^|\n])+(?: \| (?:\\\||[^|\n])+)+ \|\n\| (?:--- \| )+--- \|/.test(rendered)) &&
       !rendered.includes(DIAGRAM_SECTION_START) &&
       !rendered.includes(DIAGRAM_SECTION_END);
     if (!validShape) {

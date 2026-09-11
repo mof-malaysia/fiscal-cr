@@ -297,7 +297,7 @@ function artifact(overrides: Partial<DiagramArtifact> = {}): DiagramArtifact {
   };
 }
 
-function sequenceArtifact(): DiagramArtifact {
+function sequenceArtifact(overrides: Partial<DiagramArtifact> = {}): DiagramArtifact {
   return artifact({
     representation: 'sequence',
     nodes: [],
@@ -307,16 +307,18 @@ function sequenceArtifact(): DiagramArtifact {
       { id: 'p1', label: 'Service', change: 'modified', evidence: ['e1'] },
     ],
     messages: [{ from: 'p0', to: 'p1', label: 'dispatches action', change: 'added', evidence: ['e1'] }],
+    ...overrides,
   });
 }
 
-function tableArtifact(): DiagramArtifact {
+function tableArtifact(overrides: Partial<DiagramArtifact> = {}): DiagramArtifact {
   return artifact({
     representation: 'table',
     nodes: [],
     edges: [],
     columns: ['Current state', 'Trigger', 'Result'],
     rows: [{ cells: ['Waiting', 'Start', 'Active'], evidence: ['e1'] }],
+    ...overrides,
   });
 }
 
@@ -349,12 +351,39 @@ describe('renderDiagramSection', () => {
     expect(out).toContain('p0->>p1: dispatches action');
   });
 
+  it('encodes sequence control characters and reserved labels', () => {
+    const out = renderDiagramSection(
+      sequenceArtifact({
+        participants: [
+          { id: 'p0', label: 'end', change: 'context', evidence: ['e1'] },
+          { id: 'p1', label: 'Service', change: 'modified', evidence: ['e1'] },
+        ],
+        messages: [{ from: 'p0', to: 'p1', label: 'done; next', change: 'added', evidence: ['e1'] }],
+      }),
+      'mermaid',
+    );
+    expect(out).toContain('participant p0 as #101;nd');
+    expect(out).toContain('p0->>p1: done#59; next');
+  });
+
   it('renders a table as Markdown rather than Mermaid', () => {
     const out = renderDiagramSection(tableArtifact(), 'mermaid');
     expect(out).toContain('### Change table');
     expect(out).toContain('| Current state | Trigger | Result |');
     expect(out).toContain('| --- | --- | --- |');
     expect(out).not.toContain('```mermaid');
+  });
+
+  it('escapes table pipes and GitHub mentions', () => {
+    const out = renderDiagramSection(
+      tableArtifact({
+        columns: ['Input | condition', 'Result'],
+        rows: [{ cells: ['@org/security-team', 'Allowed'], evidence: ['e1'] }],
+      }),
+      'mermaid',
+    );
+    expect(out).toContain('| Input \\| condition | Result |');
+    expect(out).toContain('| &#64;org/security-team | Allowed |');
   });
   it('renders readable text without change prefixes or evidence', () => {
     const out = renderDiagramSection(artifact(), 'text');

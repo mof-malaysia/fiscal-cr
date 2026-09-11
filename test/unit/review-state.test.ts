@@ -94,8 +94,8 @@ function tableDiagram(): DiagramArtifact {
     representation: 'table',
     nodes: [],
     edges: [],
-    columns: ['State', 'Result'],
-    rows: [{ cells: ['Waiting', 'Active'], evidence: ['e1'] }],
+    columns: ['Input | condition', 'Result'],
+    rows: [{ cells: ['@org/security-team', 'Active'], evidence: ['e1'] }],
   };
 }
 
@@ -498,7 +498,8 @@ describe('renderStickyComment', () => {
     });
 
     expect(refreshed).toContain('### Change table');
-    expect(refreshed).toContain('| State | Result |');
+    expect(refreshed).toContain('| Input \\| condition | Result |');
+    expect(refreshed).toContain('| &#64;org/security-team | Active |');
     expect(refreshed).toContain('Incremental summary');
   });
 
