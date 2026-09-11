@@ -13,6 +13,7 @@ describe('UsageTracker telemetry', () => {
 
     expect(tracker.total()).toEqual({ input: 150, output: 25, cached: 10 });
     expect(tracker.calls()).toBe(2);
+    expect(tracker.stageCosts()).toEqual([]);
   });
 
   it('prices each call with its resolved stage model', () => {
@@ -104,6 +105,16 @@ describe('UsageTracker telemetry', () => {
     });
     expect(events[0]).toHaveProperty('estimatedInputTokens');
     expect(JSON.stringify(events[0])).not.toContain('secret system prompt');
+    expect(tracker.stageCosts()).toEqual([
+      expect.objectContaining({
+        stage: 'group-review',
+        calls: 1,
+        inputTokens: 100,
+        outputTokens: 20,
+        cachedTokens: 10,
+        usd: expect.any(Number),
+      }),
+    ]);
     expect(JSON.stringify(events[0])).not.toContain('private source code');
   });
 

@@ -1,4 +1,4 @@
-import type { ReviewResult } from '../types/review.js';
+import type { ReviewResult, ReviewStage } from '../types/review.js';
 import { calculateCostBreakdownForModel } from '../utils/tokens.js';
 
 function tableCell(value: string): string {
@@ -10,6 +10,18 @@ function displayModel(result: ReviewResult): string | undefined {
   if (!model) return undefined;
   const provider = result.costEstimate?.provider;
   return provider ? `${provider}/${model}` : model;
+}
+
+const STAGE_LABELS: Record<ReviewStage, string> = {
+  intent: 'Intent analysis',
+  'group-review': 'Group reviews',
+  synthesis: 'Finding synthesis',
+  'fast-path': 'Fast-path review',
+  diagram: 'Change diagram',
+};
+
+function stageLabel(stage: keyof typeof STAGE_LABELS): string {
+  return STAGE_LABELS[stage];
 }
 
 /** Render user-facing token usage and cost details. */
@@ -57,6 +69,21 @@ export function renderTelemetrySummary(
         '',
       ]
     : [];
+  const stages = result.costEstimate?.stages ?? [];
+  const stageBreakdown = stages.length > 0
+    ? [
+        ...(multipleModels ? [] : ['']),
+        '**Cost by review stage**',
+        '',
+        '| Stage | Calls | Uncached input tokens | Cached input tokens | Output tokens | Review cost |',
+        '|-------|-------|-----------------------|---------------------|---------------|-------------|',
+        ...stages.map(
+          (summary) =>
+            `| ${stageLabel(summary.stage)} | ${summary.calls.toLocaleString()} | ${Math.max(0, summary.inputTokens - summary.cachedTokens).toLocaleString()} | ${summary.cachedTokens.toLocaleString()} | ${summary.outputTokens.toLocaleString()} | $${summary.usd.toFixed(4)} |`,
+        ),
+        '',
+      ]
+    : [];
   const rows = multipleModels
     ? []
     : [
@@ -73,6 +100,7 @@ export function renderTelemetrySummary(
     '',
     ...modelBreakdown,
     ...(multipleModels ? [] : ['| Token usage | Tokens | Cost |', '|-------------|--------|------|', ...rows]),
+    ...stageBreakdown,
     '</details>',
   ];
 }

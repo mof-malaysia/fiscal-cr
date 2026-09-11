@@ -351,6 +351,17 @@ export class ReviewOrchestrator {
           cachedUsd: roundCost(summary.cachedUsd),
           usd: roundCost(summary.usd),
         })),
+        ...(this.options.telemetry
+          ? {
+              stages: usage.stageCosts().map((summary) => ({
+                ...summary,
+                inputUsd: roundCost(summary.inputUsd),
+                outputUsd: roundCost(summary.outputUsd),
+                cachedUsd: roundCost(summary.cachedUsd),
+                usd: roundCost(summary.usd),
+              })),
+            }
+          : {}),
         ...pricingResolution,
       };
 

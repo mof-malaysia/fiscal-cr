@@ -230,6 +230,7 @@ describe('createPRReview (legacy mode)', () => {
     expect(call.body).toContain('**Model:** `openrouter/openai/gpt-5`');
     expect(call.body.indexOf('**Model:**')).toBeLessThan(call.body.indexOf('**Review cost:**'));
     expect(call.body.indexOf('**Review cost:**')).toBeLessThan(call.body.indexOf('| Token usage | Tokens | Cost |'));
+    expect(call.body).not.toContain('**Cost by review stage**');
     expect(octokit.pulls.createReview).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'REQUEST_CHANGES',
@@ -277,6 +278,42 @@ describe('createPRReview (legacy mode)', () => {
     expect(body).not.toContain('| Token usage | Tokens | Cost |');
     expect(body.match(/<details>/g)).toHaveLength(1);
     expect(body.indexOf('📊 Token usage & cost')).toBeLessThan(body.indexOf('**Cost by model**'));
+  });
+  it('renders stage costs only when telemetry accounting is present', () => {
+    const body = renderTelemetrySummary({
+      ...result,
+      costEstimate: {
+        ...result.costEstimate!,
+        stages: [
+          {
+            stage: 'group-review',
+            calls: 2,
+            inputTokens: 7_000,
+            cachedTokens: 1_000,
+            outputTokens: 1_200,
+            inputUsd: 0.02,
+            cachedUsd: 0.0005,
+            outputUsd: 0.0095,
+            usd: 0.0209,
+          },
+          {
+            stage: 'diagram',
+            calls: 1,
+            inputTokens: 500,
+            cachedTokens: 0,
+            outputTokens: 200,
+            inputUsd: 0.001,
+            cachedUsd: 0,
+            outputUsd: 0.004,
+            usd: 0.005,
+          },
+        ],
+      },
+    }).join('\n');
+
+    expect(body).toContain('**Cost by review stage**');
+    expect(body).toContain('| Group reviews | 2 | 6,000 | 1,000 | 1,200 | $0.0209 |');
+    expect(body).toContain('| Change diagram | 1 | 500 | 0 | 200 | $0.0050 |');
   });
   it('places the optional diagram between the summary and walkthrough', async () => {
     const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 1 } })) } };

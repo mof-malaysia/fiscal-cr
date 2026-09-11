@@ -8,9 +8,9 @@ import {
   type PricingSource,
 } from '../utils/pricing.js';
 import type { LLMTokenUsage } from '../providers/interface.js';
-import type { ChatMessage, ModelCostBreakdown } from '../types/review.js';
+import type { ChatMessage, ModelCostBreakdown, ReviewStage, StageCostBreakdown } from '../types/review.js';
 import { estimateTokens } from '../utils/tokens.js';
-export type TelemetryStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path' | 'diagram';
+export type TelemetryStage = ReviewStage;
 export type TelemetryFinishReason =
   | 'stop'
   | 'length'
@@ -93,6 +93,7 @@ export class UsageTracker {
     cachedUsd: 0,
   };
   private readonly costsByModel = new Map<string, ModelCostBreakdown>();
+  private readonly costsByStage = new Map<TelemetryStage, StageCostBreakdown>();
   private readonly pricing: PricingResolution;
   private readonly pricingContext: PricingContext;
   private readonly pricingByModel: Map<string, PricingResolution>;
@@ -140,6 +141,29 @@ export class UsageTracker {
     this.costBreakdownUsd.inputUsd += breakdown.inputUsd;
     this.costBreakdownUsd.outputUsd += breakdown.outputUsd;
     this.costBreakdownUsd.cachedUsd += breakdown.cachedUsd;
+
+    if (this.telemetry && call) {
+      const current = this.costsByStage.get(call.stage) ?? {
+        stage: call.stage,
+        calls: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        inputUsd: 0,
+        outputUsd: 0,
+        cachedUsd: 0,
+        usd: 0,
+      };
+      current.calls++;
+      current.inputTokens += usage.input;
+      current.outputTokens += usage.output;
+      current.cachedTokens += usage.cached;
+      current.inputUsd += breakdown.inputUsd;
+      current.outputUsd += breakdown.outputUsd;
+      current.cachedUsd += breakdown.cachedUsd;
+      current.usd += breakdown.totalUsd;
+      this.costsByStage.set(current.stage, current);
+    }
 
     const model = this.modelIdentity(pricing, call);
     if (model) {
@@ -212,6 +236,13 @@ export class UsageTracker {
     return this.totalCostUsd;
   }
 
+  stageCosts(): StageCostBreakdown[] {
+    const stageOrder: TelemetryStage[] = ['intent', 'group-review', 'synthesis', 'fast-path', 'diagram'];
+    return stageOrder
+      .map((stage) => this.costsByStage.get(stage))
+      .filter((summary): summary is StageCostBreakdown => summary !== undefined)
+      .map((summary) => ({ ...summary }));
+  }
   modelCosts(): ModelCostBreakdown[] {
     return [...this.costsByModel.values()]
       .map((summary) => ({ ...summary }))

@@ -39,8 +39,22 @@ export interface WalkthroughEntry {
   path: string;
   summary: string;
 }
+export type ReviewStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path' | 'diagram';
+
 export interface ModelCostBreakdown {
   model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  inputUsd: number;
+  outputUsd: number;
+  cachedUsd: number;
+  usd: number;
+}
+
+export interface StageCostBreakdown {
+  stage: ReviewStage;
   calls: number;
   inputTokens: number;
   outputTokens: number;
@@ -84,6 +98,8 @@ export interface ReviewResult {
     cachedUsd?: number;
     source: 'exact' | 'family' | 'remote' | 'fallback';
     provider?: string;
+    /** Per-stage costs are exposed only when Action telemetry is enabled. */
+    stages?: StageCostBreakdown[];
     model?: string;
     matchedModel?: string;
     models?: ModelCostBreakdown[];
