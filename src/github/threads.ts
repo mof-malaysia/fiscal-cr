@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js';
 export interface FiscalcrThread {
   id: string;
   isResolved: boolean;
+  isOutdated: boolean;
   path: string;
   line?: number | null;
   originalLine?: number | null;
@@ -100,6 +101,7 @@ export async function listFiscalcrThreads(
       threads.push({
         id: node.id,
         isResolved: node.isResolved,
+        isOutdated: node.isOutdated === true,
         path: node.path ?? '',
         line: node.line ?? null,
         originalLine: node.originalLine ?? null,
@@ -154,6 +156,11 @@ export async function resolveOutdatedThreads(
     reviewedRanges?: ReviewedRange[];
     /** Fingerprints of findings that still exist after this run. */
     currentFingerprints: Set<string>;
+    /**
+     * Fixed fingerprints from successful reconciliation. When provided, this
+     * authoritative set replaces the fallback path/range scope checks.
+     */
+    fixedFingerprints?: Set<string>;
     headSha: string;
   },
 ): Promise<ThreadResolutionResult> {
@@ -170,12 +177,14 @@ export async function resolveOutdatedThreads(
     const rangesForPath = params.reviewedRanges?.filter((range) => range.path === thread.path) ?? [];
     const inReviewedScope =
       rangesForPath.length === 0 || threadIsInReviewedScope(thread, rangesForPath);
-    return (
-      !thread.isResolved &&
-      params.changedPaths.has(thread.path) &&
-      inReviewedScope &&
-      !params.currentFingerprints.has(thread.fingerprint)
-    );
+    const eligible = params.fixedFingerprints
+      ? params.changedPaths.has(thread.path) &&
+        params.fixedFingerprints.has(thread.fingerprint) &&
+        (thread.isOutdated || inReviewedScope)
+      : params.changedPaths.has(thread.path) &&
+        inReviewedScope &&
+        !params.currentFingerprints.has(thread.fingerprint);
+    return !thread.isResolved && eligible;
   });
 
   const resolved: FiscalcrThread[] = [];
@@ -211,7 +220,7 @@ export async function resolveOutdatedThreads(
           }`,
           {
             threadId: thread.id,
-            body: `✅ Resolved automatically — code changed in \`${params.headSha.slice(0, 7)}\`.`,
+            body: `✅ Already handled — finding fixed in \`${params.headSha.slice(0, 7)}\`.`,
           },
         );
       } catch (err) {

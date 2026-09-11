@@ -78,6 +78,7 @@ describe('listFiscalcrThreads', () => {
       {
         id: 't1',
         isResolved: false,
+        isOutdated: false,
         path: 'src/a.ts',
         line: null,
         originalLine: null,
@@ -123,6 +124,28 @@ describe('resolveOutdatedThreads', () => {
     expect(graphql.mock.calls[replyIndex][1]).toMatchObject({
       threadId: 'gone',
       body: expect.stringContaining('abcdef1'),
+    });
+  });
+  it('resolves an explicitly fixed finding regardless of stale thread coordinates', async () => {
+    const { octokit, graphql } = graphqlOctokit([
+      threadNode({ id: 'fixed', path: 'src/a.ts', fp: FP_A, isOutdated: true, line: 500, originalLine: 500 }),
+    ]);
+
+    const resolved = await resolveOutdatedThreads(octokit, {
+      changedPaths: new Set(['src/a.ts']),
+      reviewedRanges: [{ path: 'src/a.ts', startLine: 1, endLine: 2 }],
+      currentFingerprints: new Set(),
+      fixedFingerprints: new Set([FP_A]),
+      headSha: 'abcdef1234567890',
+    });
+
+    expect(resolved.resolved.map((thread) => thread.id)).toEqual(['fixed']);
+    const reply = graphql.mock.calls.find(([query]) =>
+      (query as string).includes('addPullRequestReviewThreadReply'),
+    );
+    expect(reply?.[1]).toMatchObject({
+      threadId: 'fixed',
+      body: '✅ Already handled — finding fixed in `abcdef1`.',
     });
   });
 

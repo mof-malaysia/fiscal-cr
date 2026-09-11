@@ -13,6 +13,7 @@ describe('UsageTracker telemetry', () => {
 
     expect(tracker.total()).toEqual({ input: 150, output: 25, cached: 10 });
     expect(tracker.calls()).toBe(2);
+    expect(tracker.stageCosts()).toEqual([]);
   });
 
   it('prices each call with its resolved stage model', () => {
@@ -33,6 +34,35 @@ describe('UsageTracker telemetry', () => {
     tracker.add({ input: 1_000_000, output: 0, cached: 0 }, call('gpt-5'));
 
     expect(tracker.cost()).toBeCloseTo(1.5);
+    expect(tracker.costBreakdown()).toEqual({
+      inputUsd: 1.5,
+      outputUsd: 0,
+      cachedUsd: 0,
+    });
+    expect(tracker.modelCosts()).toEqual([
+      {
+        model: 'openai/gpt-5',
+        calls: 1,
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        inputUsd: 1.25,
+        outputUsd: 0,
+        cachedUsd: 0,
+        usd: 1.25,
+      },
+      {
+        model: 'openai/gpt-5-mini',
+        calls: 1,
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        inputUsd: 0.25,
+        outputUsd: 0,
+        cachedUsd: 0,
+        usd: 0.25,
+      },
+    ]);
   });
 
   it('emits safe call metrics without message content', () => {
@@ -45,6 +75,7 @@ describe('UsageTracker telemetry', () => {
       { input: 100, output: 20, cached: 10 },
       {
         stage: 'group-review',
+        model: 'openai/gpt-5',
         messages: [
           { role: 'system', content: 'secret system prompt' },
           { role: 'user', content: 'private source code' },
@@ -60,6 +91,7 @@ describe('UsageTracker telemetry', () => {
     expect(events[0]).toMatchObject({
       type: 'llm_call',
       stage: 'group-review',
+      model: 'openai/gpt-5',
       groupIndex: 1,
       fileCount: 3,
       inputTokens: 100,
@@ -73,6 +105,16 @@ describe('UsageTracker telemetry', () => {
     });
     expect(events[0]).toHaveProperty('estimatedInputTokens');
     expect(JSON.stringify(events[0])).not.toContain('secret system prompt');
+    expect(tracker.stageCosts()).toEqual([
+      expect.objectContaining({
+        stage: 'group-review',
+        calls: 1,
+        inputTokens: 100,
+        outputTokens: 20,
+        cachedTokens: 10,
+        usd: expect.any(Number),
+      }),
+    ]);
     expect(JSON.stringify(events[0])).not.toContain('private source code');
   });
 

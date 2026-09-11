@@ -249,6 +249,15 @@ describe('ReviewOrchestrator pipeline routing', () => {
     expect(result.intent).toBe('Small change');
     expect(result.walkthrough).toEqual([{ path: 'src/a.ts', summary: 'tweak' }]);
     expect(result.tokensUsed).toEqual({ input: 100, output: 50, cached: 10 });
+    expect(result.costEstimate?.stages).toEqual([
+      expect.objectContaining({
+        stage: 'fast-path',
+        calls: 1,
+        inputTokens: 100,
+        outputTokens: 50,
+        cachedTokens: 10,
+      }),
+    ]);
     expect(telemetry).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

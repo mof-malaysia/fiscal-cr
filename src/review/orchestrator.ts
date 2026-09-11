@@ -83,6 +83,8 @@ interface StickyPublicationPlan {
   capOverflow: ReviewAnnotation[];
   openCounts: Record<Severity, number>;
   findings: FindingRecord[];
+  /** Findings proven fixed by the successful reviewed scope. */
+  fixedFingerprints: string[];
   autoResolvedThreadIds: string[];
   blocking: boolean;
 }
@@ -154,6 +156,7 @@ function planStickyPublication(input: {
     capOverflow,
     openCounts,
     findings,
+    fixedFingerprints: reconciliation.fixed,
     autoResolvedThreadIds: [],
     blocking: conclusionFor(openCounts, config.review.failOn) === 'failure',
   };
@@ -338,8 +341,30 @@ export class ReviewOrchestrator {
         result.tokensUsed = usage.total();
         result.callCount = usage.calls();
       }
+      const costBreakdown = usage.costBreakdown();
       result.costEstimate = {
         usd: roundCost(usage.cost()),
+        inputUsd: roundCost(costBreakdown.inputUsd),
+        outputUsd: roundCost(costBreakdown.outputUsd),
+        cachedUsd: roundCost(costBreakdown.cachedUsd),
+        models: usage.modelCosts().map((summary) => ({
+          ...summary,
+          inputUsd: roundCost(summary.inputUsd),
+          outputUsd: roundCost(summary.outputUsd),
+          cachedUsd: roundCost(summary.cachedUsd),
+          usd: roundCost(summary.usd),
+        })),
+        ...(this.options.telemetry
+          ? {
+              stages: usage.stageCosts().map((summary) => ({
+                ...summary,
+                inputUsd: roundCost(summary.inputUsd),
+                outputUsd: roundCost(summary.outputUsd),
+                cachedUsd: roundCost(summary.cachedUsd),
+                usd: roundCost(summary.usd),
+              })),
+            }
+          : {}),
         ...pricingResolution,
       };
 
@@ -596,6 +621,7 @@ export class ReviewOrchestrator {
           pullNumber,
           changedPaths: new Set(reviewedPaths),
           reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
+          fixedFingerprints: new Set(plan.fixedFingerprints),
           currentFingerprints: new Set(
             (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
           ),

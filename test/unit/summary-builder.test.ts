@@ -94,9 +94,9 @@ describe('buildSummary change-diagram integration', () => {
     const out = buildSummary(baseResult({ diagram: diagram() }));
     expect(out).toContain('| 🟡 warning | 1 |');
     expect(out).toContain('| 🔵 suggestion | 2 |');
-    expect(out).toContain('📊 Token Usage');
-    expect(out).toContain('| Input tokens | 1,200 |');
-    expect(out).toContain('| Estimated cost | $0.0123 |');
+    expect(out).toContain('📊 Token usage & cost');
+    expect(out).toContain('| Uncached input | 900 |');
+    expect(out).toContain('**Review cost:** $0.0123');
   });
 
   it('reports inline thread cleanup separately from finding counts', () => {
