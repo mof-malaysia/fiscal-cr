@@ -4,7 +4,7 @@
  * By default the final strategy repairs a response truncated mid-generation
  * (the model hit its output-token cap). Pass `{ repairTruncated: false }` to
  * reject truncated input instead — used by callers that must treat a payload
- * as an all-or-nothing unit (e.g. a change-diagram graph).
+ * as an all-or-nothing unit (e.g. a visualize payload).
  */
 export interface ExtractJsonOptions {
   repairTruncated?: boolean;

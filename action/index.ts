@@ -11,10 +11,10 @@ import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
 import { modelParamsFromActionInput } from "./model-params.js";
-import { renderDiagramSection } from "../src/review/diagram-renderer.js";
+import { renderVisualSection } from "../src/review/visual-renderer.js";
 /**
  * Conservative UTF-8 budget for the complete Action job summary body. The
- * optional change-diagram section is omitted if it would push the body past
+ * optional visualization section is omitted if it would push the body past
  * this limit, preserving the baseline conclusion and findings.
  */
 const JOB_SUMMARY_BUDGET_BYTES = 1024 * 1024;
@@ -192,24 +192,24 @@ async function run(): Promise<void> {
         ["Suggestion", result.stats.suggestion.toString()],
       ]);
 
-    // Optional change-diagram section. Text-only (no Mermaid fences): GitHub
+    // Optional visualization section. Text-only (no Mermaid fences): GitHub
     // renders Mermaid only in PR/issues/Markdown, not in check/Action job
     // summaries. Rendering failure is isolated so it never breaks the baseline
-    // job summary. The bounded diagram is still guarded against the 1 MiB
+    // job summary. The bounded visualization is still guarded against the 1 MiB
     // job-summary budget using the current raw buffer length.
-    if (result.diagram) {
+    if (result.visualize) {
       try {
-        const diagramSection = renderDiagramSection(result.diagram, 'text');
+        const visualizeSection = renderVisualSection(result.visualize, 'text');
         const fits =
           Buffer.byteLength(
-            `${core.summary.stringify()}\n\n${diagramSection}${process.platform === "win32" ? "\r\n" : "\n"}`,
+            `${core.summary.stringify()}\n\n${visualizeSection}${process.platform === "win32" ? "\r\n" : "\n"}`,
             "utf8",
           ) <= JOB_SUMMARY_BUDGET_BYTES;
         if (fits) {
-          core.summary.addRaw(`\n\n${diagramSection}`);
+          core.summary.addRaw(`\n\n${visualizeSection}`);
         }
       } catch {
-        // Keep the baseline job summary intact on any diagram rendering error.
+        // Keep the baseline job summary intact on any visualization rendering error.
       }
     }
 

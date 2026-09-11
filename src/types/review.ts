@@ -1,4 +1,4 @@
-import type { DiagramArtifact } from './diagram.js';
+import type { VisualArtifact } from './visual.js';
 
 export type Severity = 'critical' | 'warning' | 'suggestion' | 'nitpick';
 
@@ -39,7 +39,7 @@ export interface WalkthroughEntry {
   path: string;
   summary: string;
 }
-export type ReviewStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path' | 'diagram';
+export type ReviewStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path' | 'visualize';
 
 export interface ModelCostBreakdown {
   model: string;
@@ -106,8 +106,8 @@ export interface ReviewResult {
   };
   /** One-line-per-file walkthrough table (multi-pass pipeline output). */
   walkthrough?: WalkthroughEntry[];
-  /** Optional change diagram generated from bounded patch evidence. */
-  diagram?: DiagramArtifact;
+  /** Optional visualization generated from bounded patch evidence. */
+  visualize?: VisualArtifact;
   /** Short description of what the PR is trying to do. */
   intent?: string;
   /** Number of LLM calls made to produce this review. */

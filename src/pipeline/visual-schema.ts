@@ -1,19 +1,19 @@
 /**
  * Contract parser for model-produced reviewer visuals.
  *
- * The model emits `{ outcome: 'diagram', representation, ... }` (or
+ * The model emits `{ outcome: 'visualize', representation, ... }` (or
  * `{ outcome: 'omit', reason }`). This module validates and normalizes every
  * representation before untrusted labels reach the renderer.
  */
 import { z } from 'zod';
 import type {
-  DiagramEdge,
-  DiagramEvidence,
-  DiagramGraph,
-  DiagramSequenceMessage,
-  DiagramSequenceParticipant,
-  DiagramTableRow,
-} from '../types/diagram.js';
+  VisualEdge,
+  VisualEvidence,
+  VisualGraph,
+  VisualSequenceMessage,
+  VisualSequenceParticipant,
+  VisualTableRow,
+} from '../types/visual.js';
 import { extractJson } from '../utils/json.js';
 import { logger } from '../utils/logger.js';
 
@@ -80,7 +80,7 @@ const rawTableRowSchema = z
 
 const rawFlowchartSchema = z
   .object({
-    outcome: z.literal('diagram'),
+    outcome: z.literal('visualize'),
     // Default preserves acceptance of pre-representation model responses.
     representation: z.literal('flowchart').default('flowchart'),
     nodes: z.array(rawNodeSchema).min(2).max(MAX_NODES),
@@ -90,7 +90,7 @@ const rawFlowchartSchema = z
 
 const rawSequenceSchema = z
   .object({
-    outcome: z.literal('diagram'),
+    outcome: z.literal('visualize'),
     representation: z.literal('sequence'),
     participants: z.array(rawParticipantSchema).min(2).max(MAX_PARTICIPANTS),
     messages: z.array(rawMessageSchema).min(1).max(MAX_MESSAGES),
@@ -99,21 +99,21 @@ const rawSequenceSchema = z
 
 const rawTableSchema = z
   .object({
-    outcome: z.literal('diagram'),
+    outcome: z.literal('visualize'),
     representation: z.literal('table'),
     columns: z.array(z.string().min(1).max(MAX_LABEL_LENGTH)).min(2).max(MAX_TABLE_COLUMNS),
     rows: z.array(rawTableRowSchema).min(1).max(MAX_TABLE_ROWS),
   })
   .strict();
 
-const rawDiagramSchema = z.union([rawFlowchartSchema, rawSequenceSchema, rawTableSchema]);
+const rawVisualSchema = z.union([rawFlowchartSchema, rawSequenceSchema, rawTableSchema]);
 
-export interface ParsedDiagram extends DiagramGraph {
+export interface ParsedVisual extends VisualGraph {
   representation: 'flowchart' | 'sequence' | 'table';
-  participants?: DiagramSequenceParticipant[];
-  messages?: DiagramSequenceMessage[];
+  participants?: VisualSequenceParticipant[];
+  messages?: VisualSequenceMessage[];
   columns?: string[];
-  rows?: DiagramTableRow[];
+  rows?: VisualTableRow[];
 }
 
 function refsResolve(refs: readonly string[], evidenceIds: Set<string>): boolean {
@@ -127,7 +127,7 @@ function labelsAreSafe(labels: readonly string[]): boolean {
 function normalizeGraph(
   rawNodes: z.infer<typeof rawNodeSchema>[],
   rawEdges: z.infer<typeof rawEdgeSchema>[],
-): Pick<ParsedDiagram, 'nodes' | 'edges'> | null {
+): Pick<ParsedVisual, 'nodes' | 'edges'> | null {
   const nodeIds = new Set<string>();
   for (const node of rawNodes) {
     if (nodeIds.has(node.id) || unsafeLabelReason(node.label)) return null;
@@ -152,17 +152,17 @@ function normalizeGraph(
  * Parse and normalize a model visual response. Omit outcomes, malformed
  * payloads, unsafe labels, and unresolved evidence are rejected as a unit.
  */
-export function parseDiagramResponse(
+export function parseVisualResponse(
   content: string,
-  evidence: readonly DiagramEvidence[],
-): ParsedDiagram | null {
+  evidence: readonly VisualEvidence[],
+): ParsedVisual | null {
   const json = extractJson(content, { repairTruncated: false });
   if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
-  if ((json as Record<string, unknown>).outcome !== 'diagram') return null;
+  if ((json as Record<string, unknown>).outcome !== 'visualize') return null;
 
-  const parsed = rawDiagramSchema.safeParse(json);
+  const parsed = rawVisualSchema.safeParse(json);
   if (!parsed.success) {
-    logger.warn({ reason: 'schema' }, 'Diagram response rejected');
+    logger.warn({ reason: 'schema' }, 'Visualize response rejected');
     return null;
   }
 

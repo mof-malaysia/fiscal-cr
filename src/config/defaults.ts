@@ -24,7 +24,7 @@ export const DEFAULT_CONFIG: ReviewConfig = {
       documentation: false,
       testing: false,
     },
-    diagram: {
+    visualize: {
       enabled: false,
       mode: "auto",
       minChangedFiles: 2,

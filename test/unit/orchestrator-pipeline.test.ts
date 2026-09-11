@@ -6,7 +6,7 @@ import type { ChatCompletionParams } from '../../src/providers/interface.js';
 import { UsageTracker, type TelemetryEvent } from '../../src/pipeline/usage.js';
 import { runFastPath } from '../../src/pipeline/fast-path.js';
 import type { PullRequestContext } from '../../src/types/review.js';
-import { CHANGE_DIAGRAM_PROMPT } from '../../src/pipeline/generated/change-diagram-prompt.js';
+import { VISUALIZE_PROMPT } from '../../src/pipeline/generated/visualize-prompt.js';
 const PATCH = '@@ -1,1 +1,3 @@\n line one\n+line two\n+line three';
 
 function fakeOctokit(
@@ -90,7 +90,7 @@ const isSynthesisCall = (p: ChatCompletionParams) =>
 const isFastPathCall = (p: ChatCompletionParams) =>
   p.messages[0].content.includes('"intent"') && p.messages[0].content.includes('"findings"');
 const isDiagramCall = (p: ChatCompletionParams) =>
-  p.messages[0].content === CHANGE_DIAGRAM_PROMPT;
+  p.messages[0].content === VISUALIZE_PROMPT;
 
 function cfg(pipelineOverrides: Partial<ReviewConfig['pipeline']> = {}): ReviewConfig {
   return {
@@ -296,7 +296,7 @@ describe('ReviewOrchestrator pipeline routing', () => {
       ...cfg(),
       review: {
         ...DEFAULT_CONFIG.review,
-        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+        visualize: { ...DEFAULT_CONFIG.review.visualize, enabled: true },
       },
     };
     const result = await new ReviewOrchestrator(octokit as never, llm, config).reviewPullRequest({
@@ -308,7 +308,7 @@ describe('ReviewOrchestrator pipeline routing', () => {
 
     expect(llm.calls).toHaveLength(1);
     expect(llm.calls.some(isDiagramCall)).toBe(false);
-    expect(result.diagram).toBeUndefined();
+    expect(result.visualize).toBeUndefined();
   });
 
 
@@ -698,7 +698,7 @@ describe('ReviewOrchestrator pipeline routing', () => {
 describe('change diagram generation in pipeline', () => {
   // Two-hunk diagram (one per changed file) — evidence ids e0/e1.
   const DIAGRAM_E0E1 = {
-    outcome: 'diagram',
+    outcome: 'visualize',
     nodes: [
       { id: 'n1', label: 'Handler', change: 'modified', evidence: ['e0'] },
       { id: 'n2', label: 'Validator', change: 'added', evidence: ['e1'] },
@@ -719,7 +719,7 @@ describe('change diagram generation in pipeline', () => {
       ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
       review: {
         ...DEFAULT_CONFIG.review,
-        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+        visualize: { ...DEFAULT_CONFIG.review.visualize, enabled: true },
       },
       modelPreset: 'team',
       modelPresets: {
@@ -744,7 +744,7 @@ describe('change diagram generation in pipeline', () => {
     expect(diagramCalls[0].model).toBe('team-fast-path');
     expect(result.callCount).toBe(5);
     expect(result.tokensUsed).toEqual({ input: 500, output: 250, cached: 50 });
-    expect(result.diagram?.scope).toBe('full');
+    expect(result.visualize?.scope).toBe('full');
   });
 
   it('large PR with diagram disabled adds no diagram call', async () => {
@@ -759,6 +759,6 @@ describe('change diagram generation in pipeline', () => {
 
     expect(llm.chatCompletion).toHaveBeenCalledTimes(4);
     expect(result.callCount).toBe(4);
-    expect(result.diagram).toBeUndefined();
+    expect(result.visualize).toBeUndefined();
   });
 });

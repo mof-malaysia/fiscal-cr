@@ -114,7 +114,7 @@ describe('loadConfig', () => {
     expect(modelForRole(config, 'fastPath')).toBe('k3-256k');
     expect(modelForRole(config, 'groupReview')).toBe('k3');
     expect(modelForRole(config, 'synthesis')).toBe('k3');
-    expect(modelForRole(config, 'diagram')).toBe('k3-256k');
+    expect(modelForRole(config, 'visualize')).toBe('k3-256k');
   });
 
   it('keeps old configs without a models block valid, defaulting it to {}', async () => {
@@ -176,12 +176,12 @@ describe('loadConfig', () => {
     expect(modelForRole(config, 'groupReview')).toBe('kimi-for-coding');
     expect(modelForRole(config, 'synthesis')).toBe('kimi-for-coding');
   });
-  it('allows an explicit diagram model override while defaulting to fastPath', async () => {
+  it('allows an explicit visualize model override while defaulting to fastPath', async () => {
     const yaml = [
       'model: fallback-model',
       'models:',
       '  fastPath: fast-model',
-      '  diagram: diagram-model',
+      '  visualize: visualize-model',
       '',
     ].join('\n');
     const octokit = {
@@ -192,7 +192,7 @@ describe('loadConfig', () => {
       },
     } as any;
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(modelForRole(config, 'diagram')).toBe('diagram-model');
+    expect(modelForRole(config, 'visualize')).toBe('visualize-model');
   });
 
   it('rejects an empty model stage value', async () => {
@@ -414,20 +414,20 @@ describe('loadConfig', () => {
     );
   });
 });
-describe('review.diagram.enabled config', () => {
-  it('defaults review.diagram.enabled to false', () => {
-    expect(DEFAULT_CONFIG.review.diagram.enabled).toBe(false);
+describe('review.visualize.enabled config', () => {
+  it('defaults review.visualize.enabled to false', () => {
+    expect(DEFAULT_CONFIG.review.visualize.enabled).toBe(false);
   });
-  it('defaults diagram complexity thresholds', () => {
-    expect(DEFAULT_CONFIG.review.diagram.minChangedFiles).toBe(2);
-    expect(DEFAULT_CONFIG.review.diagram.minChangedLines).toBe(20);
+  it('defaults visualization complexity thresholds', () => {
+    expect(DEFAULT_CONFIG.review.visualize.minChangedFiles).toBe(2);
+    expect(DEFAULT_CONFIG.review.visualize.minChangedLines).toBe(20);
   });
-  it('defaults diagram mode to auto', () => {
-    expect(DEFAULT_CONFIG.review.diagram.mode).toBe('auto');
+  it('defaults visualization mode to auto', () => {
+    expect(DEFAULT_CONFIG.review.visualize.mode).toBe('auto');
   });
 
-  it.each(['auto', 'concept', 'implementation'] as const)('accepts diagram mode %s', async (mode) => {
-    const yaml = `review:\n  diagram:\n    mode: ${mode}\n`;
+  it.each(['auto', 'concept', 'implementation'] as const)('accepts visualization mode %s', async (mode) => {
+    const yaml = `review:\n  visualize:\n    mode: ${mode}\n`;
     const octokit = {
       repos: {
         getContent: vi.fn().mockResolvedValue({
@@ -436,11 +436,11 @@ describe('review.diagram.enabled config', () => {
       },
     } as any;
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(config.review.diagram.mode).toBe(mode);
+    expect(config.review.visualize.mode).toBe(mode);
   });
 
-  it('rejects an invalid diagram mode', async () => {
-    const yaml = 'review:\n  diagram:\n    mode: files\n';
+  it('rejects an invalid visualization mode', async () => {
+    const yaml = 'review:\n  visualize:\n    mode: files\n';
     const octokit = {
       repos: {
         getContent: vi.fn().mockResolvedValue({
@@ -452,8 +452,8 @@ describe('review.diagram.enabled config', () => {
   });
 
 
-  it('opts in via review.diagram.enabled: true', async () => {
-    const yaml = 'review:\n  diagram:\n    enabled: true\n';
+  it('opts in via review.visualize.enabled: true', async () => {
+    const yaml = 'review:\n  visualize:\n    enabled: true\n';
     const octokit = {
       repos: {
         getContent: vi.fn().mockResolvedValue({
@@ -462,12 +462,12 @@ describe('review.diagram.enabled config', () => {
       },
     } as any;
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(config.review.diagram.enabled).toBe(true);
+    expect(config.review.visualize.enabled).toBe(true);
   });
-  it('loads configurable diagram complexity thresholds', async () => {
+  it('loads configurable visualization complexity thresholds', async () => {
     const yaml = [
       'review:',
-      '  diagram:',
+      '  visualize:',
       '    enabled: true',
       '    minChangedFiles: 3',
       '    minChangedLines: 40',
@@ -481,15 +481,15 @@ describe('review.diagram.enabled config', () => {
       },
     } as any;
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(config.review.diagram).toMatchObject({
+    expect(config.review.visualize).toMatchObject({
       enabled: true,
       minChangedFiles: 3,
       minChangedLines: 40,
     });
   });
 
-  it('rejects invalid diagram complexity thresholds', async () => {
-    const yaml = 'review:\n  diagram:\n    minChangedFiles: 0\n';
+  it('rejects invalid visualization complexity thresholds', async () => {
+    const yaml = 'review:\n  visualize:\n    minChangedFiles: 0\n';
     const octokit = {
       repos: {
         getContent: vi.fn().mockResolvedValue({
@@ -501,8 +501,8 @@ describe('review.diagram.enabled config', () => {
   });
 
 
-  it('rejects a non-boolean (string) review.diagram.enabled', async () => {
-    const yaml = 'review:\n  diagram:\n    enabled: "yes"\n';
+  it('rejects a non-boolean (string) review.visualize.enabled', async () => {
+    const yaml = 'review:\n  visualize:\n    enabled: \"yes\"\n';
     const octokit = {
       repos: {
         getContent: vi.fn().mockResolvedValue({
@@ -513,8 +513,8 @@ describe('review.diagram.enabled config', () => {
     await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
   });
 
-  it('rejects a numeric review.diagram.enabled', async () => {
-    const yaml = 'review:\n  diagram:\n    enabled: 1\n';
+  it('rejects a numeric review.visualize.enabled', async () => {
+    const yaml = 'review:\n  visualize:\n    enabled: 1\n';
     const octokit = {
       repos: {
         getContent: vi.fn().mockResolvedValue({

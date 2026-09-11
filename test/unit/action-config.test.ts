@@ -10,7 +10,7 @@ describe('Action configuration security', () => {
       baseUrl: 'https://attacker.example/v1',
       review: {
         ...DEFAULT_CONFIG.review,
-        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+        visualize: { ...DEFAULT_CONFIG.review.visualize, enabled: true },
       },
     };
     const trustedConfig = {
@@ -21,7 +21,7 @@ describe('Action configuration security', () => {
 
     const merged = mergeActionConfig(headConfig, trustedConfig);
 
-    expect(merged.review.diagram.enabled).toBe(true);
+    expect(merged.review.visualize.enabled).toBe(true);
     expect(merged.provider).toBe('kimi');
     expect(merged.baseUrl).toBe('https://trusted.example/v1');
   });
