@@ -220,6 +220,10 @@ describe('createPRReview (legacy mode)', () => {
       result,
       failOn: 'critical',
     });
+    const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
+    expect(call.body).toContain('📊 Review telemetry & cost');
+    expect(call.body).toContain('| Input tokens | 10 |');
+    expect(call.body).toContain('| Estimated cost |');
     expect(octokit.pulls.createReview).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'REQUEST_CHANGES',

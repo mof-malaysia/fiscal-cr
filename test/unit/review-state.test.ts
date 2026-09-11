@@ -367,6 +367,9 @@ describe('renderStickyComment', () => {
   it('embeds the state marker, open counts, run history, and walkthrough', () => {
     const body = renderStickyComment({ result: result(), state: state(), demoted: [] });
     expect(parseStateMarker(body)).toEqual(state());
+    expect(body).toContain('📊 Review telemetry & cost');
+    expect(body).toContain('| Input tokens | 100 |');
+    expect(body).toContain('| Estimated cost |');
     expect(body).toContain('Open findings: 1');
     expect(body).toContain('critical | 1');
     expect(body).toContain('`abc1234`');
