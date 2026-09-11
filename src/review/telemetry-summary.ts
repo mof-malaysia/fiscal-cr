@@ -26,9 +26,10 @@ export function renderTelemetrySummary(
   const cachedUsd = result.costEstimate?.cachedUsd ?? fallback.cachedUsd;
   const cost = result.costEstimate?.usd ?? fallback.totalUsd;
   const model = displayModel(result);
-  const costSummary = model
-    ? `**Total cost:** $${cost.toFixed(4)} · **Model:** \`${tableCell(model)}\``
-    : `**Total cost:** $${cost.toFixed(4)}`;
+  const costSummary = [
+    model ? `**Model:** \`${tableCell(model)}\`` : undefined,
+    `**Total cost:** $${cost.toFixed(4)}`,
+  ].filter((line): line is string => line !== undefined);
   const rows = [
     `| Input tokens (uncached) | ${Math.max(0, result.tokensUsed.input - result.tokensUsed.cached).toLocaleString()} | $${inputUsd.toFixed(4)} |`,
     `| Cached input tokens | ${result.tokensUsed.cached.toLocaleString()} | $${cachedUsd.toFixed(4)} |`,
@@ -36,7 +37,7 @@ export function renderTelemetrySummary(
   ];
   if (result.callCount !== undefined) rows.push(`| LLM calls | ${result.callCount.toLocaleString()} | — |`);
   return [
-    costSummary,
+    ...costSummary,
     '',
     '<details>',
     `<summary>${heading}</summary>`,

@@ -227,6 +227,8 @@ describe('createPRReview (legacy mode)', () => {
     expect(call.body).toContain('| Input tokens (uncached) | 10 |');
     expect(call.body).toContain('**Total cost:** $0.0123');
     expect(call.body).toContain('**Model:** `openrouter/openai/gpt-5`');
+    expect(call.body.indexOf('**Model:**')).toBeLessThan(call.body.indexOf('**Total cost:**'));
+    expect(call.body.indexOf('**Total cost:**')).toBeLessThan(call.body.indexOf('| Metric | Tokens | Cost |'));
     expect(octokit.pulls.createReview).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'REQUEST_CHANGES',
