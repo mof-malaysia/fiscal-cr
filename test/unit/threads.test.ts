@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { listFiscalcrThreads, resolveOutdatedThreads } from '../../src/github/threads.js';
 import { fingerprintMarker } from '../../src/github/fingerprint.js';
+import { logger } from '../../src/utils/logger.js';
 
 const FP_A = 'aaaaaaaaaaaaaaaa';
 const FP_B = 'bbbbbbbbbbbbbbbb';
@@ -11,6 +12,8 @@ function threadNode(input: {
   fp?: string;
   isResolved?: boolean;
   isOutdated?: boolean;
+  line?: number | null;
+  originalLine?: number | null;
   severity?: string;
 }) {
   const body = input.fp
@@ -21,12 +24,14 @@ function threadNode(input: {
     isResolved: input.isResolved ?? false,
     isOutdated: input.isOutdated ?? false,
     path: input.path,
+    line: input.line ?? null,
+    originalLine: input.originalLine ?? null,
     comments: { nodes: [{ body }] },
   };
 }
 
 function graphqlOctokit(nodes: unknown[], opts: { failMutations?: boolean } = {}) {
-  const graphql = vi.fn(async (query: string) => {
+  const graphql = vi.fn(async (query: string, variables?: { threadId?: string }) => {
     if (query.includes('reviewThreads')) {
       return {
         repository: {
@@ -40,6 +45,16 @@ function graphqlOctokit(nodes: unknown[], opts: { failMutations?: boolean } = {}
       };
     }
     if (opts.failMutations) throw new Error('403 Resource not accessible');
+    if (query.includes('resolveReviewThread')) {
+      return {
+        resolveReviewThread: {
+          thread: { id: variables?.threadId ?? '', isResolved: true },
+        },
+      };
+    }
+    if (query.includes('addPullRequestReviewThreadReply')) {
+      return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
+    }
     return {};
   });
   return { graphql, octokit: { graphql } as never };
@@ -60,9 +75,18 @@ describe('listFiscalcrThreads', () => {
     ]);
     const threads = await listFiscalcrThreads(octokit, params);
     expect(threads).toEqual([
-      { id: 't1', isResolved: false, path: 'src/a.ts', fingerprint: FP_A, severity: 'warning' },
+      {
+        id: 't1',
+        isResolved: false,
+        path: 'src/a.ts',
+        line: null,
+        originalLine: null,
+        fingerprint: FP_A,
+        severity: 'warning',
+      },
     ]);
   });
+
   it('excludes outdated threads from the current-thread view', async () => {
     const { octokit } = graphqlOctokit([
       threadNode({ id: 'current', path: 'src/a.ts', fp: FP_A }),
@@ -72,23 +96,49 @@ describe('listFiscalcrThreads', () => {
     expect(threads.map((thread) => thread.id)).toEqual(['current']);
   });
 });
+
 describe('resolveOutdatedThreads', () => {
-  it('resolves unresolved threads on changed paths whose finding did not recur', async () => {
+  it('resolves only unresolved outdated threads covered by current or original lines', async () => {
     const { octokit, graphql } = graphqlOctokit([
-      threadNode({ id: 'gone', path: 'src/a.ts', fp: FP_A, isOutdated: true }), // fixed → resolve outdated thread
-      threadNode({ id: 'still', path: 'src/a.ts', fp: FP_B }), // recurred → keep
-      threadNode({ id: 'other', path: 'src/untouched.ts', fp: FP_A }), // path not in scope → keep
-      threadNode({ id: 'done', path: 'src/a.ts', fp: FP_A, isResolved: true }), // already resolved
+      threadNode({ id: 'gone', path: 'src/a.ts', fp: FP_A, isOutdated: true, line: null, originalLine: 464 }),
+      threadNode({ id: 'still', path: 'src/a.ts', fp: FP_B, line: 464, originalLine: 464 }),
+      threadNode({ id: 'other', path: 'src/untouched.ts', fp: FP_A, isOutdated: true, line: 464, originalLine: 464 }),
+      threadNode({ id: 'outside', path: 'src/a.ts', fp: FP_A, isOutdated: true, line: 500, originalLine: 500 }),
+      threadNode({ id: 'done', path: 'src/a.ts', fp: FP_A, isResolved: true, line: null, originalLine: 464 }),
     ]);
     const resolved = await resolveOutdatedThreads(octokit, {
       ...params,
       changedPaths: new Set(['src/a.ts']),
+      reviewedRanges: [{ path: 'src/a.ts', startLine: 464, endLine: 464 }],
       currentFingerprints: new Set([FP_B]),
     });
-    expect(resolved.map((t) => t.id)).toEqual(['gone']);
-    const mutation = graphql.mock.calls.find(([q]) => (q as string).includes('resolveReviewThread'));
-    expect(mutation).toBeDefined();
-    expect(mutation![1]).toMatchObject({ threadId: 'gone', body: expect.stringContaining('abcdef1') });
+    expect(resolved.resolved.map((t) => t.id)).toEqual(['gone']);
+    const resolveIndex = graphql.mock.calls.findIndex(([q]) => (q as string).includes('resolveReviewThread'));
+    const replyIndex = graphql.mock.calls.findIndex(([q]) =>
+      (q as string).includes('addPullRequestReviewThreadReply'),
+    );
+    expect(resolveIndex).toBeGreaterThan(-1);
+    expect(replyIndex).toBe(resolveIndex + 1);
+    expect(graphql.mock.calls[resolveIndex][1]).toEqual({ threadId: 'gone' });
+    expect(graphql.mock.calls[replyIndex][1]).toMatchObject({
+      threadId: 'gone',
+      body: expect.stringContaining('abcdef1'),
+    });
+  });
+
+  it('resolves deletion-only coverage using original thread lines', async () => {
+    const { octokit } = graphqlOctokit([
+      threadNode({ id: 'deleted', path: 'src/a.ts', fp: FP_A, isOutdated: true, line: null, originalLine: 7 }),
+    ]);
+    const resolved = await resolveOutdatedThreads(octokit, {
+      ...params,
+      changedPaths: new Set(['src/a.ts']),
+      reviewedRanges: [
+        { path: 'src/a.ts', startLine: 8, endLine: 8, originalStartLine: 7, originalEndLine: 7 },
+      ],
+      currentFingerprints: new Set(),
+    });
+    expect(resolved.resolved.map((thread) => thread.id)).toEqual(['deleted']);
   });
 
   it('degrades to empty when listing fails (403 on default token)', async () => {
@@ -102,17 +152,52 @@ describe('resolveOutdatedThreads', () => {
       changedPaths: new Set(['src/a.ts']),
       currentFingerprints: new Set(),
     });
-    expect(resolved).toEqual([]);
+    expect(resolved).toMatchObject({ attempted: 0, resolved: [], failed: 0, unavailable: true });
+  });
+  it('does not report a thread resolved without GitHub confirmation', async () => {
+    const graphql = vi.fn(async (query: string) => {
+      if (query.includes('reviewThreads')) {
+        return {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [threadNode({ id: 'gone', path: 'src/a.ts', fp: FP_A })],
+              },
+            },
+          },
+        };
+      }
+      if (query.includes('resolveReviewThread')) {
+        return { resolveReviewThread: { thread: { id: 'gone', isResolved: false } } };
+      }
+      throw new Error('audit reply must not run after an unconfirmed resolve');
+    });
+    const warning = vi.spyOn(logger, 'warn');
+
+    const resolved = await resolveOutdatedThreads({ graphql } as never, {
+      ...params,
+      changedPaths: new Set(['src/a.ts']),
+      currentFingerprints: new Set(),
+    });
+
+    expect(resolved).toMatchObject({ attempted: 1, resolved: [], failed: 1 });
+    expect(graphql.mock.calls.filter(([query]) => (query as string).includes('addPullRequestReviewThreadReply'))).toHaveLength(0);
+    expect(warning).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: 'gone' }),
+      'Could not resolve review thread — skipping',
+    );
+    warning.mockRestore();
   });
 
-  it('skips threads whose resolve mutation fails, resolving the rest', async () => {
+  it('reports unresolved thread cleanup failures', async () => {
     const nodes = [
-      threadNode({ id: 't1', path: 'src/a.ts', fp: FP_A }),
-      threadNode({ id: 't2', path: 'src/a.ts', fp: FP_B }),
+      threadNode({ id: 'failed', path: 'src/a.ts', fp: FP_A }),
+      threadNode({ id: 'resolved', path: 'src/a.ts', fp: FP_B }),
     ];
     let mutations = 0;
     const octokit = {
-      graphql: vi.fn(async (query: string) => {
+      graphql: vi.fn(async (query: string, variables?: { threadId?: string }) => {
         if (query.includes('reviewThreads')) {
           return {
             repository: {
@@ -123,15 +208,30 @@ describe('resolveOutdatedThreads', () => {
           };
         }
         mutations++;
-        if (mutations === 1) throw new Error('403');
-        return {};
+        if (query.includes('resolveReviewThread')) {
+          if (mutations === 1) throw new Error('403');
+          return {
+            resolveReviewThread: {
+              thread: { id: variables?.threadId ?? '', isResolved: true },
+            },
+          };
+        }
+        return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
       }),
     } as never;
+    const warning = vi.spyOn(logger, 'warn');
+
     const resolved = await resolveOutdatedThreads(octokit, {
       ...params,
       changedPaths: new Set(['src/a.ts']),
       currentFingerprints: new Set(),
     });
-    expect(resolved.map((t) => t.id)).toEqual(['t2']);
+
+    expect(resolved.resolved.map((t) => t.id)).toEqual(['resolved']);
+    expect(warning).toHaveBeenCalledWith(
+      expect.objectContaining({ failed: 1, attempted: 2 }),
+      '1 outdated inline thread could not be resolved',
+    );
+    warning.mockRestore();
   });
 });

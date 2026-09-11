@@ -114,6 +114,7 @@ describe('loadConfig', () => {
     expect(modelForRole(config, 'fastPath')).toBe('k3-256k');
     expect(modelForRole(config, 'groupReview')).toBe('k3');
     expect(modelForRole(config, 'synthesis')).toBe('k3');
+    expect(modelForRole(config, 'diagram')).toBe('k3-256k');
   });
 
   it('keeps old configs without a models block valid, defaulting it to {}', async () => {
@@ -174,6 +175,24 @@ describe('loadConfig', () => {
     expect(modelForRole(config, 'fastPath')).toBe('kimi-for-coding');
     expect(modelForRole(config, 'groupReview')).toBe('kimi-for-coding');
     expect(modelForRole(config, 'synthesis')).toBe('kimi-for-coding');
+  });
+  it('allows an explicit diagram model override while defaulting to fastPath', async () => {
+    const yaml = [
+      'model: fallback-model',
+      'models:',
+      '  fastPath: fast-model',
+      '  diagram: diagram-model',
+      '',
+    ].join('\n');
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
+    expect(modelForRole(config, 'diagram')).toBe('diagram-model');
   });
 
   it('rejects an empty model stage value', async () => {
@@ -402,6 +421,34 @@ describe('review.diagram.enabled config', () => {
   it('defaults diagram complexity thresholds', () => {
     expect(DEFAULT_CONFIG.review.diagram.minChangedFiles).toBe(2);
     expect(DEFAULT_CONFIG.review.diagram.minChangedLines).toBe(20);
+  });
+  it('defaults diagram mode to auto', () => {
+    expect(DEFAULT_CONFIG.review.diagram.mode).toBe('auto');
+  });
+
+  it.each(['auto', 'concept', 'implementation'] as const)('accepts diagram mode %s', async (mode) => {
+    const yaml = `review:\n  diagram:\n    mode: ${mode}\n`;
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
+    expect(config.review.diagram.mode).toBe(mode);
+  });
+
+  it('rejects an invalid diagram mode', async () => {
+    const yaml = 'review:\n  diagram:\n    mode: files\n';
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+    await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
   });
 
 

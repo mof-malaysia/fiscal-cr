@@ -129,10 +129,16 @@ function planStickyPublication(input: {
     threadId: threadIdFor(finding),
   }));
   const newlyOpen = new Set(reconciliation.newlyOpen);
+  const previousFingerprints = new Set(
+    (state?.findings ?? []).map((finding) => finding.fingerprint),
+  );
   const fingerprints = new Map(result.annotations.map((annotation) => [annotation, fingerprintAnnotation(annotation)]));
   const newAnnotations =
     commentsCfg.dedupe && state
-      ? result.annotations.filter((annotation) => newlyOpen.has(fingerprints.get(annotation)!))
+      ? result.annotations.filter((annotation) => {
+          const fingerprint = fingerprints.get(annotation)!;
+          return newlyOpen.has(fingerprint) || !previousFingerprints.has(fingerprint);
+        })
       : result.annotations;
   const active = findings.filter((finding) => finding.status === 'open');
   const openCounts: Record<Severity, number> = { ...EMPTY_COUNTS };
@@ -284,6 +290,7 @@ export class ReviewOrchestrator {
         modelForRole(this.config, 'fastPath'),
         modelForRole(this.config, 'groupReview'),
         modelForRole(this.config, 'synthesis'),
+        modelForRole(this.config, 'diagram'),
       ];
       const pricingEntries = await Promise.all(
         [...new Set(stageModels)].map(async (model) => [
@@ -303,9 +310,10 @@ export class ReviewOrchestrator {
         deltaHint,
       });
 
-      // Step 5b: Optionally generate a bounded change diagram before the final
-      // cost accounting. A disabled config or unusable evidence makes no model
-      // call; any auxiliary failure is contained locally so the ordinary review
+      // Step 5b: Full reviews may generate a bounded replacement diagram before
+      // final cost accounting. Delta reviews deliberately do not call the
+      // auxiliary model; sticky publication preserves the last full-review map.
+      // Any auxiliary failure is contained locally so the ordinary review
       // result and conclusion are never affected.
       if (
         scope.mode === 'full' &&
@@ -429,17 +437,30 @@ export class ReviewOrchestrator {
         (target.checkRunId !== null &&
           (state.checkRunId !== target.checkRunId || state.checkRunHeadSha !== sticky.headSha)))
     ) {
+      const stateToSave = {
+        ...state,
+        checkRunId: target.checkRunId,
+        checkRunHeadSha: sticky.headSha,
+      };
+      const renderSkippedBody = (body: string, nextState: ReviewState) =>
+        replaceStateMarkerWithinBudget(body, nextState);
       await saveStickyComment(this.octokit, {
         owner: target.owner,
         repo: target.repo,
         pullNumber: sticky.pullNumber,
         commentId: sticky.commentId,
-        body: replaceStateMarkerWithinBudget(sticky.body, {
-          ...state,
-          checkRunId: target.checkRunId,
-          checkRunHeadSha: sticky.headSha,
-        }),
+        body: renderSkippedBody(sticky.body, stateToSave),
         expectedBody: sticky.body,
+        onConflict: async (latest) => {
+          const mergedState = latest.state
+            ? mergeConcurrentReviewState(state, stateToSave, latest.state)
+            : stateToSave;
+          return {
+            commentId: latest.commentId,
+            expectedBody: latest.body,
+            body: renderSkippedBody(latest.body, mergedState),
+          };
+        },
       });
     }
 
@@ -527,7 +548,11 @@ export class ReviewOrchestrator {
     let threadsAvailable = hasGraphql(this.octokit);
     if (threadsAvailable) {
       try {
-        threads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
+        threads = await listFiscalcrThreads(
+          this.octokit,
+          { owner, repo, pullNumber },
+          { includeOutdated: true },
+        );
       } catch (err) {
         threadsAvailable = false;
         logger.warn({ err }, 'Could not list review threads — lifecycle remains threadless');
@@ -536,7 +561,7 @@ export class ReviewOrchestrator {
       logger.warn('GraphQL unavailable — lifecycle remains threadless');
     }
 
-    const reviewedPaths = scope.mode === 'full' ? result.reviewedPaths : [];
+    const reviewedPaths = result.reviewedPaths;
     const reviewedRanges = scope.mode === 'delta' ? result.reviewedRanges ?? [] : [];
     let stateForPublication = state;
     try {
@@ -561,21 +586,29 @@ export class ReviewOrchestrator {
       reviewedRanges,
       headSha,
     });
-    if (commentsCfg.resolveOutdated && stateForPublication && threadsAvailable) {
-      const resolved = await resolveOutdatedThreads(this.octokit, {
-        owner,
-        repo,
-        pullNumber,
-        changedPaths: new Set(
-          scope.mode === 'delta' ? reviewedRanges.map((range) => range.path) : reviewedPaths,
-        ),
-        reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
-        currentFingerprints: new Set(
-          (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
-        ),
-        headSha,
-      });
-      plan.autoResolvedThreadIds = resolved.map((thread) => thread.id);
+    if (commentsCfg.resolveOutdated && stateForPublication) {
+      if (!threadsAvailable) {
+        result.threadCleanup = { attempted: 0, resolved: 0, failed: 0, unavailable: true };
+      } else {
+        const cleanup = await resolveOutdatedThreads(this.octokit, {
+          owner,
+          repo,
+          pullNumber,
+          changedPaths: new Set(reviewedPaths),
+          reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
+          currentFingerprints: new Set(
+            (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
+          ),
+          headSha,
+        });
+        result.threadCleanup = {
+          attempted: cleanup.attempted,
+          resolved: cleanup.resolved.length,
+          failed: cleanup.failed,
+          unavailable: cleanup.unavailable,
+        };
+        plan.autoResolvedThreadIds = cleanup.resolved.map((thread) => thread.id);
+      }
     }
     if (plan.capOverflow.length > 0) {
       logger.info(
@@ -704,22 +737,38 @@ export class ReviewOrchestrator {
     } catch (err) {
       logger.warn({ err }, 'Could not reread lifecycle state before save — preserving planned state');
     }
-    await saveStickyComment(this.octokit, {
-      owner,
-      repo,
-      pullNumber,
-      commentId: stickyCommentId,
-      expectedBody,
-      body: renderStickyComment({
+    const renderSavedBody = () =>
+      renderStickyComment({
         result,
         state: stateToSave,
+        preserveExistingDiagram: scope.mode === 'delta',
+        existingBody: expectedBody,
         demoted: demoted.map((annotation) => ({
           path: annotation.path,
           startLine: annotation.startLine,
           severity: annotation.severity,
           title: annotation.title,
         })),
-      }),
+      });
+    await saveStickyComment(this.octokit, {
+      owner,
+      repo,
+      pullNumber,
+      commentId: stickyCommentId,
+      expectedBody,
+      body: renderSavedBody(),
+      onConflict: async (latest) => {
+        if (latest.state) {
+          stateToSave = mergeConcurrentReviewState(stateForPublication, newState, latest.state);
+        }
+        stickyCommentId = latest.commentId;
+        expectedBody = latest.body;
+        return {
+          commentId: latest.commentId,
+          expectedBody: latest.body,
+          body: renderSavedBody(),
+        };
+      },
     });
 
     logger.info(

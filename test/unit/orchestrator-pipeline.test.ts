@@ -732,7 +732,7 @@ describe('change diagram generation in pipeline', () => {
     const diagramCalls = allCalls.filter(isDiagramCall);
     expect(diagramCalls).toHaveLength(1);
     expect(allCalls).toHaveLength(5); // 1 intent + 2 groups + 1 synthesis + 1 diagram
-    expect(diagramCalls[0].model).toBe('team-synthesis');
+    expect(diagramCalls[0].model).toBe('team-fast-path');
     expect(result.callCount).toBe(5);
     expect(result.tokensUsed).toEqual({ input: 500, output: 250, cached: 50 });
     expect(result.diagram?.scope).toBe('full');

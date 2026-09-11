@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import {
   generateChangeDiagram,
+  selectDiagramMode,
   shouldGenerateChangeDiagram,
   DIAGRAM_MAX_INPUT_TOKENS,
 } from '../../src/pipeline/change-diagram.js';
@@ -48,22 +49,29 @@ function makeCtx(overrides: Partial<PullRequestContext> = {}): PullRequestContex
   };
 }
 
-function makeConfig(enabled: boolean, language: ReviewConfig['language'] = 'en'): ReviewConfig {
+function makeConfig(
+  enabled: boolean,
+  language: ReviewConfig['language'] = 'en',
+  mode: ReviewConfig['review']['diagram']['mode'] = 'auto',
+): ReviewConfig {
   return {
     ...DEFAULT_CONFIG,
     language,
     review: {
       ...DEFAULT_CONFIG.review,
-      diagram: { ...DEFAULT_CONFIG.review.diagram, enabled },
+      diagram: { ...DEFAULT_CONFIG.review.diagram, enabled, mode },
     },
   };
 }
 
-/** A minimal strict-schema-valid diagram response referencing evidence id e0. */
+/** A strict-schema-valid diagram response referencing evidence id e0. */
 const VALID_RESPONSE = JSON.stringify({
   outcome: 'diagram',
-  nodes: [{ id: 'n1', label: 'Auth', change: 'modified', evidence: ['e0'] }],
-  edges: [],
+  nodes: [
+    { id: 'n1', label: 'Auth input', change: 'modified', evidence: ['e0'] },
+    { id: 'n2', label: 'Validated request', change: 'modified', evidence: ['e0'] },
+  ],
+  edges: [{ from: 'n1', to: 'n2', label: 'validates', change: 'modified', evidence: ['e0'] }],
 });
 
 interface SentEvidence {
@@ -74,6 +82,7 @@ interface SentEvidence {
 interface SentData {
   language: string;
   scope: 'full' | 'delta';
+  mode: 'concept' | 'implementation';
   partial: boolean;
   evidence: SentEvidence[];
 }
@@ -146,6 +155,43 @@ describe('generateChangeDiagram', () => {
       }),
     ).toBe(false);
   });
+  it('selects explicit concept and implementation modes', () => {
+    const ctx = makeCtx({ changedFiles: [{ filename: 'src/api.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' }] });
+    expect(selectDiagramMode(ctx, 'concept')).toBe('concept');
+    expect(selectDiagramMode(ctx, 'implementation')).toBe('implementation');
+  });
+
+  it('selects concept mode for normal runtime changes in auto mode', () => {
+    const ctx = makeCtx({
+      changedFiles: [{ filename: 'src/player.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' }],
+    });
+    expect(selectDiagramMode(ctx, 'auto')).toBe('concept');
+  });
+
+  it('selects implementation mode for API/schema evidence in auto mode', () => {
+    const ctx = makeCtx({
+      changedFiles: [
+        { filename: 'src/api/routes.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' },
+        { filename: 'src/schema.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' },
+      ],
+    });
+    expect(selectDiagramMode(ctx, 'auto')).toBe('implementation');
+  });
+
+  it('omits unsupported UI-only, test-only, and documentation-only changes in auto mode', () => {
+    expect(
+      selectDiagramMode(
+        makeCtx({ changedFiles: [{ filename: 'src/styles.css', status: 'modified', additions: 1, deletions: 0, patch: 'x' }] }),
+        'auto',
+      ),
+    ).toBeUndefined();
+    expect(
+      selectDiagramMode(
+        makeCtx({ changedFiles: [{ filename: 'test/player.test.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' }] }),
+        'auto',
+      ),
+    ).toBeUndefined();
+  });
 
 
   it('returns undefined and makes no call when disabled', async () => {
@@ -213,15 +259,68 @@ describe('generateChangeDiagram', () => {
     expect(result).toBeDefined();
     expect(result!.scope).toBe('full');
     expect(result!.headSha).toBe('headsha');
-    // The real parser remaps model ids to code-owned n0… and validates refs.
-    expect(result!.nodes).toHaveLength(1);
+    expect(result!.mode).toBe('concept');
+    expect(result!.nodes).toHaveLength(2);
     expect(result!.nodes[0].id).toBe('n0');
-    expect(result!.edges).toEqual([]);
-    // Evidence mapping carries ids/paths only, never the raw patches.
+    expect(result!.edges).toHaveLength(1);
     expect(result!.evidence).toEqual([{ id: 'e0', path: 'src/a.ts' }]);
     expect((result!.evidence[0] as Record<string, unknown>).patch).toBeUndefined();
   });
+  it('passes the trusted explicit implementation mode and stores it in the artifact', async () => {
+    const llm = makeLlm(VALID_RESPONSE);
+    const ctx = makeCtx({
+      changedFiles: [
+        { filename: 'src/api/routes.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
+      ],
+    });
+    const result = await generateChangeDiagram(llm, ctx, makeConfig(true, 'en', 'implementation'), makeUsage(), {
+      scope: 'full',
+      reviewedPaths: ['src/api/routes.ts'],
+    });
+    expect(result?.mode).toBe('implementation');
+    expect(dataBlockOf(userMessageOf(llm)).mode).toBe('implementation');
+    expect(userMessageOf(llm)).toContain('Selected diagram mode (trusted code-owned metadata): implementation.');
+  });
 
+  it('excludes ignored files from evidence even for an explicit mode', async () => {
+    const llm = makeLlm(VALID_RESPONSE);
+    const ctx = makeCtx({
+      changedFiles: [
+        { filename: 'test/routes.test.ts', status: 'modified', additions: 10, deletions: 10, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
+      ],
+    });
+    const result = await generateChangeDiagram(
+      llm,
+      ctx,
+      makeConfig(true, 'en', 'concept'),
+      makeUsage(),
+      { scope: 'full', reviewedPaths: ['test/routes.test.ts'] },
+    );
+
+    expect(result).toBeUndefined();
+    expect(llm.chatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('omits auto-selected unsupported visuals before calling the provider', async () => {
+    const llm = makeLlm(VALID_RESPONSE);
+    const ctx = makeCtx({
+      changedFiles: [
+        { filename: 'src/styles.css', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
+      ],
+    });
+    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+      scope: 'full',
+      reviewedPaths: ['src/styles.css'],
+    });
+    expect(result).toBeUndefined();
+    expect(llm.chatCompletion).not.toHaveBeenCalled();
+    expect(
+      selectDiagramMode(
+        makeCtx({ changedFiles: [{ filename: 'src/config/settings.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' }] }),
+        'auto',
+      ),
+    ).toBeUndefined();
+  });
   it('never sends ctx.diff and does not overclaim full PR coverage', async () => {
     const llm = makeLlm(VALID_RESPONSE);
     const secret = 'SECRET_SHOULD_NOT_LEAK';
@@ -330,7 +429,7 @@ describe('generateChangeDiagram', () => {
     expect(result!.partial).toBe(true);
   });
 
-  it('marks partial when an included file is missing from reviewedPaths', async () => {
+  it('omits unreviewed files from full-scope evidence while marking it partial', async () => {
     const llm = makeLlm(VALID_RESPONSE);
     const ctx = makeCtx({
       changedFiles: [
@@ -342,6 +441,8 @@ describe('generateChangeDiagram', () => {
       scope: 'full',
       reviewedPaths: ['covered.ts'],
     });
+    const data = dataBlockOf(userMessageOf(llm));
+    expect(data.evidence.map((e) => e.path)).toEqual(['covered.ts']);
     expect(result!.partial).toBe(true);
   });
 

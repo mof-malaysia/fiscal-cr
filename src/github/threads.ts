@@ -8,6 +8,7 @@ export interface FiscalcrThread {
   isResolved: boolean;
   path: string;
   line?: number | null;
+  originalLine?: number | null;
   fingerprint: string;
   severity: Severity | null;
 }
@@ -16,14 +17,20 @@ interface ThreadsQueryResponse {
   repository: {
     pullRequest: {
       reviewThreads: {
-        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        pageInfo: {
+          hasNextPage: boolean;
+          endCursor: string | null;
+        };
         nodes: Array<{
           id: string;
           isResolved: boolean;
           isOutdated?: boolean;
           path: string | null;
           line?: number | null;
-          comments: { nodes: Array<{ body: string | null }> };
+          originalLine?: number | null;
+          comments: {
+            nodes: Array<{ body: string | null }>;
+          };
         }>;
       };
     };
@@ -41,8 +48,9 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
           isResolved
           isOutdated
           path
-          comments(first: 1) { nodes { body } }
           line
+          originalLine
+          comments(first: 1) { nodes { body } }
         }
       }
     }
@@ -93,7 +101,8 @@ export async function listFiscalcrThreads(
         id: node.id,
         isResolved: node.isResolved,
         path: node.path ?? '',
-        ...(node.line !== undefined ? { line: node.line } : {}),
+        line: node.line ?? null,
+        originalLine: node.originalLine ?? null,
         fingerprint,
         severity: (body.match(SEVERITY_RE)?.[1] as Severity | undefined) ?? null,
       });
@@ -104,13 +113,34 @@ export async function listFiscalcrThreads(
   return threads;
 }
 
+function reviewedRangeContainsLine(range: ReviewedRange, line: number): boolean {
+  if (range.startLine <= line && line <= range.endLine) return true;
+  return (
+    range.originalStartLine !== undefined &&
+    range.originalEndLine !== undefined &&
+    range.originalStartLine <= line &&
+    line <= range.originalEndLine
+  );
+}
+
+function threadIsInReviewedScope(thread: FiscalcrThread, ranges: ReviewedRange[]): boolean {
+  return [thread.line, thread.originalLine].some(
+    (line) => line != null && ranges.some((range) => reviewedRangeContainsLine(range, line)),
+  );
+}
+
+export interface ThreadResolutionResult {
+  attempted: number;
+  resolved: FiscalcrThread[];
+  failed: number;
+  unavailable?: boolean;
+}
+
 /**
  * Resolve unresolved FiscalCR threads whose file changed in this run but whose
  * finding did not recur. This path intentionally includes outdated threads;
- * manual webhook handling uses the default current-thread view. Returns the
- * threads actually resolved so the caller can mark them fixed. All failures
- * (403 on default tokens, merged PRs, …) degrade to logging — never fail the
- * review over cleanup.
+ * manual webhook handling uses the default current-thread view. All failures
+ * degrade to logging — never fail the review over cleanup.
  */
 export async function resolveOutdatedThreads(
   octokit: FiscalcrOctokit,
@@ -126,59 +156,82 @@ export async function resolveOutdatedThreads(
     currentFingerprints: Set<string>;
     headSha: string;
   },
-): Promise<FiscalcrThread[]> {
+): Promise<ThreadResolutionResult> {
   let threads: FiscalcrThread[];
   try {
     threads = await listFiscalcrThreads(octokit, params, { includeOutdated: true });
   } catch (err) {
     logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
-    return [];
+    return { attempted: 0, resolved: [], failed: 0, unavailable: true };
   }
-  if (!hasGraphql(octokit)) return [];
+  if (!hasGraphql(octokit)) return { attempted: 0, resolved: [], failed: 0, unavailable: true };
   const graphql = octokit.graphql;
-  const outdated = threads.filter((t) => {
-    const lineCovered =
-      !params.reviewedRanges?.length ||
-      (t.line != null &&
-        params.reviewedRanges.some(
-          (range) =>
-            range.path === t.path &&
-            range.startLine <= t.line! &&
-            t.line! <= range.endLine,
-        ));
+  const outdated = threads.filter((thread) => {
+    const rangesForPath = params.reviewedRanges?.filter((range) => range.path === thread.path) ?? [];
+    const inReviewedScope =
+      rangesForPath.length === 0 || threadIsInReviewedScope(thread, rangesForPath);
     return (
-      !t.isResolved &&
-      params.changedPaths.has(t.path) &&
-      lineCovered &&
-      !params.currentFingerprints.has(t.fingerprint)
+      !thread.isResolved &&
+      params.changedPaths.has(thread.path) &&
+      inReviewedScope &&
+      !params.currentFingerprints.has(thread.fingerprint)
     );
   });
 
   const resolved: FiscalcrThread[] = [];
   for (const thread of outdated) {
     try {
-      await graphql(
-        `mutation($threadId: ID!, $body: String!) {
-          addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
-            comment { id }
-          }
+      const response = (await graphql(
+        `mutation($threadId: ID!) {
           resolveReviewThread(input: { threadId: $threadId }) {
-            thread { id }
+            thread { id isResolved }
           }
         }`,
-        {
-          threadId: thread.id,
-          body: `✅ Resolved automatically — code changed in \`${params.headSha.slice(0, 7)}\`.`,
-        },
-      );
+        { threadId: thread.id },
+      )) as {
+        resolveReviewThread?: {
+          thread?: { id: string; isResolved: boolean } | null;
+        } | null;
+      };
+      const resolvedThread = response.resolveReviewThread?.thread;
+      if (resolvedThread?.id !== thread.id || resolvedThread.isResolved !== true) {
+        throw new Error('GitHub did not confirm the review thread was resolved');
+      }
+      try {
+        await graphql(
+          `mutation($threadId: ID!, $body: String!) {
+            addPullRequestReviewThreadReply(
+              input: {
+                pullRequestReviewThreadId: $threadId
+                body: $body
+              }
+            ) {
+              comment { id }
+            }
+          }`,
+          {
+            threadId: thread.id,
+            body: `✅ Resolved automatically — code changed in \`${params.headSha.slice(0, 7)}\`.`,
+          },
+        );
+      } catch (err) {
+        logger.warn({ err, threadId: thread.id }, 'Could not add review thread resolution audit reply');
+      }
       resolved.push(thread);
     } catch (err) {
       logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');
     }
   }
 
+  const failed = outdated.length - resolved.length;
+  if (failed > 0) {
+    logger.warn(
+      { failed, attempted: outdated.length },
+      `${failed} outdated inline thread${failed === 1 ? '' : 's'} could not be resolved`,
+    );
+  }
   if (resolved.length > 0) {
     logger.info({ resolved: resolved.length }, 'Outdated review threads resolved');
   }
-  return resolved;
+  return { attempted: outdated.length, resolved, failed };
 }
