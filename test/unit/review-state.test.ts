@@ -78,8 +78,9 @@ function result(): ReviewResult {
 }
 function diagram(): DiagramArtifact {
   return {
-    nodes: [{ id: 'n1', label: 'Auth handler', change: 'modified', evidence: ['e1'] }],
-    edges: [],
+    mode: 'concept',
+    nodes: [{ id: 'n0', label: 'Auth', change: 'modified', evidence: ['e1'] }],
+    edges: [{ from: 'n0', to: 'n0', label: 'loops', change: 'context', evidence: ['e1'] }],
     evidence: [{ id: 'e1', path: 'src/auth.ts' }],
     headSha: 'abc1234def567890',
     scope: 'full',
@@ -90,6 +91,7 @@ function diagram(): DiagramArtifact {
 // A large artifact used to push the sticky body over its byte budget.
 function bigDiagram(): DiagramArtifact {
   return {
+    mode: 'concept',
     nodes: Array.from({ length: 60 }, (_, i) => ({
       id: `n${i}`,
       label: 'x'.repeat(200),
@@ -346,14 +348,15 @@ function firstState(findings: ReviewState['findings']): ReviewState {
 }
 
 describe('renderStickyComment', () => {
-  it('embeds the state marker, open counts, and run history', () => {
+  it('embeds the state marker, open counts, run history, and walkthrough', () => {
     const body = renderStickyComment({ result: result(), state: state(), demoted: [] });
     expect(parseStateMarker(body)).toEqual(state());
     expect(body).toContain('Open findings: 1');
     expect(body).toContain('critical | 1');
     expect(body).toContain('`abc1234`');
     expect(body).toContain('Walkthrough');
-    expect(body).toContain('> Adds a feature');
+    expect(body).toContain('tweak');
+    expect(body).not.toContain('> Adds a feature');
   });
 
   it('lists demoted findings when present', () => {
@@ -375,18 +378,17 @@ describe('renderStickyComment', () => {
     expect(refreshed).not.toContain('| Existing |');
     expect(parseStateMarker(refreshed)).toEqual(updated);
   });
-  it('renders the optional diagram once, after the walkthrough and before open findings', () => {
+  it('renders the optional diagram before the walkthrough and open findings', () => {
     const body = renderStickyComment({
       result: { ...result(), diagram: diagram() },
       state: state(),
       demoted: [],
     });
-    expect(body).toContain('### Visual changes');
+    expect(body).toContain('### Concept map');
     expect(body).toContain('```mermaid');
-    expect(body.indexOf('### Visual changes')).toBeGreaterThan(body.indexOf('Walkthrough'));
-    expect(body.indexOf('### Visual changes')).toBeLessThan(body.indexOf('### Open findings:'));
-    expect(body.match(/### Visual changes/g)).toHaveLength(1);
-    expect(body.match(/```mermaid/g)).toHaveLength(1);
+    expect(body.indexOf('### Concept map')).toBeLessThan(body.indexOf('Walkthrough'));
+    expect(body.indexOf('### Concept map')).toBeLessThan(body.indexOf('### Open findings:'));
+    expect(body.match(/### Concept map/g)).toHaveLength(1);
     expect(body).toContain('### Open findings: 1');
     expect(parseStateMarker(body)).toEqual(state());
   });
@@ -409,11 +411,61 @@ describe('renderStickyComment', () => {
     });
     const updated = state({ findings: [{ ...state().findings[0], status: 'dismissed' }] });
     const refreshed = refreshStickyCommentState(body, updated);
-    expect(refreshed).toContain('### Visual changes');
-    expect(refreshed).toContain('```mermaid');
+    expect(refreshed).toContain('### Concept map');
     expect(refreshed).toContain('Open findings: 0');
     expect(refreshed).not.toContain('| Existing |');
     expect(parseStateMarker(refreshed)).toEqual(updated);
+  });
+
+  it('preserves the last diagram when an incremental render has no replacement', () => {
+    const previous = renderStickyComment({
+      result: { ...result(), diagram: diagram() },
+      state: state(),
+      demoted: [],
+    });
+    const start = previous.indexOf(DIAGRAM_SECTION_START);
+    const end = previous.indexOf(DIAGRAM_SECTION_END) + DIAGRAM_SECTION_END.length;
+    const refreshed = renderStickyComment({
+      result: { ...result(), summary: 'Incremental summary' },
+      state: state(),
+      demoted: [],
+      preserveExistingDiagram: true,
+      existingBody: previous,
+    });
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(refreshed.slice(refreshed.indexOf(DIAGRAM_SECTION_START), refreshed.indexOf(DIAGRAM_SECTION_END) + DIAGRAM_SECTION_END.length))
+      .toBe(previous.slice(start, end));
+    expect(refreshed).toContain('Incremental summary');
+  });
+
+  it('replaces the preserved diagram when a full review supplies a new one', () => {
+    const previous = renderStickyComment({
+      result: { ...result(), diagram: diagram() },
+      state: state(),
+      demoted: [],
+    });
+    const replacement = renderStickyComment({
+      result: {
+        ...result(),
+        diagram: {
+          ...diagram(),
+          nodes: [
+            { id: 'n0', label: 'New boundary', change: 'modified', evidence: ['e1'] },
+            { id: 'n1', label: 'New output', change: 'added', evidence: ['e1'] },
+          ],
+          edges: [{ from: 'n0', to: 'n1', label: 'publishes', change: 'added', evidence: ['e1'] }],
+        },
+      },
+      state: state(),
+      demoted: [],
+      preserveExistingDiagram: true,
+      existingBody: previous,
+    });
+
+    expect(replacement).toContain('New boundary');
+    expect(replacement).not.toContain('Auth middleware');
   });
 
   it('omits the diagram but keeps findings and state when it would overflow the sticky budget', () => {
@@ -422,7 +474,7 @@ describe('renderStickyComment', () => {
       state: state(),
       demoted: [],
     });
-    expect(body).not.toContain('### Visual changes');
+    expect(body).not.toContain('### Concept map');
     expect(body).toContain('### Open findings: 1');
     expect(parseStateMarker(body)).toEqual(state());
     expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
@@ -435,7 +487,7 @@ describe('renderStickyComment', () => {
       state: state(),
       demoted: [],
     });
-    expect(body).not.toContain('### Visual changes');
+    expect(body).not.toContain('### Concept map');
     expect(body).toContain('### Open findings: 1');
     expect(parseStateMarker(body)).toEqual(state());
   });
@@ -448,7 +500,7 @@ describe('renderStickyComment', () => {
       state: state(),
       demoted: [],
     });
-    expect(baseBody).toContain('### Visual changes'); // diagram was included because it fit
+    expect(baseBody).toContain('### Concept map'); // diagram was included because it fit
 
     const reopened: ReviewState = {
       ...state(),
@@ -460,7 +512,7 @@ describe('renderStickyComment', () => {
     };
 
     const refreshed = refreshStickyCommentState(baseBody, reopened);
-    expect(refreshed).not.toContain('### Visual changes'); // optional diagram dropped
+    expect(refreshed).not.toContain('### Concept map'); // optional diagram dropped
     expect(refreshed).toContain('### Open findings: 40');
     expect(parseStateMarker(refreshed)).toEqual(reopened); // state preserved, not trimmed
     expect(Buffer.byteLength(refreshed, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
@@ -477,7 +529,7 @@ describe('renderStickyComment', () => {
     });
     // Before the refresh both the real code-owned block (it fit at render time)
     // and the forged marker in untrusted text are present.
-    expect(baseBody).toContain('### Visual changes');
+    expect(baseBody).toContain('### Concept map');
     expect(baseBody).toContain(forged);
 
     const reopened: ReviewState = {
@@ -492,7 +544,7 @@ describe('renderStickyComment', () => {
     const refreshed = refreshStickyCommentState(baseBody, reopened);
     // Only the real code-owned diagram block adjacent to "### Open findings:"
     // is dropped; the forged marker in untrusted text is left untouched.
-    expect(refreshed).not.toContain('### Visual changes');
+    expect(refreshed).not.toContain('### Concept map');
     expect(refreshed).toContain(forged);
     expect(refreshed).toContain('### Open findings: 40');
     expect(parseStateMarker(refreshed)).toEqual(reopened);

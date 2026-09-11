@@ -5,6 +5,8 @@ import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import type { ReviewConfig } from '../../src/config/schema.js';
 import { fingerprintAnnotation, fingerprintMarker } from '../../src/github/fingerprint.js';
 import {
+  DIAGRAM_SECTION_END,
+  DIAGRAM_SECTION_START,
   EMPTY_COUNTS,
   parseStateMarker,
   renderStateMarker,
@@ -79,6 +81,7 @@ function priorState(overrides: Partial<ReviewState> = {}): ReviewState {
 }
 interface Fixture {
   stickyState?: ReviewState;
+  stickyBody?: string;
   legacyState?: LegacyReviewState;
   compareFiles?: string[];
   changedFiles?: string[];
@@ -95,11 +98,12 @@ interface Fixture {
   }>;
 }
 function fakeOctokit(fixture: Fixture = {}) {
-  const stickyBody = fixture.legacyState
-    ? `summary\n${renderStateMarker(fixture.legacyState)}`
-    : fixture.stickyState
-      ? `summary\n${renderStateMarker(fixture.stickyState)}`
-      : null;
+  const stickyBody = fixture.stickyBody ??
+    (fixture.legacyState
+      ? `summary\n${renderStateMarker(fixture.legacyState)}`
+      : fixture.stickyState
+        ? `summary\n${renderStateMarker(fixture.stickyState)}`
+        : null);
   return {
     checks: {
       create: vi.fn(async () => ({ data: { id: 42 } })),
@@ -729,7 +733,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     const allCalls = llm.chatCompletion.mock.calls.map(([p]) => p);
     const diagramCalls = allCalls.filter((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT);
     expect(diagramCalls).toHaveLength(1);
-    expect(diagramCalls[0].model).toBe('synthesis-test');
+    expect(diagramCalls[0].model).toBe('k3-256k');
     expect(result.callCount).toBe(allCalls.length);
     // Shared usage totals fold in the diagram call (its 10 cached tokens; pipeline calls carry 0).
     expect(result.tokensUsed).toEqual({
@@ -739,7 +743,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     });
 
     const body = savedBody(octokit);
-    expect(body).toContain('### Visual changes');
+    expect(body).toContain('### Concept map');
     expect(body).toContain('```mermaid');
     expect(result.diagram?.scope).toBe('full');
   });
@@ -755,12 +759,26 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     expect(allCalls.some((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
     expect(result.diagram).toBeUndefined();
     const body = savedBody(octokit);
-    expect(body).not.toContain('### Visual changes');
+    expect(body).not.toContain('### Concept map');
   });
 
-  it('delta scope never generates a diagram, even for complex changes', async () => {
+  it('delta scope preserves the last diagram without generating a replacement', async () => {
+    const prior = priorState();
+    const historicalGraph = [
+      DIAGRAM_SECTION_START,
+      '### Concept map',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      '  n0["Request"]',
+      '  n1["Input"]',
+      '  n0 -->|"validates"| n1',
+      '```',
+      DIAGRAM_SECTION_END,
+    ].join('\n');
     const octokit = fakeOctokit({
-      stickyState: priorState(),
+      stickyState: prior,
+      stickyBody: `${historicalGraph}\n\nsummary\n${renderStateMarker(prior)}`,
       compareFiles: ['src/a.ts', 'src/b.ts'],
     });
     const llm = diagramLLM(DIAGRAM_E0);
@@ -775,7 +793,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     expect(result.diagram).toBeUndefined();
     expect(llm.chatCompletion.mock.calls.some(([p]) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
     const body = savedBody(octokit);
-    expect(body).not.toContain('### Visual changes');
+    expect(body).toContain(historicalGraph);
   });
 
   it('disabled normal run removes a previously published graph via a fresh render', async () => {
