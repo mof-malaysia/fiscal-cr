@@ -5,7 +5,14 @@ function tableCell(value: string): string {
   return value.replace(/[|\r\n]/g, (character) => (character === '|' ? '\\|' : ' '));
 }
 
-/** Render compact token, cost, and model telemetry for user-facing comments. */
+function displayModel(result: ReviewResult): string | undefined {
+  const model = result.costEstimate?.model;
+  if (!model) return undefined;
+  const provider = result.costEstimate?.provider;
+  return provider && !model.includes('/') ? `${provider}/${model}` : model;
+}
+
+/** Render compact aggregate telemetry for user-facing comments. */
 export function renderTelemetrySummary(
   result: ReviewResult,
   heading = '📊 Review telemetry & cost',
@@ -18,15 +25,8 @@ export function renderTelemetrySummary(
   ];
   if (result.callCount !== undefined) rows.push(`| LLM calls | ${result.callCount.toLocaleString()} |`);
   rows.push(`| Estimated cost | $${cost.toFixed(4)} |`);
-  if (result.costEstimate) rows.push(`| Pricing source | ${result.costEstimate.source} |`);
-  if (result.costEstimate?.provider) rows.push(`| Provider | ${tableCell(result.costEstimate.provider)} |`);
-  if (result.costEstimate?.model) rows.push(`| Model | ${tableCell(result.costEstimate.model)} |`);
-  if (
-    result.costEstimate?.matchedModel &&
-    result.costEstimate.matchedModel !== result.costEstimate.model
-  ) {
-    rows.push(`| Pricing match | ${tableCell(result.costEstimate.matchedModel)} |`);
-  }
+  const model = displayModel(result);
+  if (model) rows.push(`| Model | ${tableCell(model)} |`);
   return [
     '<details>',
     `<summary>${heading}</summary>`,

@@ -14,6 +14,8 @@ export type TelemetryFinishReason =
 export interface LLMCallTelemetryEvent {
   type: 'llm_call';
   stage: TelemetryStage;
+  /** Effective model used for this stage; staged reviews may vary by call. */
+  model?: string;
   groupIndex?: number;
   fileCount?: number;
   estimatedInputTokens: number;
@@ -119,6 +121,7 @@ export class UsageTracker {
       this.emit({
         type: 'llm_call',
         stage: call.stage,
+        ...(call.model === undefined ? {} : { model: call.model }),
         ...(call.groupIndex === undefined ? {} : { groupIndex: call.groupIndex }),
         ...(call.fileCount === undefined ? {} : { fileCount: call.fileCount }),
         estimatedInputTokens: call.messages.reduce(
