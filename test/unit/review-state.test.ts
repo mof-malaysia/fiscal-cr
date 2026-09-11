@@ -375,9 +375,9 @@ describe('renderStickyComment', () => {
       demoted: [],
     });
     expect(parseStateMarker(body)).toEqual(state());
-    expect(body).toContain('📊 Latest run metrics & cost');
-    expect(body).toContain('| Input tokens (uncached) | 100 |');
-    expect(body).toContain('**History total:** $0.0500');
+    expect(body).toContain('📊 Latest review usage & cost');
+    expect(body).toContain('| Uncached input | 100 |');
+    expect(body).toContain('**Cumulative review cost:** $0.0500');
     expect(body).toContain('**Model:** `openrouter/openai/gpt-5`');
     expect(body).toContain('Open findings: 1');
     expect(body).toContain('critical | 1');
@@ -444,7 +444,7 @@ describe('renderStickyComment', () => {
     expect(refreshed).toContain('Open findings: 0');
     expect(refreshed).toContain('**Score:** 90/100');
     expect(refreshed).toContain('Demoted');
-    expect(refreshed).toContain('Run history');
+    expect(refreshed).toContain('Review history');
     expect(refreshed).not.toContain('| Existing |');
     expect(parseStateMarker(refreshed)).toEqual(updated);
   });

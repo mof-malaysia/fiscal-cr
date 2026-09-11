@@ -224,12 +224,12 @@ describe('createPRReview (legacy mode)', () => {
       failOn: 'critical',
     });
     const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
-    expect(call.body).toContain('📊 Token metrics & cost');
-    expect(call.body).toContain('| Input tokens (uncached) | 10 |');
-    expect(call.body).toContain('**Total cost:** $0.0123');
+    expect(call.body).toContain('📊 Token usage & cost');
+    expect(call.body).toContain('| Uncached input | 10 |');
+    expect(call.body).toContain('**Review cost:** $0.0123');
     expect(call.body).toContain('**Model:** `openrouter/openai/gpt-5`');
-    expect(call.body.indexOf('**Model:**')).toBeLessThan(call.body.indexOf('**Total cost:**'));
-    expect(call.body.indexOf('**Total cost:**')).toBeLessThan(call.body.indexOf('| Metric | Tokens | Cost |'));
+    expect(call.body.indexOf('**Model:**')).toBeLessThan(call.body.indexOf('**Review cost:**'));
+    expect(call.body.indexOf('**Review cost:**')).toBeLessThan(call.body.indexOf('| Token usage | Tokens | Cost |'));
     expect(octokit.pulls.createReview).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'REQUEST_CHANGES',
@@ -269,14 +269,14 @@ describe('createPRReview (legacy mode)', () => {
       },
     }).join('\n');
 
-    expect(body).toContain('**Models:** 2 models');
+    expect(body).toContain('**Models used:** 2');
     expect(body).not.toContain('**Model:** `openrouter/openai/gpt-5`');
-    expect(body).toContain('**Model breakdown**');
+    expect(body).toContain('**Cost by model**');
     expect(body).toContain('| openrouter/openai/gpt-5 | 2 | 7,000 | 1,000 | 1,200 | $0.0209 |');
     expect(body).toContain('| openrouter/anthropic/claude-sonnet-4.5 | 1 | 4,000 | 0 | 800 | $0.0240 |');
-    expect(body).not.toContain('| Metric | Tokens | Cost |');
+    expect(body).not.toContain('| Token usage | Tokens | Cost |');
     expect(body.match(/<details>/g)).toHaveLength(1);
-    expect(body.indexOf('📊 Token metrics & cost')).toBeLessThan(body.indexOf('**Model breakdown**'));
+    expect(body.indexOf('📊 Token usage & cost')).toBeLessThan(body.indexOf('**Cost by model**'));
   });
   it('places the optional diagram between the summary and walkthrough', async () => {
     const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 1 } })) } };

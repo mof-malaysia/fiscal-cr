@@ -857,15 +857,15 @@ export function renderStickyComment(input: StickyCommentInput): string {
     }
   }
   tail.push('', `**Score:** ${result.score}/100`, '');
-  const historyTotalUsd =
+  const cumulativeCostUsd =
     state.runs.length > 0
       ? state.runs.reduce((total, run) => total + (Number.parseFloat(run.cost) || 0), 0)
       : undefined;
   tail.push(
     ...renderTelemetrySummary(
       result,
-      historyTotalUsd === undefined ? '📊 Token metrics & cost' : '📊 Latest run metrics & cost',
-      { historyTotalUsd },
+      cumulativeCostUsd === undefined ? '📊 Token usage & cost' : '📊 Latest review usage & cost',
+      { cumulativeCostUsd },
     ),
     '',
   );
@@ -878,7 +878,12 @@ export function renderStickyComment(input: StickyCommentInput): string {
     tail.push('\nSee the check-run annotations for details.', '</details>\n');
   }
   if (state.runs.length > 0) {
-    tail.push('<details>', '<summary>🕘 Run history</summary>\n', '| Commit | When | Scope | New findings | Cost |', '|--------|------|-------|--------------|------|');
+    tail.push(
+      '<details>',
+      '<summary>🕘 Review history</summary>\n',
+      '| Commit | Date | Scope | New findings | Review cost |',
+      '|--------|------|-------|--------------|-------------|',
+    );
     for (const run of [...state.runs].reverse()) {
       tail.push(`| \`${run.sha}\` | ${run.at} | ${run.scope} | ${run.newFindings} | $${run.cost} |`);
     }
