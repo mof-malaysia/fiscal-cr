@@ -223,10 +223,10 @@ describe('createPRReview (legacy mode)', () => {
       failOn: 'critical',
     });
     const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
-    expect(call.body).toContain('📊 Review telemetry & cost');
-    expect(call.body).toContain('| Input tokens | 10 |');
-    expect(call.body).toContain('| Model | openrouter/openai/gpt-5 |');
-    expect(call.body).toContain('| Estimated cost |');
+    expect(call.body).toContain('📊 Token metrics');
+    expect(call.body).toContain('| Input tokens (uncached) | 10 |');
+    expect(call.body).toContain('**Total cost:** $0.0123');
+    expect(call.body).toContain('**Model:** `openrouter/openai/gpt-5`');
     expect(octokit.pulls.createReview).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'REQUEST_CHANGES',

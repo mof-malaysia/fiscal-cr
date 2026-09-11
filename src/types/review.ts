@@ -67,6 +67,9 @@ export interface ReviewResult {
   /** Provider/model-aware estimated cost when pricing metadata is available. */
   costEstimate?: {
     usd: number;
+    inputUsd?: number;
+    outputUsd?: number;
+    cachedUsd?: number;
     source: 'exact' | 'family' | 'remote' | 'fallback';
     provider?: string;
     model?: string;

@@ -33,6 +33,11 @@ describe('UsageTracker telemetry', () => {
     tracker.add({ input: 1_000_000, output: 0, cached: 0 }, call('gpt-5'));
 
     expect(tracker.cost()).toBeCloseTo(1.5);
+    expect(tracker.costBreakdown()).toEqual({
+      inputUsd: 1.5,
+      outputUsd: 0,
+      cachedUsd: 0,
+    });
   });
 
   it('emits safe call metrics without message content', () => {

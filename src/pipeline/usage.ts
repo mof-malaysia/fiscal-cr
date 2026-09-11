@@ -1,5 +1,12 @@
-import type { PricingContext, PricingResolution, PricingSource } from '../utils/pricing.js';
-import { calculateCostWithPricing, resolvePricing } from '../utils/pricing.js';
+import {
+  calculateCostBreakdownWithPricing,
+  calculateCostWithPricing,
+  resolvePricing,
+  type PricingContext,
+  type TokenCostBreakdown,
+  type PricingResolution,
+  type PricingSource,
+} from '../utils/pricing.js';
 import type { LLMTokenUsage } from '../providers/interface.js';
 import type { ChatMessage } from '../types/review.js';
 import { estimateTokens } from '../utils/tokens.js';
@@ -80,6 +87,11 @@ export class UsageTracker {
   private totals: LLMTokenUsage = { input: 0, output: 0, cached: 0 };
   private callCount = 0;
   private totalCostUsd = 0;
+  private readonly costBreakdownUsd: Omit<TokenCostBreakdown, 'totalUsd'> = {
+    inputUsd: 0,
+    outputUsd: 0,
+    cachedUsd: 0,
+  };
   private readonly pricing: PricingResolution;
   private readonly pricingContext: PricingContext;
   private readonly pricingByModel: Map<string, PricingResolution>;
@@ -115,7 +127,11 @@ export class UsageTracker {
     this.totals.output += usage.output;
     this.totals.cached += usage.cached;
     const pricing = this.pricingForModel(call?.model);
-    this.totalCostUsd += calculateCostWithPricing(usage, pricing.pricing);
+    const breakdown = calculateCostBreakdownWithPricing(usage, pricing.pricing);
+    this.totalCostUsd += breakdown.totalUsd;
+    this.costBreakdownUsd.inputUsd += breakdown.inputUsd;
+    this.costBreakdownUsd.outputUsd += breakdown.outputUsd;
+    this.costBreakdownUsd.cachedUsd += breakdown.cachedUsd;
     if (call && this.telemetry) {
       const finishReason = safeFinishReason(call.finishReason);
       this.emit({
@@ -152,6 +168,10 @@ export class UsageTracker {
     return { ...this.totals };
   }
 
+
+  costBreakdown(): Omit<TokenCostBreakdown, 'totalUsd'> {
+    return { ...this.costBreakdownUsd };
+  }
   calls(): number {
     return this.callCount;
   }

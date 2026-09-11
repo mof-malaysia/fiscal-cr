@@ -1,5 +1,5 @@
 import type { ReviewResult } from '../types/review.js';
-import { calculateCostForModel } from '../utils/tokens.js';
+import { calculateCostBreakdownForModel } from '../utils/tokens.js';
 
 function tableCell(value: string): string {
   return value.replace(/[|\r\n]/g, (character) => (character === '|' ? '\\|' : ' '));
@@ -12,27 +12,37 @@ function displayModel(result: ReviewResult): string | undefined {
   return provider ? `${provider}/${model}` : model;
 }
 
-/** Render compact aggregate telemetry for user-facing comments. */
+/** Render aggregate cost and token metrics for user-facing surfaces. */
 export function renderTelemetrySummary(
   result: ReviewResult,
-  heading = '📊 Review telemetry & cost',
+  heading = '📊 Token metrics',
 ): string[] {
-  const cost = result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {});
-  const rows = [
-    `| Input tokens | ${result.tokensUsed.input.toLocaleString()} |`,
-    `| Output tokens | ${result.tokensUsed.output.toLocaleString()} |`,
-    `| Cached tokens | ${result.tokensUsed.cached.toLocaleString()} |`,
-  ];
-  if (result.callCount !== undefined) rows.push(`| LLM calls | ${result.callCount.toLocaleString()} |`);
-  rows.push(`| Estimated cost | $${cost.toFixed(4)} |`);
+  const fallback = calculateCostBreakdownForModel(result.tokensUsed, {
+    provider: result.costEstimate?.provider,
+    model: result.costEstimate?.model,
+  });
+  const inputUsd = result.costEstimate?.inputUsd ?? fallback.inputUsd;
+  const outputUsd = result.costEstimate?.outputUsd ?? fallback.outputUsd;
+  const cachedUsd = result.costEstimate?.cachedUsd ?? fallback.cachedUsd;
+  const cost = result.costEstimate?.usd ?? fallback.totalUsd;
   const model = displayModel(result);
-  if (model) rows.push(`| Model | ${tableCell(model)} |`);
+  const costSummary = model
+    ? `**Total cost:** $${cost.toFixed(4)} · **Model:** \`${tableCell(model)}\``
+    : `**Total cost:** $${cost.toFixed(4)}`;
+  const rows = [
+    `| Input tokens (uncached) | ${Math.max(0, result.tokensUsed.input - result.tokensUsed.cached).toLocaleString()} | $${inputUsd.toFixed(4)} |`,
+    `| Cached input tokens | ${result.tokensUsed.cached.toLocaleString()} | $${cachedUsd.toFixed(4)} |`,
+    `| Output tokens | ${result.tokensUsed.output.toLocaleString()} | $${outputUsd.toFixed(4)} |`,
+  ];
+  if (result.callCount !== undefined) rows.push(`| LLM calls | ${result.callCount.toLocaleString()} | — |`);
   return [
+    costSummary,
+    '',
     '<details>',
     `<summary>${heading}</summary>`,
     '',
-    '| Metric | Value |',
-    '|--------|-------|',
+    '| Metric | Tokens | Cost |',
+    '|--------|--------|------|',
     ...rows,
     '</details>',
   ];

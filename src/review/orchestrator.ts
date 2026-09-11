@@ -338,8 +338,12 @@ export class ReviewOrchestrator {
         result.tokensUsed = usage.total();
         result.callCount = usage.calls();
       }
+      const costBreakdown = usage.costBreakdown();
       result.costEstimate = {
         usd: roundCost(usage.cost()),
+        inputUsd: roundCost(costBreakdown.inputUsd),
+        outputUsd: roundCost(costBreakdown.outputUsd),
+        cachedUsd: roundCost(costBreakdown.cachedUsd),
         ...pricingResolution,
       };
 
