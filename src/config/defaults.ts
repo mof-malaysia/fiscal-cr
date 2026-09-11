@@ -27,6 +27,7 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     visualize: {
       enabled: false,
       mode: "auto",
+      maxOutputTokens: 2_000,
       minChangedFiles: 2,
       minChangedLines: 20,
     },

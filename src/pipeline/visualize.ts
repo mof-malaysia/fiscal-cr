@@ -16,8 +16,7 @@ import { logger } from '../utils/logger.js';
 
 /** Hard estimated-token budget for the entire visualize call (template + envelope + evidence). */
 export const VISUALIZE_MAX_INPUT_TOKENS = 12_000;
-/** Output cap requested from the model; reserved separately from the input budget. */
-const VISUALIZE_MAX_OUTPUT_TOKENS = 2_000;
+/** Output cap is configured by `review.visualize.maxOutputTokens`. */
 /** Per-call timeout in milliseconds. */
 const VISUALIZE_CALL_TIMEOUT_MS = 60_000;
 /** Maximum number of whole-hunk evidence units sent to the model. */
@@ -393,13 +392,14 @@ export async function generateVisual(
     ];
 
     const model = modelForRole(config, 'visualize');
+    const maxOutputTokens = config.review.visualize.maxOutputTokens;
     const startedAt = Date.now();
     usage.startCall();
     const response = await llm.chatCompletion({
       messages,
       model,
       responseFormat: { type: 'json_object' },
-      maxTokens: VISUALIZE_MAX_OUTPUT_TOKENS,
+      maxTokens: maxOutputTokens,
       temperature: reviewTemperature(config, VISUALIZE_PREFERRED_TEMPERATURE, model),
       timeoutMs: VISUALIZE_CALL_TIMEOUT_MS,
     });
@@ -410,7 +410,7 @@ export async function generateVisual(
       model,
       stage: 'visualize',
       messages,
-      maxOutputTokens: VISUALIZE_MAX_OUTPUT_TOKENS,
+      maxOutputTokens,
       durationMs: Date.now() - startedAt,
       finishReason: response.finishReason,
     });

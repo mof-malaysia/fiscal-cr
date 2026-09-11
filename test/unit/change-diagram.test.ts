@@ -398,22 +398,24 @@ describe('generateVisual', () => {
     expect(data.evidence.map((item) => item.path)).toEqual(['selected.ts']);
   });
 
-  it('makes exactly one bounded json call to the provider', async () => {
+  it('uses the configured visualization output-token cap', async () => {
     const llm = makeLlm(VALID_RESPONSE);
     const ctx = makeCtx({
       changedFiles: [
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
+    const config = makeConfig(true);
+    config.review.visualize.maxOutputTokens = 4_096;
+    await generateVisual(llm, ctx, config, makeUsage(), {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
     expect(llm.chatCompletion).toHaveBeenCalledTimes(1);
     const req = (llm.chatCompletion as unknown as Mock).mock.calls[0][0] as ChatCompletionParams;
     expect(req.responseFormat).toEqual({ type: 'json_object' });
-    expect(req.maxTokens).toBe(2000);
-    expect(req.timeoutMs).toBe(60000);
+    expect(req.maxTokens).toBe(4_096);
+    expect(req.timeoutMs).toBe(60_000);
   });
 
   it('drops an oversized whole hunk and keeps the fitting ones (exact whole-hunk selection)', async () => {

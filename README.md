@@ -248,6 +248,7 @@ review:
   visualize:
     enabled: false # opt-in: publish a visualization alongside the review
     mode: auto # auto, concept, or implementation
+    maxOutputTokens: 2000 # completion-token cap for the visualization call
     minChangedFiles: 2 # minimum reviewable files before visualization generation
     minChangedLines: 20 # minimum additions plus deletions before generation
   incremental:
@@ -493,6 +494,8 @@ never emits raw Mermaid, Markdown, HTML, styles, links, or directives.
 The auxiliary visualization uses `models.visualize` when configured. Otherwise
 it uses the selected preset's visualize model, then that preset's `fastPath`
 model, and finally the top-level `model`.
+The visualization output cap is independent from `pipeline.maxOutputTokens` and
+is configured with `review.visualize.maxOutputTokens` (default: `2000`).
 
 - To avoid noisy artifacts and unnecessary model spend, generation is skipped
   before the model call unless the configured file and line thresholds are met.

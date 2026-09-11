@@ -120,6 +120,8 @@ export const reviewConfigSchema = z.object({
         .object({
           enabled: z.boolean().default(false),
           mode: z.enum(['auto', 'concept', 'implementation']).default('auto'),
+          /** Maximum completion tokens for the visualization call. */
+          maxOutputTokens: z.number().int().min(1).default(2_000),
           /** Minimum reviewable changed files before visualization generation. */
           minChangedFiles: z.number().int().min(1).max(100).default(2),
           /** Minimum additions plus deletions before visualization generation. */

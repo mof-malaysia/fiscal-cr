@@ -422,6 +422,9 @@ describe('review.visualize.enabled config', () => {
     expect(DEFAULT_CONFIG.review.visualize.minChangedFiles).toBe(2);
     expect(DEFAULT_CONFIG.review.visualize.minChangedLines).toBe(20);
   });
+  it('defaults visualization output tokens to 2000', () => {
+    expect(DEFAULT_CONFIG.review.visualize.maxOutputTokens).toBe(2_000);
+  });
   it('defaults visualization mode to auto', () => {
     expect(DEFAULT_CONFIG.review.visualize.mode).toBe('auto');
   });
@@ -464,11 +467,12 @@ describe('review.visualize.enabled config', () => {
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
     expect(config.review.visualize.enabled).toBe(true);
   });
-  it('loads configurable visualization complexity thresholds', async () => {
+  it('loads configurable visualization thresholds and output cap', async () => {
     const yaml = [
       'review:',
       '  visualize:',
       '    enabled: true',
+      '    maxOutputTokens: 4096',
       '    minChangedFiles: 3',
       '    minChangedLines: 40',
       '',
@@ -483,6 +487,7 @@ describe('review.visualize.enabled config', () => {
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
     expect(config.review.visualize).toMatchObject({
       enabled: true,
+      maxOutputTokens: 4_096,
       minChangedFiles: 3,
       minChangedLines: 40,
     });
