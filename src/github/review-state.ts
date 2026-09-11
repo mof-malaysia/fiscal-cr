@@ -2,6 +2,7 @@ import type { FiscalcrOctokit } from './client.js';
 import type { ReviewAnnotation, ReviewResult, ReviewedRange, Severity, WalkthroughEntry } from '../types/review.js';
 import { fingerprintAnnotation } from './fingerprint.js';
 import { renderDiagramSection } from '../review/diagram-renderer.js';
+import { renderTelemetrySummary } from '../review/telemetry-summary.js';
 import { logger } from '../utils/logger.js';
 
 const STATE_MARKER_PREFIX = '<!-- fiscalcr:state:v2 ';
@@ -856,6 +857,7 @@ export function renderStickyComment(input: StickyCommentInput): string {
     }
   }
   tail.push('', `**Score:** ${result.score}/100`, '');
+  tail.push(...renderTelemetrySummary(result), '');
 
   if (demoted.length > 0) {
     tail.push('<details>', `<summary>⚠️ ${demoted.length} finding(s) could not be placed inline</summary>\n`);
