@@ -45,6 +45,7 @@ describe('UsageTracker telemetry', () => {
       { input: 100, output: 20, cached: 10 },
       {
         stage: 'group-review',
+        model: 'openai/gpt-5',
         messages: [
           { role: 'system', content: 'secret system prompt' },
           { role: 'user', content: 'private source code' },
@@ -60,6 +61,7 @@ describe('UsageTracker telemetry', () => {
     expect(events[0]).toMatchObject({
       type: 'llm_call',
       stage: 'group-review',
+      model: 'openai/gpt-5',
       groupIndex: 1,
       fileCount: 3,
       inputTokens: 100,

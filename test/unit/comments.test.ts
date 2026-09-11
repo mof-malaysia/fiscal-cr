@@ -211,6 +211,8 @@ describe('createPRReview (legacy mode)', () => {
     annotations: [annotation({ severity: 'critical' })],
     stats: { critical: 1, warning: 0, suggestion: 0, nitpick: 0 },
     tokensUsed: { input: 10, output: 5, cached: 0 },
+    callCount: 2,
+    costEstimate: { usd: 0.0123, source: 'exact', provider: 'openai', model: 'gpt-5' },
   };
 
   it('posts one full review per run with REQUEST_CHANGES on criticals', async () => {
@@ -223,6 +225,7 @@ describe('createPRReview (legacy mode)', () => {
     const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
     expect(call.body).toContain('📊 Review telemetry & cost');
     expect(call.body).toContain('| Input tokens | 10 |');
+    expect(call.body).toContain('| Model | openai/gpt-5 |');
     expect(call.body).toContain('| Estimated cost |');
     expect(octokit.pulls.createReview).toHaveBeenCalledWith(
       expect.objectContaining({
