@@ -224,7 +224,7 @@ describe('createPRReview (legacy mode)', () => {
       failOn: 'critical',
     });
     const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
-    expect(call.body).toContain('📊 Token metrics');
+    expect(call.body).toContain('📊 Token metrics & cost');
     expect(call.body).toContain('| Input tokens (uncached) | 10 |');
     expect(call.body).toContain('**Total cost:** $0.0123');
     expect(call.body).toContain('**Model:** `openrouter/openai/gpt-5`');
@@ -271,10 +271,12 @@ describe('createPRReview (legacy mode)', () => {
 
     expect(body).toContain('**Models:** 2 models');
     expect(body).not.toContain('**Model:** `openrouter/openai/gpt-5`');
-    expect(body).toContain('<summary>📊 Model breakdown</summary>');
+    expect(body).toContain('**Model breakdown**');
     expect(body).toContain('| openrouter/openai/gpt-5 | 2 | 7,000 | 1,000 | 1,200 | $0.0209 |');
     expect(body).toContain('| openrouter/anthropic/claude-sonnet-4.5 | 1 | 4,000 | 0 | 800 | $0.0240 |');
-    expect(body.indexOf('📊 Model breakdown')).toBeLessThan(body.indexOf('📊 Token metrics'));
+    expect(body).toContain('| Metric | Tokens | Cost |');
+    expect(body.match(/<details>/g)).toHaveLength(1);
+    expect(body.indexOf('📊 Token metrics & cost')).toBeLessThan(body.indexOf('**Model breakdown**'));
   });
   it('places the optional diagram between the summary and walkthrough', async () => {
     const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 1 } })) } };

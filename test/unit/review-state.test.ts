@@ -375,7 +375,7 @@ describe('renderStickyComment', () => {
       demoted: [],
     });
     expect(parseStateMarker(body)).toEqual(state());
-    expect(body).toContain('📊 Token metrics');
+    expect(body).toContain('📊 Token metrics & cost');
     expect(body).toContain('| Input tokens (uncached) | 100 |');
     expect(body).toContain('**Total cost:** $0.0123');
     expect(body).toContain('**Model:** `openrouter/openai/gpt-5`');

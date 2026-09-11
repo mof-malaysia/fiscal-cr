@@ -94,7 +94,7 @@ describe('buildSummary change-diagram integration', () => {
     const out = buildSummary(baseResult({ diagram: diagram() }));
     expect(out).toContain('| 🟡 warning | 1 |');
     expect(out).toContain('| 🔵 suggestion | 2 |');
-    expect(out).toContain('📊 Token metrics');
+    expect(out).toContain('📊 Token metrics & cost');
     expect(out).toContain('| Input tokens (uncached) | 900 |');
     expect(out).toContain('**Total cost:** $0.0123');
   });

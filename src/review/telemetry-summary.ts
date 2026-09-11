@@ -15,7 +15,7 @@ function displayModel(result: ReviewResult): string | undefined {
 /** Render aggregate cost and token metrics for user-facing surfaces. */
 export function renderTelemetrySummary(
   result: ReviewResult,
-  heading = '📊 Token metrics',
+  heading = '📊 Token metrics & cost',
 ): string[] {
   const fallback = calculateCostBreakdownForModel(result.tokensUsed, {
     provider: result.costEstimate?.provider,
@@ -38,8 +38,7 @@ export function renderTelemetrySummary(
   ].filter((line): line is string => line !== undefined);
   const modelBreakdown = multipleModels
     ? [
-        '<details>',
-        '<summary>📊 Model breakdown</summary>',
+        '**Model breakdown**',
         '',
         '| Model | Calls | Input tokens | Cached input | Output tokens | Cost |',
         '|-------|-------|--------------|--------------|---------------|------|',
@@ -47,7 +46,6 @@ export function renderTelemetrySummary(
           (summary) =>
             `| ${tableCell(summary.model)} | ${summary.calls.toLocaleString()} | ${Math.max(0, summary.inputTokens - summary.cachedTokens).toLocaleString()} | ${summary.cachedTokens.toLocaleString()} | ${summary.outputTokens.toLocaleString()} | $${summary.usd.toFixed(4)} |`,
         ),
-        '</details>',
         '',
       ]
     : [];
@@ -60,10 +58,10 @@ export function renderTelemetrySummary(
   return [
     ...costSummary,
     '',
-    ...modelBreakdown,
     '<details>',
     `<summary>${heading}</summary>`,
     '',
+    ...modelBreakdown,
     '| Metric | Tokens | Cost |',
     '|--------|--------|------|',
     ...rows,
