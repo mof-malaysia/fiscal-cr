@@ -26,10 +26,31 @@ export function renderTelemetrySummary(
   const cachedUsd = result.costEstimate?.cachedUsd ?? fallback.cachedUsd;
   const cost = result.costEstimate?.usd ?? fallback.totalUsd;
   const model = displayModel(result);
+  const models = result.costEstimate?.models ?? [];
+  const multipleModels = models.length > 1;
   const costSummary = [
-    model ? `**Model:** \`${tableCell(model)}\`` : undefined,
+    multipleModels
+      ? `**Models:** ${models.length} models`
+      : model
+        ? `**Model:** \`${tableCell(model)}\``
+        : undefined,
     `**Total cost:** $${cost.toFixed(4)}`,
   ].filter((line): line is string => line !== undefined);
+  const modelBreakdown = multipleModels
+    ? [
+        '<details>',
+        '<summary>📊 Model breakdown</summary>',
+        '',
+        '| Model | Calls | Input tokens | Cached input | Output tokens | Cost |',
+        '|-------|-------|--------------|--------------|---------------|------|',
+        ...models.map(
+          (summary) =>
+            `| ${tableCell(summary.model)} | ${summary.calls.toLocaleString()} | ${Math.max(0, summary.inputTokens - summary.cachedTokens).toLocaleString()} | ${summary.cachedTokens.toLocaleString()} | ${summary.outputTokens.toLocaleString()} | $${summary.usd.toFixed(4)} |`,
+        ),
+        '</details>',
+        '',
+      ]
+    : [];
   const rows = [
     `| Input tokens (uncached) | ${Math.max(0, result.tokensUsed.input - result.tokensUsed.cached).toLocaleString()} | $${inputUsd.toFixed(4)} |`,
     `| Cached input tokens | ${result.tokensUsed.cached.toLocaleString()} | $${cachedUsd.toFixed(4)} |`,
@@ -39,6 +60,7 @@ export function renderTelemetrySummary(
   return [
     ...costSummary,
     '',
+    ...modelBreakdown,
     '<details>',
     `<summary>${heading}</summary>`,
     '',

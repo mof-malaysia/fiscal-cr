@@ -6,6 +6,7 @@ import {
   partitionPlaceable,
 } from '../../src/github/comments.js';
 import { fingerprintAnnotation } from '../../src/github/fingerprint.js';
+import { renderTelemetrySummary } from '../../src/review/telemetry-summary.js';
 import type { ChangedFile, ReviewAnnotation, ReviewResult } from '../../src/types/review.js';
 import type { DiagramArtifact } from '../../src/types/diagram.js';
 
@@ -235,6 +236,45 @@ describe('createPRReview (legacy mode)', () => {
         comments: [expect.objectContaining({ path: 'src/a.ts', line: 2 })],
       }),
     );
+  });
+  it('expands model details when staged reviews use multiple models', () => {
+    const body = renderTelemetrySummary({
+      ...result,
+      costEstimate: {
+        ...result.costEstimate!,
+        models: [
+          {
+            model: 'openrouter/openai/gpt-5',
+            calls: 2,
+            inputTokens: 8_000,
+            cachedTokens: 1_000,
+            outputTokens: 1_200,
+            inputUsd: 0.0088,
+            cachedUsd: 0.0001,
+            outputUsd: 0.012,
+            usd: 0.0209,
+          },
+          {
+            model: 'openrouter/anthropic/claude-sonnet-4.5',
+            calls: 1,
+            inputTokens: 4_000,
+            cachedTokens: 0,
+            outputTokens: 800,
+            inputUsd: 0.012,
+            cachedUsd: 0,
+            outputUsd: 0.012,
+            usd: 0.024,
+          },
+        ],
+      },
+    }).join('\n');
+
+    expect(body).toContain('**Models:** 2 models');
+    expect(body).not.toContain('**Model:** `openrouter/openai/gpt-5`');
+    expect(body).toContain('<summary>📊 Model breakdown</summary>');
+    expect(body).toContain('| openrouter/openai/gpt-5 | 2 | 7,000 | 1,000 | 1,200 | $0.0209 |');
+    expect(body).toContain('| openrouter/anthropic/claude-sonnet-4.5 | 1 | 4,000 | 0 | 800 | $0.0240 |');
+    expect(body.indexOf('📊 Model breakdown')).toBeLessThan(body.indexOf('📊 Token metrics'));
   });
   it('places the optional diagram between the summary and walkthrough', async () => {
     const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 1 } })) } };

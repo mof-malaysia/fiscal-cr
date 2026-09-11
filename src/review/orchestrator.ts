@@ -344,6 +344,13 @@ export class ReviewOrchestrator {
         inputUsd: roundCost(costBreakdown.inputUsd),
         outputUsd: roundCost(costBreakdown.outputUsd),
         cachedUsd: roundCost(costBreakdown.cachedUsd),
+        models: usage.modelCosts().map((summary) => ({
+          ...summary,
+          inputUsd: roundCost(summary.inputUsd),
+          outputUsd: roundCost(summary.outputUsd),
+          cachedUsd: roundCost(summary.cachedUsd),
+          usd: roundCost(summary.usd),
+        })),
         ...pricingResolution,
       };
 

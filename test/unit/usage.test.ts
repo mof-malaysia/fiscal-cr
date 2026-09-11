@@ -38,6 +38,30 @@ describe('UsageTracker telemetry', () => {
       outputUsd: 0,
       cachedUsd: 0,
     });
+    expect(tracker.modelCosts()).toEqual([
+      {
+        model: 'openai/gpt-5',
+        calls: 1,
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        inputUsd: 1.25,
+        outputUsd: 0,
+        cachedUsd: 0,
+        usd: 1.25,
+      },
+      {
+        model: 'openai/gpt-5-mini',
+        calls: 1,
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        inputUsd: 0.25,
+        outputUsd: 0,
+        cachedUsd: 0,
+        usd: 0.25,
+      },
+    ]);
   });
 
   it('emits safe call metrics without message content', () => {

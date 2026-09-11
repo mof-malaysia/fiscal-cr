@@ -39,6 +39,18 @@ export interface WalkthroughEntry {
   path: string;
   summary: string;
 }
+export interface ModelCostBreakdown {
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  inputUsd: number;
+  outputUsd: number;
+  cachedUsd: number;
+  usd: number;
+}
+
 export interface ReviewResult {
   summary: string;
   score: number; // 0-100
@@ -74,6 +86,7 @@ export interface ReviewResult {
     provider?: string;
     model?: string;
     matchedModel?: string;
+    models?: ModelCostBreakdown[];
   };
   /** One-line-per-file walkthrough table (multi-pass pipeline output). */
   walkthrough?: WalkthroughEntry[];
