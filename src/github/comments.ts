@@ -173,6 +173,40 @@ export async function dismissBlockingReview(
     return false;
   }
 }
+/**
+ * Publish a visible resolution notice when the GitHub token cannot mutate
+ * review threads. The finding state is still authoritative, but a top-level
+ * comment keeps the user-facing lifecycle update available without a PAT.
+ */
+export async function createThreadResolutionComment(
+  octokit: FiscalcrOctokit,
+  params: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    headSha: string;
+    count?: number;
+  },
+): Promise<boolean> {
+  const count = params.count ?? 1;
+  const body =
+    count === 1
+      ? `✅ Already handled — finding fixed in \`${params.headSha.slice(0, 7)}\`.`
+      : `✅ Already handled — ${count} findings fixed in \`${params.headSha.slice(0, 7)}\`.`;
+  try {
+    await octokit.issues.createComment({
+      owner: params.owner,
+      repo: params.repo,
+      issue_number: params.pullNumber,
+      body: `${body}\n\nThe original inline thread could not be resolved automatically because the configured GitHub token lacks review-thread permissions.`,
+    });
+    logger.info({ pullNumber: params.pullNumber, count }, 'Thread resolution notice posted');
+    return true;
+  } catch (err) {
+    logger.warn({ err, pullNumber: params.pullNumber }, 'Could not post thread resolution notice');
+    return false;
+  }
+}
 
 /**
  * Legacy posting mode (`review.comments.mode: 'legacy'`): one full review per

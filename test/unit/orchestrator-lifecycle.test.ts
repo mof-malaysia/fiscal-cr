@@ -458,6 +458,44 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(state!.blockingReviewId).toBeNull();
     expect(result.stats.critical).toBe(0);
   });
+  it('posts a visible resolution notice when thread permissions are unavailable', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
+    });
+    octokit.graphql = undefined as never;
+
+    await new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg()).reviewPullRequest(params);
+
+    const notices = octokit.issues.createComment.mock.calls
+      .map(([input]) => input as { body: string })
+      .filter((input) => input.body.includes('Already handled'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0].body).toContain('finding fixed in `new-sha`');
+    expect(notices[0].body).toContain('lacks review-thread permissions');
+    expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
+  });
+  it('posts the resolution notice when thread mutation is forbidden', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', isOutdated: true }],
+    });
+    const listThreads = octokit.graphql;
+    octokit.graphql = vi.fn(async (query: string, variables?: { threadId?: string }) => {
+      if (query.includes('reviewThreads')) return listThreads(query, variables);
+      throw new Error('403 Resource not accessible by integration');
+    }) as never;
+
+    await new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg()).reviewPullRequest(params);
+
+    const notices = octokit.issues.createComment.mock.calls
+      .map(([input]) => input as { body: string })
+      .filter((input) => input.body.includes('Already handled'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0].body).toContain('finding fixed in `new-sha`');
+    expect(octokit.graphql.mock.calls.some(([query]) => (query as string).includes('resolveReviewThread'))).toBe(true);
+  });
+
   it('uses original lines to fix deletion-only delta findings', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),

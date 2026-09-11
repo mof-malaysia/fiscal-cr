@@ -135,6 +135,7 @@ export interface ThreadResolutionResult {
   attempted: number;
   resolved: FiscalcrThread[];
   failed: number;
+  failedThreads: FiscalcrThread[];
   unavailable?: boolean;
 }
 
@@ -169,9 +170,9 @@ export async function resolveOutdatedThreads(
     threads = await listFiscalcrThreads(octokit, params, { includeOutdated: true });
   } catch (err) {
     logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
-    return { attempted: 0, resolved: [], failed: 0, unavailable: true };
+    return { attempted: 0, resolved: [], failed: 0, failedThreads: [], unavailable: true };
   }
-  if (!hasGraphql(octokit)) return { attempted: 0, resolved: [], failed: 0, unavailable: true };
+  if (!hasGraphql(octokit)) return { attempted: 0, resolved: [], failed: 0, failedThreads: [], unavailable: true };
   const graphql = octokit.graphql;
   const outdated = threads.filter((thread) => {
     const rangesForPath = params.reviewedRanges?.filter((range) => range.path === thread.path) ?? [];
@@ -188,6 +189,7 @@ export async function resolveOutdatedThreads(
   });
 
   const resolved: FiscalcrThread[] = [];
+  const failedThreads: FiscalcrThread[] = [];
   for (const thread of outdated) {
     try {
       const response = (await graphql(
@@ -228,6 +230,7 @@ export async function resolveOutdatedThreads(
       }
       resolved.push(thread);
     } catch (err) {
+      failedThreads.push(thread);
       logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');
     }
   }
@@ -242,5 +245,5 @@ export async function resolveOutdatedThreads(
   if (resolved.length > 0) {
     logger.info({ resolved: resolved.length }, 'Outdated review threads resolved');
   }
-  return { attempted: outdated.length, resolved, failed };
+  return { attempted: outdated.length, resolved, failed, failedThreads };
 }

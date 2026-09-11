@@ -13,6 +13,7 @@ import { createCheckRun, completeCheckRun } from '../github/checks.js';
 import {
   createIncrementalReview,
   createPRReview,
+  createThreadResolutionComment,
   dismissBlockingReview,
 } from '../github/comments.js';
 import { fingerprintAnnotation } from '../github/fingerprint.js';
@@ -614,6 +615,15 @@ export class ReviewOrchestrator {
     if (commentsCfg.resolveOutdated && stateForPublication) {
       if (!threadsAvailable) {
         result.threadCleanup = { attempted: 0, resolved: 0, failed: 0, unavailable: true };
+        if (plan.fixedFingerprints.length > 0) {
+          await createThreadResolutionComment(this.octokit, {
+            owner,
+            repo,
+            pullNumber,
+            headSha,
+            count: plan.fixedFingerprints.length,
+          });
+        }
       } else {
         const cleanup = await resolveOutdatedThreads(this.octokit, {
           owner,
@@ -634,6 +644,18 @@ export class ReviewOrchestrator {
           unavailable: cleanup.unavailable,
         };
         plan.autoResolvedThreadIds = cleanup.resolved.map((thread) => thread.id);
+        const fallbackCount = cleanup.unavailable
+          ? plan.fixedFingerprints.length
+          : cleanup.failedThreads.length;
+        if (fallbackCount > 0) {
+          await createThreadResolutionComment(this.octokit, {
+            owner,
+            repo,
+            pullNumber,
+            headSha,
+            count: fallbackCount,
+          });
+        }
       }
     }
     if (plan.capOverflow.length > 0) {

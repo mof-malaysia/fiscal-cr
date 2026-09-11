@@ -58,8 +58,9 @@ jobs:
 The default `GITHUB_TOKEN` can publish findings but may not have permission to
 resolve inline review threads through GraphQL. To enable automatic thread
 cleanup, pass a GitHub App installation token or suitably scoped PAT through
-the `github_token` input. Finding status remains correct when thread cleanup
-is unavailable.
+the `github_token` input. When thread mutation is unavailable, FiscalCR still
+posts a visible `✅ Already handled` resolution notice and keeps finding status
+correct in the sticky state.
 
 ### Action inputs
 
