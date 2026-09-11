@@ -9,7 +9,7 @@ function displayModel(result: ReviewResult): string | undefined {
   const model = result.costEstimate?.model;
   if (!model) return undefined;
   const provider = result.costEstimate?.provider;
-  return provider && !model.includes('/') ? `${provider}/${model}` : model;
+  return provider ? `${provider}/${model}` : model;
 }
 
 /** Render compact aggregate telemetry for user-facing comments. */
