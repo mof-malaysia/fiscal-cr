@@ -429,7 +429,7 @@ describe('generateChangeDiagram', () => {
     expect(result!.partial).toBe(true);
   });
 
-  it('marks partial when an included file is missing from reviewedPaths', async () => {
+  it('omits unreviewed files from full-scope evidence while marking it partial', async () => {
     const llm = makeLlm(VALID_RESPONSE);
     const ctx = makeCtx({
       changedFiles: [
@@ -441,6 +441,8 @@ describe('generateChangeDiagram', () => {
       scope: 'full',
       reviewedPaths: ['covered.ts'],
     });
+    const data = dataBlockOf(userMessageOf(llm));
+    expect(data.evidence.map((e) => e.path)).toEqual(['covered.ts']);
     expect(result!.partial).toBe(true);
   });
 

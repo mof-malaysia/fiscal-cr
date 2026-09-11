@@ -458,12 +458,12 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(state!.blockingReviewId).toBeNull();
     expect(result.stats.critical).toBe(0);
   });
-  it('uses reviewed paths to fix deletion-only delta findings without ranges', async () => {
+  it('uses original lines to fix deletion-only delta findings', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
       changedFiles: ['src/a.ts'],
       patch: '@@ -2,1 +2,0 @@\n-removed line',
-      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', originalLine: 2 }],
     });
     const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg());
 

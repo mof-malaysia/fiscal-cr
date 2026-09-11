@@ -33,6 +33,14 @@ describe('commentableRanges', () => {
       { path: 'src/a.ts', startLine: 1, endLine: 6 },
     ]);
   });
+
+  it('preserves original lines for a deletion-only hunk', () => {
+    const patch = '@@ -3,2 +3,1 @@\n context\n-old';
+    expect(commentableRanges('src/a.ts', patch)).toEqual([
+      { path: 'src/a.ts', startLine: 3, endLine: 3 },
+      { path: 'src/a.ts', startLine: 3, endLine: 3, originalStartLine: 4, originalEndLine: 4 },
+    ]);
+  });
 });
 
 describe('lineToDiffPosition', () => {

@@ -112,7 +112,7 @@ describe('resolveOutdatedThreads', () => {
       reviewedRanges: [{ path: 'src/a.ts', startLine: 464, endLine: 464 }],
       currentFingerprints: new Set([FP_B]),
     });
-    expect(resolved.map((t) => t.id)).toEqual(['gone']);
+    expect(resolved.resolved.map((t) => t.id)).toEqual(['gone']);
     const resolveIndex = graphql.mock.calls.findIndex(([q]) => (q as string).includes('resolveReviewThread'));
     const replyIndex = graphql.mock.calls.findIndex(([q]) =>
       (q as string).includes('addPullRequestReviewThreadReply'),
@@ -126,6 +126,21 @@ describe('resolveOutdatedThreads', () => {
     });
   });
 
+  it('resolves deletion-only coverage using original thread lines', async () => {
+    const { octokit } = graphqlOctokit([
+      threadNode({ id: 'deleted', path: 'src/a.ts', fp: FP_A, isOutdated: true, line: null, originalLine: 7 }),
+    ]);
+    const resolved = await resolveOutdatedThreads(octokit, {
+      ...params,
+      changedPaths: new Set(['src/a.ts']),
+      reviewedRanges: [
+        { path: 'src/a.ts', startLine: 8, endLine: 8, originalStartLine: 7, originalEndLine: 7 },
+      ],
+      currentFingerprints: new Set(),
+    });
+    expect(resolved.resolved.map((thread) => thread.id)).toEqual(['deleted']);
+  });
+
   it('degrades to empty when listing fails (403 on default token)', async () => {
     const octokit = {
       graphql: vi.fn(async () => {
@@ -137,7 +152,7 @@ describe('resolveOutdatedThreads', () => {
       changedPaths: new Set(['src/a.ts']),
       currentFingerprints: new Set(),
     });
-    expect(resolved).toEqual([]);
+    expect(resolved).toMatchObject({ attempted: 0, resolved: [], failed: 0, unavailable: true });
   });
   it('does not report a thread resolved without GitHub confirmation', async () => {
     const graphql = vi.fn(async (query: string) => {
@@ -166,7 +181,7 @@ describe('resolveOutdatedThreads', () => {
       currentFingerprints: new Set(),
     });
 
-    expect(resolved).toEqual([]);
+    expect(resolved).toMatchObject({ attempted: 1, resolved: [], failed: 1 });
     expect(graphql.mock.calls.filter(([query]) => (query as string).includes('addPullRequestReviewThreadReply'))).toHaveLength(0);
     expect(warning).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'gone' }),
@@ -212,7 +227,7 @@ describe('resolveOutdatedThreads', () => {
       currentFingerprints: new Set(),
     });
 
-    expect(resolved.map((t) => t.id)).toEqual(['resolved']);
+    expect(resolved.resolved.map((t) => t.id)).toEqual(['resolved']);
     expect(warning).toHaveBeenCalledWith(
       expect.objectContaining({ failed: 1, attempted: 2 }),
       '1 outdated inline thread could not be resolved',

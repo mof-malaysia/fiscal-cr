@@ -256,6 +256,22 @@ describe('finding lifecycle reconciliation', () => {
     expect(covered.findings[0].status).toBe('fixed');
   });
 
+  it('fixes findings covered only by a deletion hunk', () => {
+    const open = firstState(
+      reconcileFindingInventory(null, [annotation({ startLine: 7, endLine: 7 })], ['src/a.ts'], 'sha1', 'one').findings,
+    );
+    const fixed = reconcileFindingInventory(open, [], [], 'sha2', 'two', [
+      {
+        path: 'src/a.ts',
+        startLine: 8,
+        endLine: 8,
+        originalStartLine: 7,
+        originalEndLine: 7,
+      },
+    ]);
+    expect(fixed.findings[0].status).toBe('fixed');
+  });
+
   it('preserves a concurrent manual dismissal when saving review state', () => {
     const base = firstState(
       reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', '2026-01-01').findings.map((finding) => ({
@@ -696,18 +712,17 @@ describe('sticky state persistence', () => {
   });
   it('recomposes and retries once after a concurrent sticky update', async () => {
     const currentBody = renderStateMarker(state({ lastReviewedSha: 'new-sha' }));
-    const latestBody = renderStateMarker(state({ lastReviewedSha: 'latest-sha' }));
     const listComments = vi.fn()
       .mockResolvedValueOnce({
         data: [{ id: 3, body: currentBody, performed_via_github_app: { id: 1 } }],
       })
       .mockResolvedValueOnce({
-        data: [{ id: 3, body: latestBody, performed_via_github_app: { id: 1 } }],
+        data: [{ id: 3, body: currentBody, performed_via_github_app: { id: 1 } }],
       });
     const updateComment = vi.fn(async () => ({}));
     const onConflict = vi.fn(async (current: { body: string }) => ({
       commentId: 3,
-      expectedBody: current.body === currentBody ? latestBody : current.body,
+      expectedBody: current.body,
       body: 'recomposed',
     }));
     const octokit = {
@@ -732,6 +747,81 @@ describe('sticky state persistence', () => {
     expect(onConflict).toHaveBeenCalledOnce();
     expect(updateComment).toHaveBeenCalledWith(expect.objectContaining({ body: 'recomposed' }));
     expect(listComments).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries against a replacement sticky comment instead of creating a duplicate', async () => {
+    const currentBody = renderStateMarker(state({ lastReviewedSha: 'new-sha' }));
+    const listComments = vi.fn()
+      .mockResolvedValueOnce({
+        data: [{ id: 4, body: currentBody, performed_via_github_app: { id: 1 } }],
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: 4, body: currentBody, performed_via_github_app: { id: 1 } }],
+      });
+    const updateComment = vi.fn(async () => ({}));
+    const onConflict = vi.fn(async (current: { commentId: number; body: string }) => ({
+      commentId: current.commentId,
+      expectedBody: current.body,
+      body: 'recomposed',
+    }));
+    const octokit = {
+      issues: {
+        listComments,
+        updateComment,
+        createComment: vi.fn(),
+      },
+    };
+
+    await saveStickyComment(octokit as never, {
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      commentId: 3,
+      expectedBody: 'old-body',
+      body: 'stale composition',
+      onConflict,
+    });
+
+    expect(onConflict).toHaveBeenCalledOnce();
+    expect(updateComment).toHaveBeenCalledWith(expect.objectContaining({ comment_id: 4, body: 'recomposed' }));
+    expect(octokit.issues.createComment).not.toHaveBeenCalled();
+  });
+
+  it('rejects a second concurrent sticky update after the retry', async () => {
+    const currentBody = renderStateMarker(state({ lastReviewedSha: 'new-sha' }));
+    const latestBody = renderStateMarker(state({ lastReviewedSha: 'latest-sha' }));
+    const listComments = vi.fn()
+      .mockResolvedValueOnce({
+        data: [{ id: 3, body: currentBody, performed_via_github_app: { id: 1 } }],
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: 3, body: latestBody, performed_via_github_app: { id: 1 } }],
+      });
+    const updateComment = vi.fn();
+    const onConflict = vi.fn(async (current: { body: string }) => ({
+      commentId: 3,
+      expectedBody: current.body,
+      body: 'recomposed',
+    }));
+    const octokit = {
+      issues: {
+        listComments,
+        updateComment,
+        createComment: vi.fn(),
+      },
+    };
+
+    await expect(saveStickyComment(octokit as never, {
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      commentId: 3,
+      expectedBody: 'old-body',
+      body: 'stale composition',
+      onConflict,
+    })).rejects.toThrow('Sticky comment changed before update');
+    expect(onConflict).toHaveBeenCalledOnce();
+    expect(updateComment).not.toHaveBeenCalled();
   });
 
   it('re-checks for a concurrently created sticky comment before creating', async () => {

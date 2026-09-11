@@ -99,6 +99,17 @@ describe('buildSummary change-diagram integration', () => {
     expect(out).toContain('| Estimated cost | $0.0123 |');
   });
 
+  it('reports inline thread cleanup separately from finding counts', () => {
+    const out = buildSummary(
+      baseResult({
+        threadCleanup: { attempted: 8, resolved: 0, failed: 8 },
+      }),
+    );
+    expect(out).toContain('Resolved 0 of 8 outdated inline thread(s).');
+    expect(out).toContain('8 inline thread(s) remain unresolved');
+    expect(out).toContain('Finding status is independent');
+  });
+
   it('omits the diagram past the 60000-byte cap and returns the baseline', () => {
     const big = 'x'.repeat(57_000);
     const noDiagram = buildSummary(baseResult({ summary: big }));
