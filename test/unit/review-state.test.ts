@@ -419,16 +419,20 @@ describe('renderStickyComment', () => {
     expect(body).toContain('critical | 1');
   });
 
-  it('preserves the diagram across a lifecycle refresh', () => {
+  it('preserves lifecycle metadata across a refresh', () => {
     const body = renderStickyComment({
       result: { ...result(), diagram: diagram() },
       state: state(),
-      demoted: [],
+      demoted: [{ path: 'src/d.ts', startLine: 3, severity: 'warning', title: 'Demoted' }],
     });
     const updated = state({ findings: [{ ...state().findings[0], status: 'dismissed' }] });
     const refreshed = refreshStickyCommentState(body, updated);
+
     expect(refreshed).toContain('### Concept map');
     expect(refreshed).toContain('Open findings: 0');
+    expect(refreshed).toContain('**Score:** 90/100');
+    expect(refreshed).toContain('Demoted');
+    expect(refreshed).toContain('Run history');
     expect(refreshed).not.toContain('| Existing |');
     expect(parseStateMarker(refreshed)).toEqual(updated);
   });
@@ -481,7 +485,8 @@ describe('renderStickyComment', () => {
     });
 
     expect(replacement).toContain('New boundary');
-    expect(replacement).not.toContain('Auth middleware');
+    expect(replacement).not.toContain('n0["Auth"]');
+    expect(replacement.match(/### Concept map/g)).toHaveLength(1);
   });
 
   it('omits the diagram but keeps findings and state when it would overflow the sticky budget', () => {
@@ -494,6 +499,30 @@ describe('renderStickyComment', () => {
     expect(body).toContain('### Open findings: 1');
     expect(parseStateMarker(body)).toEqual(state());
     expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
+  });
+
+  it('removes a legacy diagram when marker replacement would overflow', () => {
+    const historicalGraph = [
+      '### Visual changes',
+      'Source commit: old-sha',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      '  n0["Request"]',
+      '```',
+      '',
+      'Evidence:',
+      '- (none referenced)',
+    ].join('\n');
+    const marker = renderStateMarker(state());
+    const padding = 'x'.repeat(MAX_STICKY_COMMENT_BYTES - Buffer.byteLength(marker, 'utf8') - 100);
+    const body = `${historicalGraph}\n\n${padding}\n${marker}`;
+
+    const refreshed = replaceStateMarkerWithinBudget(body, state());
+
+    expect(refreshed).not.toContain('### Visual changes');
+    expect(Buffer.byteLength(refreshed, 'utf8')).toBeLessThanOrEqual(MAX_STICKY_COMMENT_BYTES);
+    expect(parseStateMarker(refreshed)).toEqual(state());
   });
 
   it('publishes the baseline (no diagram) when the diagram artifact is malformed', () => {
