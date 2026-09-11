@@ -13,9 +13,15 @@ function displayModel(result: ReviewResult): string | undefined {
 }
 
 /** Render aggregate cost and token metrics for user-facing surfaces. */
+export interface TelemetrySummaryOptions {
+  /** Replace the current-run total with cumulative sticky-review spend. */
+  historyTotalUsd?: number;
+}
+
 export function renderTelemetrySummary(
   result: ReviewResult,
   heading = '📊 Token metrics & cost',
+  options: TelemetrySummaryOptions = {},
 ): string[] {
   const fallback = calculateCostBreakdownForModel(result.tokensUsed, {
     provider: result.costEstimate?.provider,
@@ -28,13 +34,15 @@ export function renderTelemetrySummary(
   const model = displayModel(result);
   const models = result.costEstimate?.models ?? [];
   const multipleModels = models.length > 1;
+  const totalCost = options.historyTotalUsd ?? cost;
+  const totalCostLabel = options.historyTotalUsd === undefined ? 'Total cost' : 'History total';
   const costSummary = [
     multipleModels
       ? `**Models:** ${models.length} models`
       : model
         ? `**Model:** \`${tableCell(model)}\``
         : undefined,
-    `**Total cost:** $${cost.toFixed(4)}`,
+    `**${totalCostLabel}:** $${totalCost.toFixed(4)}`,
   ].filter((line): line is string => line !== undefined);
   const modelBreakdown = multipleModels
     ? [
@@ -49,12 +57,14 @@ export function renderTelemetrySummary(
         '',
       ]
     : [];
-  const rows = [
-    `| Input tokens (uncached) | ${Math.max(0, result.tokensUsed.input - result.tokensUsed.cached).toLocaleString()} | $${inputUsd.toFixed(4)} |`,
-    `| Cached input tokens | ${result.tokensUsed.cached.toLocaleString()} | $${cachedUsd.toFixed(4)} |`,
-    `| Output tokens | ${result.tokensUsed.output.toLocaleString()} | $${outputUsd.toFixed(4)} |`,
-  ];
-  if (result.callCount !== undefined) rows.push(`| LLM calls | ${result.callCount.toLocaleString()} | — |`);
+  const rows = multipleModels
+    ? []
+    : [
+        `| Input tokens (uncached) | ${Math.max(0, result.tokensUsed.input - result.tokensUsed.cached).toLocaleString()} | $${inputUsd.toFixed(4)} |`,
+        `| Cached input tokens | ${result.tokensUsed.cached.toLocaleString()} | $${cachedUsd.toFixed(4)} |`,
+        `| Output tokens | ${result.tokensUsed.output.toLocaleString()} | $${outputUsd.toFixed(4)} |`,
+      ];
+  if (!multipleModels && result.callCount !== undefined) rows.push(`| LLM calls | ${result.callCount.toLocaleString()} | — |`);
   return [
     ...costSummary,
     '',
@@ -62,9 +72,7 @@ export function renderTelemetrySummary(
     `<summary>${heading}</summary>`,
     '',
     ...modelBreakdown,
-    '| Metric | Tokens | Cost |',
-    '|--------|--------|------|',
-    ...rows,
+    ...(multipleModels ? [] : ['| Metric | Tokens | Cost |', '|--------|--------|------|', ...rows]),
     '</details>',
   ];
 }

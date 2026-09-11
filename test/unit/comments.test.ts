@@ -274,7 +274,7 @@ describe('createPRReview (legacy mode)', () => {
     expect(body).toContain('**Model breakdown**');
     expect(body).toContain('| openrouter/openai/gpt-5 | 2 | 7,000 | 1,000 | 1,200 | $0.0209 |');
     expect(body).toContain('| openrouter/anthropic/claude-sonnet-4.5 | 1 | 4,000 | 0 | 800 | $0.0240 |');
-    expect(body).toContain('| Metric | Tokens | Cost |');
+    expect(body).not.toContain('| Metric | Tokens | Cost |');
     expect(body.match(/<details>/g)).toHaveLength(1);
     expect(body.indexOf('📊 Token metrics & cost')).toBeLessThan(body.indexOf('**Model breakdown**'));
   });

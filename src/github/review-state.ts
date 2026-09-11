@@ -857,7 +857,18 @@ export function renderStickyComment(input: StickyCommentInput): string {
     }
   }
   tail.push('', `**Score:** ${result.score}/100`, '');
-  tail.push(...renderTelemetrySummary(result), '');
+  const historyTotalUsd =
+    state.runs.length > 0
+      ? state.runs.reduce((total, run) => total + (Number.parseFloat(run.cost) || 0), 0)
+      : undefined;
+  tail.push(
+    ...renderTelemetrySummary(
+      result,
+      historyTotalUsd === undefined ? '📊 Token metrics & cost' : '📊 Latest run metrics & cost',
+      { historyTotalUsd },
+    ),
+    '',
+  );
 
   if (demoted.length > 0) {
     tail.push('<details>', `<summary>⚠️ ${demoted.length} finding(s) could not be placed inline</summary>\n`);
