@@ -761,6 +761,32 @@ function omitOptionalDiagram(body: string): string {
   const diagram = findOptionalDiagram(body);
   return diagram ? `${body.slice(0, diagram.start)}${body.slice(diagram.end)}` : body;
 }
+/**
+ * Locate the legacy diagram format used before code-owned section boundaries
+ * were added. Require its complete generated shape before removing it.
+ */
+function findLegacyDiagram(body: string): OptionalDiagramBlock | null {
+  const match =
+    /^### Visual changes\nSource commit:[^\n]*\n\n```mermaid\n[\s\S]*?\n```\n\nEvidence:\n(?:- [^\n]*(?:\n|$))*/m.exec(
+      body,
+    );
+  if (!match || match.index === undefined) return null;
+  return {
+    start: match.index,
+    end: match.index + match[0].length,
+    body: match[0],
+  };
+}
+
+function omitLegacyDiagram(body: string): string {
+  const diagram = findLegacyDiagram(body);
+  return diagram ? `${body.slice(0, diagram.start)}${body.slice(diagram.end)}` : body;
+}
+
+function omitAnyDiagram(body: string): string {
+  return omitLegacyDiagram(omitOptionalDiagram(body));
+}
+
 
 function existingDiagramBlock(body: string | undefined): string | undefined {
   return body === undefined ? undefined : findOptionalDiagram(body)?.body;
@@ -775,8 +801,9 @@ function existingDiagramBlock(body: string | undefined): string | undefined {
 export function replaceStateMarkerWithinBudget(body: string, state: ReviewState): string {
   const updated = replaceStateMarker(body, state);
   if (Buffer.byteLength(updated, 'utf8') <= MAX_STICKY_COMMENT_BYTES) return updated;
-  if (!updated.includes(DIAGRAM_SECTION_START)) return updated;
-  return replaceStateMarker(omitOptionalDiagram(body), state);
+  const withoutDiagram = omitAnyDiagram(body);
+  if (withoutDiagram !== body) return replaceStateMarker(withoutDiagram, state);
+  return updated;
 }
 /** Render the human-readable sticky summary; fixed and dismissed findings stay hidden. */
 export function renderStickyComment(input: StickyCommentInput): string {
@@ -893,10 +920,11 @@ export function refreshStickyCommentState(body: string, state: ReviewState): str
   }
   lines.push('');
   const before = body.slice(0, start);
-  const after = body.slice(footer);
-  // Preserve any previously rendered (code-owned) optional diagram block and
-  // place the refreshed findings table + marker; drop the diagram only if the
-  // refreshed body would exceed the sticky budget.
+  const score = body.indexOf('\n**Score:**', start);
+  const sectionEnd = score >= 0 && score < footer ? score : footer;
+  const after = body.slice(sectionEnd);
+  // Replace only the generated findings table. Keep the score, demoted
+  // findings, run history, footer, and any previously rendered diagram.
   return replaceStateMarkerWithinBudget(`${before}${lines.join('\n')}${after}`, state);
 }
 
