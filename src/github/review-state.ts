@@ -147,6 +147,7 @@ function parseJsonMarker(body: string, prefix: string): unknown | null {
   const match = findJsonMarker(body, prefix);
   return match ? JSON.parse(match.payload) : null;
 }
+
 /** Validate and normalize one persisted run-history entry. */
 function parseRun(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
@@ -370,6 +371,24 @@ function transition(
   };
 }
 
+function rangesOverlap(
+  startLine: number,
+  endLine: number,
+  rangeStart: number,
+  rangeEnd: number,
+): boolean {
+  return rangeStart <= endLine && startLine <= rangeEnd;
+}
+
+function reviewedRangeCoversFinding(range: ReviewedRange, finding: FindingRecord): boolean {
+  if (rangesOverlap(finding.startLine, finding.endLine, range.startLine, range.endLine)) return true;
+  return (
+    range.originalStartLine !== undefined &&
+    range.originalEndLine !== undefined &&
+    rangesOverlap(finding.startLine, finding.endLine, range.originalStartLine, range.originalEndLine)
+  );
+}
+
 /** Apply review observations only to paths in the successful reviewed-scope manifest. */
 export function reconcileFindingInventory(
   state: ReviewState | null,
@@ -420,13 +439,9 @@ export function reconcileFindingInventory(
     const finding = findings[position];
     const rangesForPath = reviewedRanges.filter((range) => range.path === finding.path);
     const coveredByReviewedScope =
-      rangesForPath.length > 0
-        ? rangesForPath.some(
-            (range) =>
-              range.startLine <= finding.endLine &&
-              finding.startLine <= range.endLine,
-          )
-        : manifest.has(finding.path);
+      rangesForPath.length === 0
+        ? manifest.has(finding.path)
+        : rangesForPath.some((range) => reviewedRangeCoversFinding(range, finding));
     if (
       finding.status === 'open' &&
       !observedFingerprints.has(finding.fingerprint) &&
@@ -610,7 +625,10 @@ export async function saveStickyComment(
     if (commentId !== null) {
       if (expectedBody !== undefined) {
         const current = await loadReviewState(octokit, { owner, repo, pullNumber });
-        if (current?.commentId === commentId && current.body !== expectedBody) {
+        if (
+          current &&
+          (current.commentId !== commentId || current.body !== expectedBody)
+        ) {
           if (conflictRetries === 0 && params.onConflict) {
             const retry = await params.onConflict(current);
             if (Buffer.byteLength(retry.body, 'utf8') > MAX_STICKY_COMMENT_BYTES) {

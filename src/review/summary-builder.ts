@@ -10,6 +10,31 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
 };
 const MAX_CHECK_SUMMARY_BYTES = 60_000;
 
+function renderThreadCleanup(
+  cleanup: NonNullable<ReviewResult['threadCleanup']> | undefined,
+): string[] {
+  if (!cleanup) return [];
+  if (cleanup.unavailable) {
+    return [
+      '### Inline thread cleanup',
+      '',
+      'Thread cleanup was unavailable; finding status is independent of inline conversation status.',
+    ];
+  }
+  const lines = [
+    '### Inline thread cleanup',
+    '',
+    `Resolved ${cleanup.resolved} of ${cleanup.attempted} outdated inline thread(s).`,
+    'Finding status is independent of inline conversation status.',
+  ];
+  if (cleanup.failed > 0) {
+    lines.push(
+      `${cleanup.failed} inline thread(s) remain unresolved, usually because the GitHub token lacks thread-resolution permission.`,
+    );
+  }
+  return lines;
+}
+
 /**
  * Build a markdown summary for the Check Run output.
  *
@@ -23,6 +48,8 @@ export function buildSummary(result: ReviewResult): string {
 
   const diagram = renderOptionalDiagram(result.diagram);
   if (diagram) lines.push(diagram, '');
+  const cleanup = renderThreadCleanup(result.threadCleanup);
+  if (cleanup.length > 0) lines.push(...cleanup, '');
 
   if (result.walkthrough && result.walkthrough.length > 0) {
     lines.push('### Walkthrough\n');

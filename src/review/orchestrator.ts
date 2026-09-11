@@ -586,19 +586,29 @@ export class ReviewOrchestrator {
       reviewedRanges,
       headSha,
     });
-    if (commentsCfg.resolveOutdated && stateForPublication && threadsAvailable) {
-      const resolved = await resolveOutdatedThreads(this.octokit, {
-        owner,
-        repo,
-        pullNumber,
-        changedPaths: new Set(reviewedPaths),
-        reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
-        currentFingerprints: new Set(
-          (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
-        ),
-        headSha,
-      });
-      plan.autoResolvedThreadIds = resolved.map((thread) => thread.id);
+    if (commentsCfg.resolveOutdated && stateForPublication) {
+      if (!threadsAvailable) {
+        result.threadCleanup = { attempted: 0, resolved: 0, failed: 0, unavailable: true };
+      } else {
+        const cleanup = await resolveOutdatedThreads(this.octokit, {
+          owner,
+          repo,
+          pullNumber,
+          changedPaths: new Set(reviewedPaths),
+          reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
+          currentFingerprints: new Set(
+            (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
+          ),
+          headSha,
+        });
+        result.threadCleanup = {
+          attempted: cleanup.attempted,
+          resolved: cleanup.resolved.length,
+          failed: cleanup.failed,
+          unavailable: cleanup.unavailable,
+        };
+        plan.autoResolvedThreadIds = cleanup.resolved.map((thread) => thread.id);
+      }
     }
     if (plan.capOverflow.length > 0) {
       logger.info(

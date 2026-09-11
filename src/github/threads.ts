@@ -113,13 +113,34 @@ export async function listFiscalcrThreads(
   return threads;
 }
 
+function reviewedRangeContainsLine(range: ReviewedRange, line: number): boolean {
+  if (range.startLine <= line && line <= range.endLine) return true;
+  return (
+    range.originalStartLine !== undefined &&
+    range.originalEndLine !== undefined &&
+    range.originalStartLine <= line &&
+    line <= range.originalEndLine
+  );
+}
+
+function threadIsInReviewedScope(thread: FiscalcrThread, ranges: ReviewedRange[]): boolean {
+  return [thread.line, thread.originalLine].some(
+    (line) => line != null && ranges.some((range) => reviewedRangeContainsLine(range, line)),
+  );
+}
+
+export interface ThreadResolutionResult {
+  attempted: number;
+  resolved: FiscalcrThread[];
+  failed: number;
+  unavailable?: boolean;
+}
+
 /**
  * Resolve unresolved FiscalCR threads whose file changed in this run but whose
  * finding did not recur. This path intentionally includes outdated threads;
- * manual webhook handling uses the default current-thread view. Returns the
- * threads actually resolved so the caller can mark them fixed. All failures
- * (403 on default tokens, merged PRs, …) degrade to logging — never fail the
- * review over cleanup.
+ * manual webhook handling uses the default current-thread view. All failures
+ * degrade to logging — never fail the review over cleanup.
  */
 export async function resolveOutdatedThreads(
   octokit: FiscalcrOctokit,
@@ -135,34 +156,25 @@ export async function resolveOutdatedThreads(
     currentFingerprints: Set<string>;
     headSha: string;
   },
-): Promise<FiscalcrThread[]> {
+): Promise<ThreadResolutionResult> {
   let threads: FiscalcrThread[];
   try {
     threads = await listFiscalcrThreads(octokit, params, { includeOutdated: true });
   } catch (err) {
     logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
-    return [];
+    return { attempted: 0, resolved: [], failed: 0, unavailable: true };
   }
-  if (!hasGraphql(octokit)) return [];
+  if (!hasGraphql(octokit)) return { attempted: 0, resolved: [], failed: 0, unavailable: true };
   const graphql = octokit.graphql;
-  const outdated = threads.filter((t) => {
-    const rangesForPath = params.reviewedRanges?.filter((range) => range.path === t.path) ?? [];
-    const lineCovered =
-      rangesForPath.length === 0 ||
-      [t.line, t.originalLine].some(
-        (line) =>
-          line != null &&
-          rangesForPath.some(
-            (range) =>
-              range.startLine <= line &&
-              line <= range.endLine,
-          ),
-      );
+  const outdated = threads.filter((thread) => {
+    const rangesForPath = params.reviewedRanges?.filter((range) => range.path === thread.path) ?? [];
+    const inReviewedScope =
+      rangesForPath.length === 0 || threadIsInReviewedScope(thread, rangesForPath);
     return (
-      !t.isResolved &&
-      params.changedPaths.has(t.path) &&
-      lineCovered &&
-      !params.currentFingerprints.has(t.fingerprint)
+      !thread.isResolved &&
+      params.changedPaths.has(thread.path) &&
+      inReviewedScope &&
+      !params.currentFingerprints.has(thread.fingerprint)
     );
   });
 
@@ -210,6 +222,7 @@ export async function resolveOutdatedThreads(
       logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');
     }
   }
+
   const failed = outdated.length - resolved.length;
   if (failed > 0) {
     logger.warn(
@@ -220,5 +233,5 @@ export async function resolveOutdatedThreads(
   if (resolved.length > 0) {
     logger.info({ resolved: resolved.length }, 'Outdated review threads resolved');
   }
-  return resolved;
+  return { attempted: outdated.length, resolved, failed };
 }

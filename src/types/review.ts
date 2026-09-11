@@ -27,8 +27,12 @@ export interface ReviewAnnotation {
 
 export interface ReviewedRange {
   path: string;
+  /** New-file coordinates covered by the successful review. */
   startLine: number;
   endLine: number;
+  /** Old-file coordinates for deletion-only hunks. */
+  originalStartLine?: number;
+  originalEndLine?: number;
 }
 
 export interface WalkthroughEntry {
@@ -42,6 +46,14 @@ export interface ReviewResult {
   findings: ReviewAnnotation[];
   /** Findings eligible for publication after annotation caps. */
   annotations: ReviewAnnotation[];
+
+  /** Cleanup status is separate from finding correctness when thread permissions are limited. */
+  threadCleanup?: {
+    attempted: number;
+    resolved: number;
+    failed: number;
+    unavailable?: boolean;
+  };
   /** Paths whose detector execution completed successfully for this result. */
   reviewedPaths: string[];
   /** Line ranges covered by successful detector execution, when available. */

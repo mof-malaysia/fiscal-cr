@@ -283,11 +283,8 @@ function selectEvidence(
   const reviewableFiles = ctx.changedFiles.filter(
     (file) => classifyDiagramFile(file.filename) !== 'ignored',
   );
-  const files =
-    scope === 'delta'
-      ? reviewableFiles.filter((file) => reviewedSet.has(file.filename))
-      : reviewableFiles;
-
+  const files = reviewableFiles.filter((file) => reviewedSet.has(file.filename));
+  if (files.length < reviewableFiles.length) coveragePartial = true;
   for (const file of files) {
     if (!file.patch || file.filename.length > DIAGRAM_MAX_PATH_LENGTH) {
       // Unusable patch or path: this file cannot be represented in evidence.

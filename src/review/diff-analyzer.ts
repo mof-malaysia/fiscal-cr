@@ -119,9 +119,16 @@ export function commentableLines(patch: string): Set<number> {
   return lines;
 }
 
-/** Coalesce sorted commentable source lines into compact lifecycle ranges. */
+/** Coalesce reviewable new-file lines and preserve deletion-only old ranges. */
 export function commentableRanges(path: string, patch: string): ReviewedRange[] {
-  const lines = [...commentableLines(patch)].sort((a, b) => a - b);
+  const hunks = parsePatch(patch);
+  const lines = hunks
+    .flatMap((hunk) =>
+      hunk.lines
+        .filter((line) => (line.type === 'addition' || line.type === 'context') && line.newLine !== undefined)
+        .map((line) => line.newLine!),
+    )
+    .sort((a, b) => a - b);
   const ranges: ReviewedRange[] = [];
   for (const line of lines) {
     const previous = ranges.at(-1);
@@ -130,6 +137,20 @@ export function commentableRanges(path: string, patch: string): ReviewedRange[] 
     } else {
       ranges.push({ path, startLine: line, endLine: line });
     }
+  }
+  for (const hunk of hunks) {
+    const hasAddition = hunk.lines.some((line) => line.type === 'addition');
+    const deletedLines = hunk.lines
+      .filter((line) => line.type === 'deletion' && line.oldLine !== undefined)
+      .map((line) => line.oldLine!);
+    if (hasAddition || deletedLines.length === 0) continue;
+    ranges.push({
+      path,
+      startLine: hunk.newStart,
+      endLine: hunk.newStart,
+      originalStartLine: Math.min(...deletedLines),
+      originalEndLine: Math.max(...deletedLines),
+    });
   }
   return ranges;
 }
