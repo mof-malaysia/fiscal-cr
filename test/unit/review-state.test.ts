@@ -88,6 +88,17 @@ function diagram(): DiagramArtifact {
   };
 }
 
+function tableDiagram(): DiagramArtifact {
+  return {
+    ...diagram(),
+    representation: 'table',
+    nodes: [],
+    edges: [],
+    columns: ['State', 'Result'],
+    rows: [{ cells: ['Waiting', 'Active'], evidence: ['e1'] }],
+  };
+}
+
 // A large artifact used to push the sticky body over its byte budget.
 function bigDiagram(): DiagramArtifact {
   return {
@@ -469,6 +480,25 @@ describe('renderStickyComment', () => {
     expect(end).toBeGreaterThan(start);
     expect(refreshed.slice(refreshed.indexOf(DIAGRAM_SECTION_START), refreshed.indexOf(DIAGRAM_SECTION_END) + DIAGRAM_SECTION_END.length))
       .toBe(previous.slice(start, end));
+    expect(refreshed).toContain('Incremental summary');
+  });
+
+  it('preserves a Markdown table artifact across an incremental refresh', () => {
+    const previous = renderStickyComment({
+      result: { ...result(), diagram: tableDiagram() },
+      state: state(),
+      demoted: [],
+    });
+    const refreshed = renderStickyComment({
+      result: { ...result(), summary: 'Incremental summary' },
+      state: state(),
+      demoted: [],
+      preserveExistingDiagram: true,
+      existingBody: previous,
+    });
+
+    expect(refreshed).toContain('### Change table');
+    expect(refreshed).toContain('| State | Result |');
     expect(refreshed).toContain('Incremental summary');
   });
 

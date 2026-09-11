@@ -740,8 +740,8 @@ function findOptionalDiagram(body: string): OptionalDiagramBlock | null {
       ? content.slice(1, -1)
       : '';
     const validShape =
-      /^### (?:Concept|Implementation) map(?:\n|$)/.test(rendered) &&
-      rendered.includes('```mermaid') &&
+      /^(?:### (?:Concept|Implementation) map|### Sequence diagram|### Change table)(?:\n|$)/.test(rendered) &&
+      (rendered.includes('```mermaid') || /\n\| [^|\n]+ \|/.test(rendered)) &&
       !rendered.includes(DIAGRAM_SECTION_START) &&
       !rendered.includes(DIAGRAM_SECTION_END);
     if (!validShape) {

@@ -468,8 +468,8 @@ do not race state.
 ### Visual change diagrams
 
 Set `review.diagram.enabled: true` in `.fiscalcr-review.yml` to publish an
-optional visual change diagram alongside the review. The feature is opt-in and
-disabled by default. Select `review.diagram.mode` as:
+optional visual change artifact alongside the review. Select `review.diagram.mode`
+as:
 
 - `auto` (default): use changed-file metadata to choose a concept or
   implementation map, and omit unsupported UI-only, test-only, docs-only, or
@@ -478,25 +478,36 @@ disabled by default. Select `review.diagram.mode` as:
 - `implementation`: explain architecture, boundaries, dependencies, and
   contracts.
 
-The auxiliary diagram uses `models.diagram` when configured. Otherwise it
+After the code-owned mode is selected, the auxiliary model chooses the clearest
+reviewer representation from the bounded evidence:
+
+- `flowchart` for relationships and dependency or responsibility flow;
+- `sequence` for ordered runtime interactions;
+- `table` for finite rules, state transitions, outcomes, or comparisons;
+- omission when no meaningful cross-file relationship is supported.
+
+FiscalCR validates the structured representation and formats it in code. PR
+surfaces render flowcharts and sequence diagrams with conservative GitHub
+Mermaid syntax; table representations render as Markdown tables. The model
+never emits raw Mermaid, Markdown, HTML, styles, links, or directives.
+
+The auxiliary artifact uses `models.diagram` when configured. Otherwise it
 uses the selected preset's diagram model, then that preset's `fastPath` model,
 and finally the top-level `model`.
 
-- To avoid noisy diagrams and unnecessary model spend, generation is skipped
+- To avoid noisy artifacts and unnecessary model spend, generation is skipped
   before the model call unless the configured file and line thresholds are met.
 
-- Diagrams are generated from bounded evidence of the reviewed patch only
+- Artifacts are generated from bounded evidence of the reviewed patch only
   (the diff and changed files). Generation introduces no new analysis and
   never changes any finding, severity, or review state.
-- PR surfaces render the diagram as Mermaid: both the sticky summary comment
-  and the `legacy` comment mode embed a Mermaid diagram.
-- App check runs and GitHub Action check-run summaries use a readable text
-  fallback instead of Mermaid.
+- App check runs and GitHub Action check-run summaries use readable text
+  fallbacks instead of Mermaid.
 - Generation is auxiliary and nonfatal. If it fails, the review is still
-  published without the diagram; findings and state are unaffected.
-- Incremental reviews do not generate a new diagram; the sticky summary
-  preserves the previous full-review map unchanged. Full reviews may replace
-  it.
+  published without the artifact; findings and state are unaffected.
+- Incremental reviews do not generate a new artifact; the sticky summary
+  preserves the previous full-review artifact unchanged. Full reviews may
+  replace it.
 
 ## Cost model
 

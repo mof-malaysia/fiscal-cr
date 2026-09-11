@@ -1,14 +1,12 @@
 /**
- * Deterministic renderer for change-diagram artifacts.
+ * Deterministic renderer for model-selected reviewer visuals.
  *
- * Evidence, scope, and commit metadata stay in the artifact for validation and
- * lifecycle bookkeeping. Reviewer-facing output contains only the selected
- * conceptual or implementation graph and a bounded coverage warning.
+ * Evidence, scope, and commit metadata stay internal. Reviewer-facing output is
+ * selected by the validated representation and uses conservative GitHub syntax.
  */
-import type { DiagramArtifact } from '../types/diagram.js';
+import type { DiagramArtifact, DiagramRepresentation } from '../types/diagram.js';
 
 function escapeMermaidLabel(value: string): string {
-  // Mermaid quoted labels use decimal entities for syntax-bearing characters.
   return value.replace(/[\\"#|&<>]/g, (ch) => {
     switch (ch) {
       case '&':
@@ -32,18 +30,32 @@ function escapeMermaidLabel(value: string): string {
 }
 
 function escapeMarkdownText(value: string): string {
-  return value.replace(/([\\[\]()*_~`#!<>])/g, '\\$1');
+  return value.replace(/([\\[\]|()*_~`#!<>])/g, '\\$1');
+}
+
+function representationOf(diagram: DiagramArtifact): DiagramRepresentation {
+  return diagram.representation ?? 'flowchart';
 }
 
 function buildCaption(diagram: DiagramArtifact): string {
-  const heading = diagram.mode === 'concept' ? '### Concept map' : '### Implementation map';
-  const lines = [heading];
+  switch (representationOf(diagram)) {
+    case 'sequence':
+      return '### Sequence diagram';
+    case 'table':
+      return '### Change table';
+    case 'flowchart':
+      return diagram.mode === 'concept' ? '### Concept map' : '### Implementation map';
+  }
+}
+
+function coverageCaption(diagram: DiagramArtifact): string[] {
+  const lines = [buildCaption(diagram)];
   if (diagram.partial) {
     lines.push(
       'Coverage is partial: some patch evidence was omitted or some selected files were not fully reviewed.',
     );
   }
-  return lines.join('\n');
+  return lines;
 }
 
 function nodeIds(diagram: DiagramArtifact): Map<string, string> {
@@ -55,7 +67,8 @@ function nodeIds(diagram: DiagramArtifact): Map<string, string> {
   return ids;
 }
 
-function renderMermaid(diagram: DiagramArtifact, ids: Map<string, string>): string {
+function renderFlowchart(diagram: DiagramArtifact): string {
+  const ids = nodeIds(diagram);
   const lines = ['```mermaid', 'flowchart TD'];
   for (const node of diagram.nodes) {
     lines.push(`  ${ids.get(node.id)!}["${escapeMermaidLabel(node.label)}"]`);
@@ -70,7 +83,54 @@ function renderMermaid(diagram: DiagramArtifact, ids: Map<string, string>): stri
   return lines.join('\n');
 }
 
-function renderTextGraph(diagram: DiagramArtifact, ids: Map<string, string>): string {
+function participantIds(diagram: DiagramArtifact): Map<string, string> {
+  const participants = diagram.participants;
+  if (!participants || participants.length < 2) throw new Error('Sequence diagram has no participants');
+  const ids = new Map<string, string>();
+  for (const [index, participant] of participants.entries()) {
+    if (ids.has(participant.id)) throw new Error('Diagram contains duplicate participant ids');
+    ids.set(participant.id, `p${index}`);
+  }
+  return ids;
+}
+
+function renderSequence(diagram: DiagramArtifact): string {
+  const ids = participantIds(diagram);
+  const messages = diagram.messages;
+  if (!messages || messages.length === 0) throw new Error('Sequence diagram has no messages');
+  const lines = ['```mermaid', 'sequenceDiagram'];
+  for (const participant of diagram.participants!) {
+    lines.push(`  participant ${ids.get(participant.id)!} as ${escapeMermaidLabel(participant.label)}`);
+  }
+  for (const message of messages) {
+    const from = ids.get(message.from);
+    const to = ids.get(message.to);
+    if (!from || !to) throw new Error('Sequence diagram has a dangling message');
+    lines.push(`  ${from}->>${to}: ${escapeMermaidLabel(message.label)}`);
+  }
+  lines.push('```');
+  return lines.join('\n');
+}
+
+function renderTable(diagram: DiagramArtifact): string {
+  const columns = diagram.columns;
+  const rows = diagram.rows;
+  if (!columns || columns.length < 2 || !rows || rows.length === 0) {
+    throw new Error('Change table has no columns or rows');
+  }
+  if (rows.some((row) => row.cells.length !== columns.length)) {
+    throw new Error('Change table row width does not match columns');
+  }
+  const lines = [
+    `| ${columns.map(escapeMarkdownText).join(' | ')} |`,
+    `| ${columns.map(() => '---').join(' | ')} |`,
+    ...rows.map((row) => `| ${row.cells.map(escapeMarkdownText).join(' | ')} |`),
+  ];
+  return lines.join('\n');
+}
+
+function renderTextFlowchart(diagram: DiagramArtifact): string {
+  const ids = nodeIds(diagram);
   const parts = ['Nodes:'];
   for (const node of diagram.nodes) {
     parts.push(`- ${ids.get(node.id)!}: ${escapeMarkdownText(node.label)}`);
@@ -87,16 +147,39 @@ function renderTextGraph(diagram: DiagramArtifact, ids: Map<string, string>): st
   return parts.join('\n');
 }
 
-/**
- * Render a diagram artifact to a reviewer-facing section. Evidence references
- * are intentionally not rendered; they remain internal grounding metadata.
- */
+function renderTextSequence(diagram: DiagramArtifact): string {
+  const ids = participantIds(diagram);
+  const messages = diagram.messages;
+  if (!messages || messages.length === 0) throw new Error('Sequence diagram has no messages');
+  const parts = ['Participants:'];
+  for (const participant of diagram.participants!) {
+    parts.push(`- ${ids.get(participant.id)!}: ${escapeMarkdownText(participant.label)}`);
+  }
+  parts.push('', 'Messages:');
+  for (const message of messages) {
+    const from = ids.get(message.from);
+    const to = ids.get(message.to);
+    if (!from || !to) throw new Error('Sequence diagram has a dangling message');
+    parts.push(`- ${from} -> ${to}: ${escapeMarkdownText(message.label)}`);
+  }
+  return parts.join('\n');
+}
+
+function renderBody(diagram: DiagramArtifact, format: 'mermaid' | 'text'): string {
+  switch (representationOf(diagram)) {
+    case 'sequence':
+      return format === 'mermaid' ? renderSequence(diagram) : renderTextSequence(diagram);
+    case 'table':
+      return renderTable(diagram);
+    case 'flowchart':
+      return format === 'mermaid' ? renderFlowchart(diagram) : renderTextFlowchart(diagram);
+  }
+}
+
+/** Render a validated artifact without exposing evidence or raw patches. */
 export function renderDiagramSection(
   diagram: DiagramArtifact,
   format: 'mermaid' | 'text' = 'mermaid',
 ): string {
-  const ids = nodeIds(diagram);
-  const caption = buildCaption(diagram);
-  const graph = format === 'mermaid' ? renderMermaid(diagram, ids) : renderTextGraph(diagram, ids);
-  return `${caption}\n\n${graph}\n`;
+  return `${coverageCaption(diagram).join('\n')}\n\n${renderBody(diagram, format)}\n`;
 }

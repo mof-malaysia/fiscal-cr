@@ -1,20 +1,19 @@
 /**
- * Contract parser for the model-produced change-diagram JSON.
+ * Contract parser for model-produced reviewer visuals.
  *
- * The model emits `{ outcome: 'diagram', nodes, edges }` (or
- * `{ outcome: 'omit', reason }`). This module extracts the JSON object,
- * validates it strictly, and normalizes the graph so that untrusted model
- * identifiers never reach the Mermaid renderer.
- * Safety posture:
- *  - No partial JSON repair. A graph cut off at the token cap is malformed and
- *    is rejected as a unit (the renderer/text fallback is the safe path).
- *  - All node/edge labels are screened for injection (HTML, URLs, directives,
- *    backticks, control chars, credential-looking tokens).
- *  - Every evidence reference must resolve to a code-assigned evidence id.
- *  - Model ids are remapped to n0..nN; edge endpoints are remapped to match.
+ * The model emits `{ outcome: 'diagram', representation, ... }` (or
+ * `{ outcome: 'omit', reason }`). This module validates and normalizes every
+ * representation before untrusted labels reach the renderer.
  */
 import { z } from 'zod';
-import type { DiagramEvidence, DiagramGraph } from '../types/diagram.js';
+import type {
+  DiagramEdge,
+  DiagramEvidence,
+  DiagramGraph,
+  DiagramSequenceMessage,
+  DiagramSequenceParticipant,
+  DiagramTableRow,
+} from '../types/diagram.js';
 import { extractJson } from '../utils/json.js';
 import { logger } from '../utils/logger.js';
 
@@ -23,14 +22,14 @@ export const MAX_EDGES = 18;
 export const MAX_LABEL_LENGTH = 80;
 export const MAX_EVIDENCE_REFS = 6;
 export const MAX_ID_LENGTH = 64;
+export const MAX_PARTICIPANTS = 8;
+export const MAX_MESSAGES = 24;
+export const MAX_TABLE_COLUMNS = 8;
+export const MAX_TABLE_ROWS = 20;
 
 const CHANGE_VALUES = ['added', 'modified', 'removed', 'context'] as const;
 
-/**
- * Return a reason string if the label is unsafe to render, else null.
- * "where practical" credential detection targets actual secret-shaped tokens
- * rather than ordinary words like "auth" or "token".
- */
+/** Return a reason if a reviewer-facing label is unsafe to render. */
 export function unsafeLabelReason(label: string): string | null {
   for (let i = 0; i < label.length; i++) {
     const code = label.charCodeAt(i);
@@ -70,39 +69,95 @@ const rawEdgeSchema = z
   })
   .strict();
 
-const rawDiagramSchema = z
+const rawParticipantSchema = rawNodeSchema;
+const rawMessageSchema = rawEdgeSchema;
+const rawTableRowSchema = z
+  .object({
+    cells: z.array(z.string().min(1).max(MAX_LABEL_LENGTH)).min(2).max(MAX_TABLE_COLUMNS),
+    evidence: z.array(z.string().min(1).max(MAX_ID_LENGTH)).min(1).max(MAX_EVIDENCE_REFS),
+  })
+  .strict();
+
+const rawFlowchartSchema = z
   .object({
     outcome: z.literal('diagram'),
+    // Default preserves acceptance of pre-representation model responses.
+    representation: z.literal('flowchart').default('flowchart'),
     nodes: z.array(rawNodeSchema).min(2).max(MAX_NODES),
     edges: z.array(rawEdgeSchema).min(1).max(MAX_EDGES),
   })
   .strict();
 
+const rawSequenceSchema = z
+  .object({
+    outcome: z.literal('diagram'),
+    representation: z.literal('sequence'),
+    participants: z.array(rawParticipantSchema).min(2).max(MAX_PARTICIPANTS),
+    messages: z.array(rawMessageSchema).min(1).max(MAX_MESSAGES),
+  })
+  .strict();
+
+const rawTableSchema = z
+  .object({
+    outcome: z.literal('diagram'),
+    representation: z.literal('table'),
+    columns: z.array(z.string().min(1).max(MAX_LABEL_LENGTH)).min(2).max(MAX_TABLE_COLUMNS),
+    rows: z.array(rawTableRowSchema).min(1).max(MAX_TABLE_ROWS),
+  })
+  .strict();
+
+const rawDiagramSchema = z.union([rawFlowchartSchema, rawSequenceSchema, rawTableSchema]);
+
+export interface ParsedDiagram extends DiagramGraph {
+  representation: 'flowchart' | 'sequence' | 'table';
+  participants?: DiagramSequenceParticipant[];
+  messages?: DiagramSequenceMessage[];
+  columns?: string[];
+  rows?: DiagramTableRow[];
+}
+
+function refsResolve(refs: readonly string[], evidenceIds: Set<string>): boolean {
+  return refs.every((ref) => evidenceIds.has(ref));
+}
+
+function labelsAreSafe(labels: readonly string[]): boolean {
+  return labels.every((label) => !unsafeLabelReason(label));
+}
+
+function normalizeGraph(
+  rawNodes: z.infer<typeof rawNodeSchema>[],
+  rawEdges: z.infer<typeof rawEdgeSchema>[],
+): Pick<ParsedDiagram, 'nodes' | 'edges'> | null {
+  const nodeIds = new Set<string>();
+  for (const node of rawNodes) {
+    if (nodeIds.has(node.id) || unsafeLabelReason(node.label)) return null;
+    nodeIds.add(node.id);
+  }
+  for (const edge of rawEdges) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to) || unsafeLabelReason(edge.label)) return null;
+  }
+
+  const idMap = new Map<string, string>();
+  rawNodes.forEach((node, index) => idMap.set(node.id, `n${index}`));
+  const nodes = rawNodes.map((node, index) => ({ ...node, id: `n${index}` }));
+  const edges = rawEdges.map((edge) => ({
+    ...edge,
+    from: idMap.get(edge.from) as string,
+    to: idMap.get(edge.to) as string,
+  }));
+  return { nodes, edges };
+}
 
 /**
- * Parse a model change-diagram response into a normalized, validated graph.
- *
- * Returns `null` for:
- *  - unparseable or truncated JSON,
- *  - `outcome: 'omit'` (and any non-diagram outcome),
- *  - strict-key / schema violations,
- *  - graphs with fewer than two nodes or one edge,
- *  - node/edge count or label-length caps exceeded,
- *  - duplicate node ids, dangling edge endpoints,
- *  - evidence references that do not resolve to the supplied evidence,
- *  - unsafe labels.
- *
- * The whole graph is rejected as a unit; no partial acceptance.
+ * Parse and normalize a model visual response. Omit outcomes, malformed
+ * payloads, unsafe labels, and unresolved evidence are rejected as a unit.
  */
 export function parseDiagramResponse(
   content: string,
   evidence: readonly DiagramEvidence[],
-): DiagramGraph | null {
+): ParsedDiagram | null {
   const json = extractJson(content, { repairTruncated: false });
   if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
-
-  // `omit` (and any non-diagram outcome) is a normal, honest result — reject
-  // it quietly without logging any user-controlled content.
   if ((json as Record<string, unknown>).outcome !== 'diagram') return null;
 
   const parsed = rawDiagramSchema.safeParse(json);
@@ -111,63 +166,69 @@ export function parseDiagramResponse(
     return null;
   }
 
-  const { nodes: rawNodes, edges: rawEdges } = parsed.data;
+  const evidenceIds = new Set(evidence.map((item) => item.id));
+  const raw = parsed.data;
 
-  const evidenceIds = new Set(evidence.map((e) => e.id));
-  const nodeIds = new Set<string>();
+  if (raw.representation === 'flowchart') {
+    if (!raw.nodes.every((node) => refsResolve(node.evidence, evidenceIds))) return null;
+    if (!raw.edges.every((edge) => refsResolve(edge.evidence, evidenceIds))) return null;
+    const graph = normalizeGraph(raw.nodes, raw.edges);
+    return graph ? { representation: 'flowchart', ...graph } : null;
+  }
 
-  for (const node of rawNodes) {
-    if (nodeIds.has(node.id)) {
-      logger.warn({ reason: 'duplicate-node-id' }, 'Diagram response rejected');
-      return null;
+  if (raw.representation === 'sequence') {
+    const participantIds = new Set<string>();
+    for (const participant of raw.participants) {
+      if (
+        participantIds.has(participant.id) ||
+        unsafeLabelReason(participant.label) ||
+        !refsResolve(participant.evidence, evidenceIds)
+      ) {
+        return null;
+      }
+      participantIds.add(participant.id);
     }
-    nodeIds.add(node.id);
-    if (unsafeLabelReason(node.label)) {
-      logger.warn({ reason: 'unsafe-node-label' }, 'Diagram response rejected');
-      return null;
-    }
-    for (const ref of node.evidence) {
-      if (!evidenceIds.has(ref)) {
-        logger.warn({ reason: 'unknown-node-ref' }, 'Diagram response rejected');
+    for (const message of raw.messages) {
+      if (
+        !participantIds.has(message.from) ||
+        !participantIds.has(message.to) ||
+        unsafeLabelReason(message.label) ||
+        !refsResolve(message.evidence, evidenceIds)
+      ) {
         return null;
       }
     }
+    const idMap = new Map<string, string>();
+    raw.participants.forEach((participant, index) => idMap.set(participant.id, `p${index}`));
+    return {
+      representation: 'sequence',
+      nodes: [],
+      edges: [],
+      participants: raw.participants.map((participant, index) => ({ ...participant, id: `p${index}` })),
+      messages: raw.messages.map((message) => ({
+        ...message,
+        from: idMap.get(message.from) as string,
+        to: idMap.get(message.to) as string,
+      })),
+    };
   }
 
-  for (const edge of rawEdges) {
-    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
-      logger.warn({ reason: 'dangling-edge' }, 'Diagram response rejected');
-      return null;
-    }
-    if (unsafeLabelReason(edge.label)) {
-      logger.warn({ reason: 'unsafe-edge-label' }, 'Diagram response rejected');
-      return null;
-    }
-    for (const ref of edge.evidence) {
-      if (!evidenceIds.has(ref)) {
-        logger.warn({ reason: 'unknown-edge-ref' }, 'Diagram response rejected');
-        return null;
-      }
-    }
+  if (
+    !labelsAreSafe(raw.columns) ||
+    !raw.rows.every(
+      (row) =>
+        row.cells.length === raw.columns.length &&
+        labelsAreSafe(row.cells) &&
+        refsResolve(row.evidence, evidenceIds),
+    )
+  ) {
+    return null;
   }
-
-  // Normalize: assign code-owned ids and remap edge endpoints.
-  const idMap = new Map<string, string>();
-  rawNodes.forEach((node, i) => idMap.set(node.id, `n${i}`));
-
   return {
-    nodes: rawNodes.map((node, i) => ({
-      id: `n${i}`,
-      label: node.label,
-      change: node.change,
-      evidence: node.evidence,
-    })),
-    edges: rawEdges.map((edge) => ({
-      from: idMap.get(edge.from) as string,
-      to: idMap.get(edge.to) as string,
-      label: edge.label,
-      change: edge.change,
-      evidence: edge.evidence,
-    })),
+    representation: 'table',
+    nodes: [],
+    edges: [],
+    columns: raw.columns,
+    rows: raw.rows,
   };
 }

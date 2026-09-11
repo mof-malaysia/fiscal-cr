@@ -38,6 +38,47 @@ describe('parseDiagramResponse', () => {
     expect(graph!.edges[0].label).toBe('connects to');
   });
 
+  it('parses a sequence representation and normalizes participant ids', () => {
+    const response = JSON.stringify({
+      outcome: 'diagram',
+      representation: 'sequence',
+      participants: [
+        { id: 'client', label: 'Client', change: 'context', evidence: ['e1'] },
+        { id: 'service', label: 'Service', change: 'modified', evidence: ['e2'] },
+      ],
+      messages: [
+        { from: 'client', to: 'service', label: 'dispatches action', change: 'added', evidence: ['e1'] },
+      ],
+    });
+    const parsed = parseDiagramResponse(response, evidence);
+    expect(parsed?.representation).toBe('sequence');
+    expect(parsed?.participants?.map((participant) => participant.id)).toEqual(['p0', 'p1']);
+    expect(parsed?.messages?.[0]).toMatchObject({ from: 'p0', to: 'p1' });
+  });
+
+  it('parses a table representation and requires row width to match columns', () => {
+    const response = JSON.stringify({
+      outcome: 'diagram',
+      representation: 'table',
+      columns: ['Current state', 'Trigger', 'Result'],
+      rows: [{ cells: ['Waiting', 'Start', 'Active'], evidence: ['e1'] }],
+    });
+    const parsed = parseDiagramResponse(response, evidence);
+    expect(parsed).toMatchObject({
+      representation: 'table',
+      columns: ['Current state', 'Trigger', 'Result'],
+      rows: [{ cells: ['Waiting', 'Start', 'Active'] }],
+    });
+
+    const malformed = JSON.stringify({
+      outcome: 'diagram',
+      representation: 'table',
+      columns: ['State', 'Result'],
+      rows: [{ cells: ['Waiting'], evidence: ['e1'] }],
+    });
+    expect(parseDiagramResponse(malformed, evidence)).toBeNull();
+  });
+
   it('extracts JSON embedded in prose / code fences', () => {
     const wrapped = `Here is the diagram:\n\n\`\`\`json\n${validResponse}\n\`\`\``;
     expect(parseDiagramResponse(wrapped, evidence)).not.toBeNull();
@@ -255,6 +296,30 @@ function artifact(overrides: Partial<DiagramArtifact> = {}): DiagramArtifact {
     ...overrides,
   };
 }
+
+function sequenceArtifact(): DiagramArtifact {
+  return artifact({
+    representation: 'sequence',
+    nodes: [],
+    edges: [],
+    participants: [
+      { id: 'p0', label: 'Client', change: 'context', evidence: ['e1'] },
+      { id: 'p1', label: 'Service', change: 'modified', evidence: ['e1'] },
+    ],
+    messages: [{ from: 'p0', to: 'p1', label: 'dispatches action', change: 'added', evidence: ['e1'] }],
+  });
+}
+
+function tableArtifact(): DiagramArtifact {
+  return artifact({
+    representation: 'table',
+    nodes: [],
+    edges: [],
+    columns: ['Current state', 'Trigger', 'Result'],
+    rows: [{ cells: ['Waiting', 'Start', 'Active'], evidence: ['e1'] }],
+  });
+}
+
 describe('renderDiagramSection', () => {
   it('renders a concept map without change prefixes or metadata', () => {
     const out = renderDiagramSection(artifact(), 'mermaid');
@@ -275,6 +340,22 @@ describe('renderDiagramSection', () => {
     );
   });
 
+
+  it('renders a GitHub-compatible sequence diagram', () => {
+    const out = renderDiagramSection(sequenceArtifact(), 'mermaid');
+    expect(out).toContain('### Sequence diagram');
+    expect(out).toContain('```mermaid\nsequenceDiagram');
+    expect(out).toContain('participant p0 as Client');
+    expect(out).toContain('p0->>p1: dispatches action');
+  });
+
+  it('renders a table as Markdown rather than Mermaid', () => {
+    const out = renderDiagramSection(tableArtifact(), 'mermaid');
+    expect(out).toContain('### Change table');
+    expect(out).toContain('| Current state | Trigger | Result |');
+    expect(out).toContain('| --- | --- | --- |');
+    expect(out).not.toContain('```mermaid');
+  });
   it('renders readable text without change prefixes or evidence', () => {
     const out = renderDiagramSection(artifact(), 'text');
     expect(out).not.toContain('```mermaid');
