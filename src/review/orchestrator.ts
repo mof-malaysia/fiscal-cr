@@ -83,6 +83,8 @@ interface StickyPublicationPlan {
   capOverflow: ReviewAnnotation[];
   openCounts: Record<Severity, number>;
   findings: FindingRecord[];
+  /** Findings proven fixed by the successful reviewed scope. */
+  fixedFingerprints: string[];
   autoResolvedThreadIds: string[];
   blocking: boolean;
 }
@@ -154,6 +156,7 @@ function planStickyPublication(input: {
     capOverflow,
     openCounts,
     findings,
+    fixedFingerprints: reconciliation.fixed,
     autoResolvedThreadIds: [],
     blocking: conclusionFor(openCounts, config.review.failOn) === 'failure',
   };
@@ -618,6 +621,7 @@ export class ReviewOrchestrator {
           pullNumber,
           changedPaths: new Set(reviewedPaths),
           reviewedRanges: scope.mode === 'delta' ? reviewedRanges : undefined,
+          fixedFingerprints: new Set(plan.fixedFingerprints),
           currentFingerprints: new Set(
             (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
           ),

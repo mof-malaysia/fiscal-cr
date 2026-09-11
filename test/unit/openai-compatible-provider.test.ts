@@ -43,6 +43,34 @@ describe('OpenAICompatibleProvider', () => {
 
     expect(body.max_tokens).toBeUndefined();
   });
+  it('reads cached tokens from OpenRouter prompt token details', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: 'ok' } }],
+          usage: {
+            prompt_tokens: 1_000,
+            completion_tokens: 200,
+            cached_tokens: 5,
+            prompt_tokens_details: { cached_tokens: 800 },
+          },
+        }),
+        { status: 200, statusText: 'OK' },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'test-key',
+      model: 'meta/muse-spark-1.3-contributor',
+      baseUrl: 'https://openrouter.ai/api/v1',
+    });
+
+    const result = await provider.chatCompletion({
+      messages: [{ role: 'user', content: 'Review this diff.' }],
+    });
+
+    expect(result.usage).toEqual({ input: 1_000, output: 200, cached: 800 });
+  });
 
   it('emits max_completion_tokens (not max_tokens) when configured for OpenAI', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
