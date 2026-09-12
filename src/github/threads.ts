@@ -115,9 +115,16 @@ export async function listFiscalcrThreads(
   return threads;
 }
 
+export interface ReplyToFixedResult {
+  attempted: number;
+  replied: number;
+  failed: number;
+  unavailable: boolean;
+}
+
 /**
- * Reply to FiscalCR's original review comments through the REST API, keeping
- * the resolution notice attached to the original inline comment.
+ * Acknowledge fixed findings on their original inline comments via REST.
+ * Hidden markers are durable delivery receipts; thread resolution is separate.
  */
 export async function replyToFixedReviewComments(
   octokit: FiscalcrOctokit,
@@ -125,61 +132,82 @@ export async function replyToFixedReviewComments(
     owner: string;
     repo: string;
     pullNumber: number;
-    fixedFingerprints: Set<string>;
-    headSha: string;
+    fixedFindings: Array<{ fingerprint: string; fixedAtSha?: string }>;
   },
-): Promise<number> {
-  if (params.fixedFingerprints.size === 0) return 0;
+): Promise<ReplyToFixedResult> {
+  const { owner, repo, pullNumber, fixedFindings } = params;
+  if (fixedFindings.length === 0) {
+    return { attempted: 0, replied: 0, failed: 0, unavailable: false };
+  }
+  const shaByFingerprint = new Map(
+    fixedFindings.map((finding) => [finding.fingerprint, finding.fixedAtSha]),
+  );
 
+  let comments: Array<{ id: number; body?: string | null; in_reply_to_id?: number | null }>;
   try {
-    const comments: Array<{
-      id: number;
-      body?: string | null;
-      in_reply_to_id?: number | null;
-    }> = [];
+    comments = [];
     for (let page = 1; ; page++) {
       const { data: pageComments } = await octokit.pulls.listReviewComments({
-        owner: params.owner,
-        repo: params.repo,
-        pull_number: params.pullNumber,
+        owner,
+        repo,
+        pull_number: pullNumber,
         per_page: 100,
         page,
       });
       comments.push(...pageComments);
       if (pageComments.length < 100) break;
     }
+  } catch (err) {
+    logger.warn({ err, pullNumber }, 'Could not list review comments for fixed-finding replies');
+    return { attempted: 0, replied: 0, failed: 0, unavailable: true };
+  }
 
-    const handledRootIds = new Set(
-      comments
-        .filter((comment) => comment.in_reply_to_id != null && comment.body?.includes('✅ Already handled —'))
-        .map((comment) => comment.in_reply_to_id),
-    );
-    const roots = comments.filter(
-      (comment) =>
-        comment.in_reply_to_id == null &&
-        params.fixedFingerprints.has(extractFingerprint(comment.body ?? '') ?? ''),
-    );
-    let replied = 0;
-    for (const root of roots) {
-      if (handledRootIds.has(root.id)) continue;
-      try {
-        await octokit.pulls.createReplyForReviewComment({
-          owner: params.owner,
-          repo: params.repo,
-          pull_number: params.pullNumber,
-          comment_id: root.id,
-          body: `✅ Already handled — finding fixed in \`${params.headSha.slice(0, 7)}\`.`,
-        });
-        replied++;
-      } catch (err) {
-        logger.warn({ err, commentId: root.id }, 'Could not add inline resolution reply');
+  const rootByFingerprint = new Map<string, number>();
+  const deliveredMarkers = new Set<string>();
+  for (const comment of comments) {
+    const body = comment.body ?? '';
+    if (comment.in_reply_to_id == null) {
+      const fingerprint = extractFingerprint(body);
+      if (fingerprint && shaByFingerprint.has(fingerprint)) {
+        const existing = rootByFingerprint.get(fingerprint);
+        if (existing === undefined || comment.id > existing) {
+          rootByFingerprint.set(fingerprint, comment.id);
+        }
+      }
+    } else {
+      for (const match of body.matchAll(/<!-- fiscalcr:resolution:v1 (\d+):(\S+) -->/g)) {
+        if (Number(match[1]) === comment.in_reply_to_id) deliveredMarkers.add(match[0]);
       }
     }
-    return replied;
-  } catch (err) {
-    logger.warn({ err, pullNumber: params.pullNumber }, 'Could not list review comments for resolution replies');
-    return 0;
   }
+
+  let attempted = 0;
+  let replied = 0;
+  let failed = 0;
+  for (const [fingerprint, rootId] of rootByFingerprint) {
+    const fixedAtSha = shaByFingerprint.get(fingerprint);
+    const marker = `<!-- fiscalcr:resolution:v1 ${rootId}:${fixedAtSha ?? 'unknown'} -->`;
+    if (deliveredMarkers.has(marker)) continue;
+    attempted++;
+    const body =
+      fixedAtSha !== undefined
+        ? `✅ Finding fixed — code changed in \`${fixedAtSha.slice(0, 7)}\`.\n\n${marker}`
+        : `✅ Finding fixed.\n\n${marker}`;
+    try {
+      await octokit.pulls.createReplyForReviewComment({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        comment_id: rootId,
+        body,
+      });
+      replied++;
+    } catch (err) {
+      failed++;
+      logger.warn({ err, commentId: rootId, fingerprint }, 'Could not post inline fixed-finding reply');
+    }
+  }
+  return { attempted, replied, failed, unavailable: failed > 0 };
 }
 
 function reviewedRangeContainsLine(range: ReviewedRange, line: number): boolean {
@@ -202,7 +230,6 @@ export interface ThreadResolutionResult {
   attempted: number;
   resolved: FiscalcrThread[];
   failed: number;
-  failedThreads: FiscalcrThread[];
   unavailable?: boolean;
 }
 
@@ -229,7 +256,6 @@ export async function resolveOutdatedThreads(
      * authoritative set replaces the fallback path/range scope checks.
      */
     fixedFingerprints?: Set<string>;
-    headSha: string;
   },
 ): Promise<ThreadResolutionResult> {
   let threads: FiscalcrThread[];
@@ -237,9 +263,9 @@ export async function resolveOutdatedThreads(
     threads = await listFiscalcrThreads(octokit, params, { includeOutdated: true });
   } catch (err) {
     logger.warn({ err }, 'Could not list review threads — skipping thread resolution');
-    return { attempted: 0, resolved: [], failed: 0, failedThreads: [], unavailable: true };
+    return { attempted: 0, resolved: [], failed: 0, unavailable: true };
   }
-  if (!hasGraphql(octokit)) return { attempted: 0, resolved: [], failed: 0, failedThreads: [], unavailable: true };
+  if (!hasGraphql(octokit)) return { attempted: 0, resolved: [], failed: 0, unavailable: true };
   const graphql = octokit.graphql;
   const outdated = threads.filter((thread) => {
     const rangesForPath = params.reviewedRanges?.filter((range) => range.path === thread.path) ?? [];
@@ -256,7 +282,6 @@ export async function resolveOutdatedThreads(
   });
 
   const resolved: FiscalcrThread[] = [];
-  const failedThreads: FiscalcrThread[] = [];
   for (const thread of outdated) {
     try {
       const response = (await graphql(
@@ -275,29 +300,8 @@ export async function resolveOutdatedThreads(
       if (resolvedThread?.id !== thread.id || resolvedThread.isResolved !== true) {
         throw new Error('GitHub did not confirm the review thread was resolved');
       }
-      try {
-        await graphql(
-          `mutation($threadId: ID!, $body: String!) {
-            addPullRequestReviewThreadReply(
-              input: {
-                pullRequestReviewThreadId: $threadId
-                body: $body
-              }
-            ) {
-              comment { id }
-            }
-          }`,
-          {
-            threadId: thread.id,
-            body: `✅ Already handled — finding fixed in \`${params.headSha.slice(0, 7)}\`.`,
-          },
-        );
-      } catch (err) {
-        logger.warn({ err, threadId: thread.id }, 'Could not add review thread resolution audit reply');
-      }
       resolved.push(thread);
     } catch (err) {
-      failedThreads.push(thread);
       logger.warn({ err, threadId: thread.id }, 'Could not resolve review thread — skipping');
     }
   }
@@ -312,5 +316,5 @@ export async function resolveOutdatedThreads(
   if (resolved.length > 0) {
     logger.info({ resolved: resolved.length }, 'Outdated review threads resolved');
   }
-  return { attempted: outdated.length, resolved, failed, failedThreads };
+  return { attempted: outdated.length, resolved, failed };
 }

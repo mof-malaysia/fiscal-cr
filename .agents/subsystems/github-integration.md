@@ -88,12 +88,15 @@ their existing `fiscalcr:fp:v1` marker.
 
 ## Threads (`threads.ts`)
 
-`listFiscalcrThreads` keeps only current, FiscalCR-marked threads. Fixed inline
-findings are automatically resolved when enabled. Manual resolution is handled
-by the App's `pull_request_review_thread.resolved` webhook only when the current
-thread and record identity match; only an open thread-backed record can become
-dismissed. An `unresolved` event reopens only a matching dismissed record.
-Automatic resolution remains `fixed`, never `dismissed`.
+`listFiscalcrThreads` keeps only current, FiscalCR-marked threads. For fixed
+inline findings, `replyToFixedReviewComments` posts a durable REST
+acknowledgement to the original review comment; hidden markers make retries
+idempotent. GraphQL thread resolution runs separately and is best-effort.
+Manual resolution is handled by the App's `pull_request_review_thread.resolved`
+webhook only when the current thread and record identity match; only an open
+thread-backed record can become `dismissed`. An `unresolved` event reopens only
+a matching dismissed record. Automatic resolution remains `fixed`, never
+`dismissed`.
 
 ## Checks (`checks.ts`)
 

@@ -29,7 +29,7 @@ function renderThreadCleanup(
   ];
   if (cleanup.failed > 0) {
     lines.push(
-      `${cleanup.failed} inline thread(s) remain unresolved, usually because the GitHub token lacks thread-resolution permission.`,
+      `${cleanup.failed} inline thread(s) remain unresolved; see the logs for the GitHub API error.`,
     );
   }
   return lines;

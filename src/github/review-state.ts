@@ -52,6 +52,8 @@ export interface FindingRecord {
   /** Null means no current FiscalCR thread backs this finding (demoted/threadless). */
   threadId: string | null;
   lastSeenSha: string;
+  /** Full head SHA recorded when an open→fixed reconciliation resolved the finding; undefined for older records and cleared on reopen. */
+  fixedAtSha?: string;
   transitions: FindingTransition[];
 }
 
@@ -203,6 +205,9 @@ function parseFinding(value: unknown): FindingRecord | null {
     title: value.title,
     threadId: value.threadId,
     lastSeenSha: value.lastSeenSha,
+    fixedAtSha: value.status === 'fixed' && typeof value.fixedAtSha === 'string' && value.fixedAtSha.length > 0
+      ? value.fixedAtSha
+      : undefined,
     transitions: transitions.slice(-MAX_TRANSITIONS_PER_FINDING),
   };
 }
@@ -449,7 +454,7 @@ export function reconcileFindingInventory(
       !observedFingerprints.has(finding.fingerprint) &&
       coveredByReviewedScope
     ) {
-      findings[position] = transition(finding, 'fixed', at, 'review');
+      findings[position] = { ...transition(finding, 'fixed', at, 'review'), fixedAtSha: headSha };
       fixed.push(finding.fingerprint);
     }
   }
@@ -489,9 +494,15 @@ export function mergeConcurrentReviewState(
       )
       .sort((a, b) => a.at.localeCompare(b.at))
       .slice(-MAX_TRANSITIONS_PER_FINDING);
+    const winningTransition = transitions.at(-1);
+    const winningFinding = winningTransition && latestFinding.transitions.includes(winningTransition)
+      ? latestFinding
+      : proposedFinding;
+    const status = winningTransition?.status ?? proposedFinding.status;
     return {
       ...proposedFinding,
-      status: transitions.at(-1)?.status ?? proposedFinding.status,
+      status,
+      fixedAtSha: status === 'fixed' ? winningFinding.fixedAtSha : undefined,
       threadId: proposedFinding.threadId ?? latestFinding.threadId,
       transitions,
     };
@@ -1000,7 +1011,7 @@ export function applyManualThreadReopening(
       return finding;
     }
     applied = true;
-    return transition(finding, 'open', input.at, 'manual', input.eventKey);
+    return { ...transition(finding, 'open', input.at, 'manual', input.eventKey), fixedAtSha: undefined };
   });
   if (!applied) return state;
   return {

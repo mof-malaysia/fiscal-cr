@@ -104,6 +104,8 @@ interface Fixture {
   }>;
 }
 function fakeOctokit(fixture: Fixture = {}) {
+  const reviewComments = fixture.reviewComments ? [...fixture.reviewComments] : [];
+  let nextReviewCommentId = 5000;
   const stickyBody = fixture.stickyBody ??
     (fixture.legacyState
       ? `summary\n${renderStateMarker(fixture.legacyState)}`
@@ -141,8 +143,12 @@ function fakeOctokit(fixture: Fixture = {}) {
           : { data: [] },
       ),
       createReview: vi.fn(async () => ({ data: { id: 11 } })),
-      createReplyForReviewComment: vi.fn(async () => ({ data: { id: 12 } })),
-      listReviewComments: vi.fn(async () => ({ data: fixture.reviewComments ?? [] })),
+      createReplyForReviewComment: vi.fn(async ({ comment_id, body }: { comment_id: number; body: string }) => {
+        const id = nextReviewCommentId++;
+        reviewComments.push({ id, body, path: 'src/a.ts', in_reply_to_id: comment_id });
+        return { data: { id } };
+      }),
+      listReviewComments: vi.fn(async () => ({ data: reviewComments.slice() })),
       dismissReview: vi.fn(async () => ({})),
     },
     repos: {
@@ -486,7 +492,7 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
       repo: 'r',
       pull_number: 1,
       comment_id: 101,
-      body: '✅ Already handled — finding fixed in `new-sha`.',
+      body: '✅ Finding fixed — code changed in `new-sha`.\n\n<!-- fiscalcr:resolution:v1 101:new-sha -->',
     });
     expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
   });
@@ -509,7 +515,7 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
       repo: 'r',
       pull_number: 1,
       comment_id: 101,
-      body: '✅ Already handled — finding fixed in `new-sha`.',
+      body: '✅ Finding fixed — code changed in `new-sha`.\n\n<!-- fiscalcr:resolution:v1 101:new-sha -->',
     });
     expect(octokit.graphql.mock.calls.some(([query]) => (query as string).includes('resolveReviewThread'))).toBe(true);
   });
@@ -621,6 +627,35 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(check.conclusion).toBe('failure');
     expect(result.stats.critical).toBe(2);
     expect(result.callCount).toBe(0);
+  });
+  it('retries failed fixed-finding replies on a later skipped run', async () => {
+    const baseFinding = priorState().findings[0];
+    const octokit = fakeOctokit({
+      stickyState: priorState({
+        lastReviewedSha: 'new-sha',
+        blockingReviewId: null,
+        findings: [{
+          ...baseFinding,
+          status: 'fixed',
+          fixedAtSha: 'fix-sha-123456789',
+        }],
+      }),
+      reviewComments: [{ id: 101, body: fingerprintMarker(FP), path: 'src/a.ts' }],
+    });
+    octokit.pulls.createReplyForReviewComment.mockRejectedValueOnce(new Error('503'));
+    const llm = fastPathLLM([]);
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg());
+
+    const first = await orchestrator.reviewPullRequest(params);
+    expect(first.threadReplies).toEqual({ attempted: 1, replied: 0, failed: 1, unavailable: true });
+    expect(llm.chatCompletion).not.toHaveBeenCalled();
+
+    const second = await orchestrator.reviewPullRequest(params);
+    expect(second.threadReplies).toEqual({ attempted: 1, replied: 1, failed: 0, unavailable: false });
+    expect(octokit.pulls.createReplyForReviewComment).toHaveBeenCalledTimes(2);
+    expect(octokit.pulls.createReplyForReviewComment.mock.calls.at(-1)?.[0].body).toContain(
+      '<!-- fiscalcr:resolution:v1 101:fix-sha-123456789 -->',
+    );
   });
 
   it('forceFull re-reviews everything but still dedupes posted findings', async () => {

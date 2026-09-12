@@ -80,6 +80,13 @@ export interface ReviewResult {
     failed: number;
     unavailable?: boolean;
   };
+  /** Inline fix acknowledgements posted for fixed findings; tracked separately from thread resolution. */
+  threadReplies?: {
+    attempted: number;
+    replied: number;
+    failed: number;
+    unavailable?: boolean;
+  };
   /** Paths whose detector execution completed successfully for this result. */
   reviewedPaths: string[];
   /** Line ranges covered by successful detector execution, when available. */

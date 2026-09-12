@@ -56,9 +56,13 @@ jobs:
 ```
 
 When `review.comments.resolveOutdated` is enabled (the default), FiscalCR
-attempts to reply directly to the original inline review comment when a finding
-is fixed. The reply stays attached to the outdated comment, so the resolution
-is visible in the same review thread; cleanup failures degrade to a log line.
+attempts to post a fixed-finding acknowledgement directly to the original
+inline review comment. The acknowledgement stays attached to the outdated
+comment; thread resolution runs separately and cleanup failures degrade to a
+log line.
+
+The Action uses the built-in `GITHUB_TOKEN` with `pull-requests: write` from
+the workflow above. No additional GitHub credential is required for inline replies.
 
 ### Action inputs
 
@@ -432,8 +436,8 @@ is used in Action and App mode.
 - A successful review reconciles only its explicit reviewed-path manifest.
   Findings absent from that manifest remain unchanged; failed detector groups
   therefore never fix findings. When `review.comments.resolveOutdated` is
-  enabled, fixed inline threads are resolved automatically on a best-effort
-  basis, with the resolution reply kept on the original review comment.
+  enabled, FiscalCR acknowledges fixed inline findings on their original
+  comments and resolves their threads automatically on a best-effort basis.
 - Human resolution of a current FiscalCR thread marks an open, thread-backed
   finding `dismissed`. Threadless and demoted findings cannot be dismissed.
 - An `unresolved` event reopens a matching dismissed finding after validating

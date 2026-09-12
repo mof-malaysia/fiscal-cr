@@ -365,6 +365,80 @@ describe('finding lifecycle reconciliation', () => {
     expect(unmatched).toEqual(withThread);
     expect(unmatched.recentEvents).not.toContain('delivery-race');
   });
+  it('records the full head SHA when reconciling an open finding to fixed', () => {
+    const open = reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', 'one');
+    const fixed = reconcileFindingInventory(firstState(open.findings), [], ['src/a.ts'], 'deadbeef00', 'two');
+    expect(fixed.findings[0].status).toBe('fixed');
+    expect(fixed.findings[0].fixedAtSha).toBe('deadbeef00');
+  });
+
+  it('retains the original fix SHA while the finding stays fixed across runs', () => {
+    const open = reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', 'one');
+    const fixed = reconcileFindingInventory(firstState(open.findings), [], ['src/a.ts'], 'deadbeef00', 'two');
+    const stillFixed = reconcileFindingInventory(firstState(fixed.findings), [], ['src/a.ts'], 'newsha111', 'three');
+    expect(stillFixed.findings[0].status).toBe('fixed');
+    expect(stillFixed.findings[0].fixedAtSha).toBe('deadbeef00');
+  });
+
+  it('clears the fix SHA when the finding is reobserved and reopened', () => {
+    const open = reconcileFindingInventory(null, [annotation()], ['src/a.ts'], 'sha1', 'one');
+    const fixed = reconcileFindingInventory(firstState(open.findings), [], ['src/a.ts'], 'deadbeef00', 'two');
+    const reopened = reconcileFindingInventory(firstState(fixed.findings), [annotation()], ['src/a.ts'], 'sha3', 'three');
+    expect(reopened.findings[0].status).toBe('open');
+    expect(reopened.findings[0].fixedAtSha).toBeUndefined();
+  });
+
+  it('roundtrips an old v2 fixed record that has no fix SHA without inventing one', () => {
+    const legacyFixed: ReviewState = {
+      ...state(),
+      findings: [{ ...state().findings[0], status: 'fixed' }],
+    };
+    const parsed = parseStateMarker(renderStateMarker(legacyFixed));
+    expect(parsed?.findings[0].status).toBe('fixed');
+    expect(parsed?.findings[0].fixedAtSha).toBeUndefined();
+    expect(parseStateMarker(renderStateMarker(parsed!))?.findings[0].fixedAtSha).toBeUndefined();
+  });
+});
+describe('fixedAtSha merge selection', () => {
+  type Status = 'open' | 'fixed' | 'dismissed';
+  function withFinding(status: Status, fixedAtSha: string | undefined, at: string): ReviewState {
+    return {
+      ...state(),
+      findings: [
+        {
+          fingerprint: 'aaaabbbbccccdddd',
+          status,
+          severity: 'critical',
+          path: 'src/a.ts',
+          startLine: 2,
+          endLine: 2,
+          title: 'Existing',
+          threadId: 'thread-1',
+          lastSeenSha: 'x',
+          fixedAtSha,
+          transitions: [{ status, at, source: 'review' }],
+        },
+      ],
+    };
+  }
+
+  it('carries the winning latest record’s fix SHA when merged status is fixed', () => {
+    const base = withFinding('open', undefined, '2026-01-01');
+    const proposed = withFinding('fixed', 'aaa1111', '2026-01-02');
+    const latest = withFinding('fixed', 'bbb2222', '2026-01-03');
+    const merged = mergeConcurrentReviewState(base, proposed, latest);
+    expect(merged.findings[0].status).toBe('fixed');
+    expect(merged.findings[0].fixedAtSha).toBe('bbb2222');
+  });
+
+  it('clears the fix SHA when the merged (winning) status is not fixed', () => {
+    const base = withFinding('open', undefined, '2026-01-01');
+    const proposed = withFinding('fixed', 'aaa1111', '2026-01-02');
+    const latest = withFinding('open', undefined, '2026-01-03');
+    const merged = mergeConcurrentReviewState(base, proposed, latest);
+    expect(merged.findings[0].status).toBe('open');
+    expect(merged.findings[0].fixedAtSha).toBeUndefined();
+  });
 });
 
 function firstState(findings: ReviewState['findings']): ReviewState {

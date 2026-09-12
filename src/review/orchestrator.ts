@@ -444,6 +444,7 @@ export class ReviewOrchestrator {
     sticky?: { commentId: number; pullNumber: number; body: string; headSha: string },
   ): Promise<ReviewResult> {
     const openCounts: Record<Severity, number> = { ...EMPTY_COUNTS };
+    let threadReplies: ReviewResult['threadReplies'] = undefined;
     for (const finding of state.findings) {
       if (finding.status === 'open') openCounts[finding.severity]++;
     }
@@ -460,6 +461,27 @@ export class ReviewOrchestrator {
         summary,
         annotations: [],
         externalId: JSON.stringify({ scope: 'skip' }),
+      });
+    }
+    if (this.config.review.comments.resolveOutdated && sticky) {
+      threadReplies = await withReviewStateLock(`${target.owner}/${target.repo}#${sticky.pullNumber}`, async () => {
+        try {
+          // Another run may have reopened a finding while this run waited.
+          const latest = await loadReviewState(this.octokit, {
+            owner: target.owner,
+            repo: target.repo,
+            pullNumber: sticky.pullNumber,
+          });
+          return await replyToFixedReviewComments(this.octokit, {
+            owner: target.owner,
+            repo: target.repo,
+            pullNumber: sticky.pullNumber,
+            fixedFindings: (latest?.state?.findings ?? []).filter((finding) => finding.status === 'fixed'),
+          });
+        } catch (err) {
+          logger.warn({ err, pullNumber: sticky.pullNumber }, 'Could not reload fixed findings for inline replies');
+          return { attempted: 0, replied: 0, failed: 0, unavailable: true };
+        }
       });
     }
     if (
@@ -513,6 +535,7 @@ export class ReviewOrchestrator {
       stats: openCounts,
       tokensUsed: { input: 0, output: 0, cached: 0 },
       callCount: 0,
+      threadReplies,
     };
   }
 
@@ -618,16 +641,13 @@ export class ReviewOrchestrator {
       headSha,
     });
     if (commentsCfg.resolveOutdated && stateForPublication) {
-      if (!threadsAvailable) {
-        result.threadCleanup = { attempted: 0, resolved: 0, failed: 0, unavailable: true };
-        await replyToFixedReviewComments(this.octokit, {
-          owner,
-          repo,
-          pullNumber,
-          fixedFingerprints: new Set(plan.fixedFingerprints),
-          headSha,
-        });
-      } else {
+      result.threadReplies = await replyToFixedReviewComments(this.octokit, {
+        owner,
+        repo,
+        pullNumber,
+        fixedFindings: plan.findings.filter((finding) => finding.status === 'fixed'),
+      });
+      if (threadsAvailable) {
         const cleanup = await resolveOutdatedThreads(this.octokit, {
           owner,
           repo,
@@ -638,7 +658,6 @@ export class ReviewOrchestrator {
           currentFingerprints: new Set(
             (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
           ),
-          headSha,
         });
         result.threadCleanup = {
           attempted: cleanup.attempted,
@@ -647,16 +666,8 @@ export class ReviewOrchestrator {
           unavailable: cleanup.unavailable,
         };
         plan.autoResolvedThreadIds = cleanup.resolved.map((thread) => thread.id);
-        const failedFingerprints = cleanup.unavailable
-          ? new Set(plan.fixedFingerprints)
-          : new Set(cleanup.failedThreads.map((thread) => thread.fingerprint));
-        await replyToFixedReviewComments(this.octokit, {
-          owner,
-          repo,
-          pullNumber,
-          fixedFingerprints: failedFingerprints,
-          headSha,
-        });
+      } else {
+        result.threadCleanup = { attempted: 0, resolved: 0, failed: 0, unavailable: true };
       }
     }
     if (plan.capOverflow.length > 0) {
