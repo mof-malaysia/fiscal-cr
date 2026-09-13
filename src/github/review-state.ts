@@ -52,7 +52,7 @@ export interface FindingRecord {
   /** Null means no current FiscalCR thread backs this finding (demoted/threadless). */
   threadId: string | null;
   lastSeenSha: string;
-  /** Full head SHA recorded when an open→fixed reconciliation resolved the finding; undefined for older records and cleared on reopen. */
+  /** Full head SHA recorded when review reconciliation resolves an open finding; undefined for older records. */
   fixedAtSha?: string;
   transitions: FindingTransition[];
 }
@@ -1011,7 +1011,7 @@ export function applyManualThreadReopening(
       return finding;
     }
     applied = true;
-    return { ...transition(finding, 'open', input.at, 'manual', input.eventKey), fixedAtSha: undefined };
+    return transition(finding, 'open', input.at, 'manual', input.eventKey);
   });
   if (!applied) return state;
   return {

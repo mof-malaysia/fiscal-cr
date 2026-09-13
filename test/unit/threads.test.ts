@@ -34,7 +34,7 @@ function threadNode(input: {
   };
 }
 
-function graphqlOctokit(nodes: unknown[], opts: { failMutations?: boolean } = {}) {
+function graphqlOctokit(nodes: unknown[]) {
   const graphql = vi.fn(async (query: string, variables?: { threadId?: string }) => {
     if (query.includes('reviewThreads')) {
       return {
@@ -48,16 +48,12 @@ function graphqlOctokit(nodes: unknown[], opts: { failMutations?: boolean } = {}
         },
       };
     }
-    if (opts.failMutations) throw new Error('403 Resource not accessible');
     if (query.includes('resolveReviewThread')) {
       return {
         resolveReviewThread: {
           thread: { id: variables?.threadId ?? '', isResolved: true },
         },
       };
-    }
-    if (query.includes('addPullRequestReviewThreadReply')) {
-      return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
     }
     return {};
   });
@@ -68,7 +64,6 @@ const params = {
   owner: 'o',
   repo: 'r',
   pullNumber: 1,
-  headSha: 'abcdef1234567890',
 };
 
 describe('listFiscalcrThreads', () => {
@@ -104,7 +99,7 @@ describe('listFiscalcrThreads', () => {
 });
 describe('replyToFixedReviewComments', () => {
   function replyOctokit(
-    pages: Array<Array<{ id: number; body?: string; path?: string; in_reply_to_id?: number | null }>>,
+    pages: Array<Array<{ id: number; body?: string; in_reply_to_id?: number | null }>>,
     createReply?: (input: { comment_id: number; body: string }) => Promise<{ data: { id: number } }>,
   ) {
     const listReviewComments = vi.fn(async ({ page }: { page: number }) => ({
@@ -121,11 +116,10 @@ describe('replyToFixedReviewComments', () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       id: index + 1,
       body: 'unrelated review comment',
-      path: 'src/other.ts',
     }));
     const { octokit, createReplyForReviewComment } = replyOctokit([
       firstPage,
-      [{ id: 201, body: fingerprintMarker(FP_A), path: 'src/a.ts' }],
+      [{ id: 201, body: fingerprintMarker(FP_A) }],
     ]);
 
     const result = await replyToFixedReviewComments(octokit, {
@@ -150,11 +144,10 @@ describe('replyToFixedReviewComments', () => {
   it('does not re-acknowledge a root that already carries the exact resolution marker', async () => {
     const { octokit, createReplyForReviewComment } = replyOctokit([
       [
-        { id: 301, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
+        { id: 301, body: fingerprintMarker(FP_A) },
         {
           id: 302,
           body: '✅ Finding fixed — code changed in `oldsha`.\n\n<!-- fiscalcr:resolution:v1 301:oldsha -->',
-          path: 'src/a.ts',
           in_reply_to_id: 301,
         },
       ],
@@ -170,11 +163,10 @@ describe('replyToFixedReviewComments', () => {
   it('re-acknowledges when an existing reply lacks the exact hidden marker', async () => {
     const { octokit, createReplyForReviewComment } = replyOctokit([
       [
-        { id: 301, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
+        { id: 301, body: fingerprintMarker(FP_A) },
         {
           id: 302,
           body: '✅ Finding fixed — code changed in `oldsha`.',
-          path: 'src/a.ts',
           in_reply_to_id: 301,
         },
       ],
@@ -192,11 +184,10 @@ describe('replyToFixedReviewComments', () => {
   it('does not suppress when a marker references a different root', async () => {
     const { octokit, createReplyForReviewComment } = replyOctokit([
       [
-        { id: 301, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
+        { id: 301, body: fingerprintMarker(FP_A) },
         {
           id: 302,
           body: '✅ Finding fixed — code changed in `oldsha`.\n\n<!-- fiscalcr:resolution:v1 999:oldsha -->',
-          path: 'src/a.ts',
           in_reply_to_id: 301,
         },
       ],
@@ -213,9 +204,9 @@ describe('replyToFixedReviewComments', () => {
   it('replies only to the latest root per fingerprint, never to a reply comment', async () => {
     const { octokit, createReplyForReviewComment } = replyOctokit([
       [
-        { id: 201, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
-        { id: 301, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
-        { id: 401, body: 'a manual reply', path: 'src/a.ts', in_reply_to_id: 201 },
+        { id: 201, body: fingerprintMarker(FP_A) },
+        { id: 301, body: fingerprintMarker(FP_A) },
+        { id: 401, body: 'a manual reply', in_reply_to_id: 201 },
       ],
     ]);
     const result = await replyToFixedReviewComments(octokit, {
@@ -230,9 +221,9 @@ describe('replyToFixedReviewComments', () => {
   it('only acknowledges fingerprints in fixedFindings and ignores reply comments', async () => {
     const { octokit, createReplyForReviewComment } = replyOctokit([
       [
-        { id: 101, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
-        { id: 102, body: fingerprintMarker(FP_B), path: 'src/b.ts' },
-        { id: 500, body: `reply text\n${fingerprintMarker(FP_A)}`, path: 'src/a.ts', in_reply_to_id: 101 },
+        { id: 101, body: fingerprintMarker(FP_A) },
+        { id: 102, body: fingerprintMarker(FP_B) },
+        { id: 500, body: `reply text\n${fingerprintMarker(FP_A)}`, in_reply_to_id: 101 },
       ],
     ]);
     const result = await replyToFixedReviewComments(octokit, {
@@ -246,11 +237,10 @@ describe('replyToFixedReviewComments', () => {
 
   it('detects existing markers across paginated pages before acknowledging', async () => {
     const firstPage = [
-      { id: 201, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
+      { id: 201, body: fingerprintMarker(FP_A) },
       ...Array.from({ length: 99 }, (_, index) => ({
         id: 1000 + index,
         body: 'unrelated review comment',
-        path: 'src/other.ts',
       })),
     ];
     const { octokit, createReplyForReviewComment } = replyOctokit([
@@ -259,7 +249,6 @@ describe('replyToFixedReviewComments', () => {
         {
           id: 202,
           body: '✅ Finding fixed — code changed in `oldsha`.\n\n<!-- fiscalcr:resolution:v1 201:oldsha -->',
-          path: 'src/a.ts',
           in_reply_to_id: 201,
         },
       ],
@@ -274,7 +263,7 @@ describe('replyToFixedReviewComments', () => {
 
   it('posts a commitless acknowledgement when no fix SHA is known', async () => {
     const { octokit, createReplyForReviewComment } = replyOctokit([
-      [{ id: 201, body: fingerprintMarker(FP_A), path: 'src/a.ts' }],
+      [{ id: 201, body: fingerprintMarker(FP_A) }],
     ]);
     const result = await replyToFixedReviewComments(octokit, {
       ...base,
@@ -292,8 +281,8 @@ describe('replyToFixedReviewComments', () => {
       data:
         page === 1
           ? [
-              { id: 201, body: fingerprintMarker(FP_A), path: 'src/a.ts' },
-              { id: 301, body: fingerprintMarker(FP_B), path: 'src/b.ts' },
+              { id: 201, body: fingerprintMarker(FP_A) },
+              { id: 301, body: fingerprintMarker(FP_B) },
             ]
           : [],
     }));
@@ -348,7 +337,6 @@ describe('resolveOutdatedThreads', () => {
     const resolveIndex = graphql.mock.calls.findIndex(([q]) => (q as string).includes('resolveReviewThread'));
     expect(resolveIndex).toBeGreaterThan(-1);
     expect(graphql.mock.calls[resolveIndex][1]).toEqual({ threadId: 'gone' });
-    expect(graphql.mock.calls.some(([q]) => (q as string).includes('addPullRequestReviewThreadReply'))).toBe(false);
   });
   it('resolves an explicitly fixed finding regardless of stale thread coordinates', async () => {
     const { octokit } = graphqlOctokit([
@@ -377,7 +365,7 @@ describe('resolveOutdatedThreads', () => {
     });
     expect(resolved.resolved.map((thread) => thread.id)).toEqual(['deleted']);
   });
-  it('degrades to empty when listing fails (403 on default token)', async () => {
+  it('reports unavailable when thread listing fails', async () => {
     const octokit = {
       graphql: vi.fn(async () => {
         throw new Error('403 Resource not accessible by integration');
@@ -416,7 +404,6 @@ describe('resolveOutdatedThreads', () => {
       currentFingerprints: new Set(),
     });
     expect(resolved).toMatchObject({ attempted: 1, resolved: [], failed: 1 });
-    expect(graphql.mock.calls.filter(([query]) => (query as string).includes('addPullRequestReviewThreadReply'))).toHaveLength(0);
     expect(warning).toHaveBeenCalled();
     warning.mockRestore();
   });

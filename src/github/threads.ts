@@ -143,9 +143,9 @@ export async function replyToFixedReviewComments(
     fixedFindings.map((finding) => [finding.fingerprint, finding.fixedAtSha]),
   );
 
-  let comments: Array<{ id: number; body?: string | null; in_reply_to_id?: number | null }>;
+  const rootByFingerprint = new Map<string, number>();
+  const deliveredMarkers = new Set<string>();
   try {
-    comments = [];
     for (let page = 1; ; page++) {
       const { data: pageComments } = await octokit.pulls.listReviewComments({
         owner,
@@ -154,31 +154,27 @@ export async function replyToFixedReviewComments(
         per_page: 100,
         page,
       });
-      comments.push(...pageComments);
+      for (const comment of pageComments) {
+        const body = comment.body ?? '';
+        if (comment.in_reply_to_id == null) {
+          const fingerprint = extractFingerprint(body);
+          if (fingerprint && shaByFingerprint.has(fingerprint)) {
+            const existing = rootByFingerprint.get(fingerprint);
+            if (existing === undefined || comment.id > existing) {
+              rootByFingerprint.set(fingerprint, comment.id);
+            }
+          }
+        } else {
+          for (const match of body.matchAll(/<!-- fiscalcr:resolution:v1 (\d+):(\S+) -->/g)) {
+            if (Number(match[1]) === comment.in_reply_to_id) deliveredMarkers.add(match[0]);
+          }
+        }
+      }
       if (pageComments.length < 100) break;
     }
   } catch (err) {
     logger.warn({ err, pullNumber }, 'Could not list review comments for fixed-finding replies');
     return { attempted: 0, replied: 0, failed: 0, unavailable: true };
-  }
-
-  const rootByFingerprint = new Map<string, number>();
-  const deliveredMarkers = new Set<string>();
-  for (const comment of comments) {
-    const body = comment.body ?? '';
-    if (comment.in_reply_to_id == null) {
-      const fingerprint = extractFingerprint(body);
-      if (fingerprint && shaByFingerprint.has(fingerprint)) {
-        const existing = rootByFingerprint.get(fingerprint);
-        if (existing === undefined || comment.id > existing) {
-          rootByFingerprint.set(fingerprint, comment.id);
-        }
-      }
-    } else {
-      for (const match of body.matchAll(/<!-- fiscalcr:resolution:v1 (\d+):(\S+) -->/g)) {
-        if (Number(match[1]) === comment.in_reply_to_id) deliveredMarkers.add(match[0]);
-      }
-    }
   }
 
   let attempted = 0;

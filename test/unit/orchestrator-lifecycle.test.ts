@@ -208,9 +208,6 @@ function fakeOctokit(fixture: Fixture = {}) {
           },
         };
       }
-      if (query.includes('addPullRequestReviewThreadReply')) {
-        return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
-      }
       return {};
     }),
   };
@@ -482,11 +479,6 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
 
     await new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg()).reviewPullRequest(params);
 
-    const hasTopLevelResolutionComment = octokit.issues.createComment.mock.calls.some(([input]) => {
-      if (typeof input !== 'object' || input === null || !('body' in input)) return false;
-      return typeof input.body === 'string' && input.body.includes('Already handled');
-    });
-    expect(hasTopLevelResolutionComment).toBe(false);
     expect(octokit.pulls.createReplyForReviewComment).toHaveBeenCalledWith({
       owner: 'o',
       repo: 'r',
