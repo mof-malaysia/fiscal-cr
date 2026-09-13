@@ -1,7 +1,7 @@
 import type { FiscalcrOctokit } from './client.js';
 import type { ReviewAnnotation, ReviewResult, ReviewedRange, Severity, WalkthroughEntry } from '../types/review.js';
 import { fingerprintAnnotation } from './fingerprint.js';
-import { renderDiagramSection } from '../review/diagram-renderer.js';
+import { renderVisualSection } from '../review/visual-renderer.js';
 import { renderTelemetrySummary } from '../review/telemetry-summary.js';
 import { logger } from '../utils/logger.js';
 
@@ -19,9 +19,10 @@ const MAX_AUTO_RESOLVED_THREADS = 50;
 export const MAX_STATE_MARKER_BYTES = 24_000;
 /** Conservative budget for the complete sticky comment body. */
 export const MAX_STICKY_COMMENT_BYTES = 60_000;
-/** Code-owned boundaries wrapping the optional generated diagram block. */
-export const DIAGRAM_SECTION_START = '<!-- fiscalcr:diagram:start -->';
-export const DIAGRAM_SECTION_END = '<!-- fiscalcr:diagram:end -->';
+/** Code-owned boundaries wrapping the generated visualization block. */
+// Keep the persisted marker value stable so existing sticky comments remain discoverable.
+export const VISUAL_SECTION_START = '<!-- fiscalcr:diagram:start -->';
+export const VISUAL_SECTION_END = '<!-- fiscalcr:diagram:end -->';
 
 /** Read an HTTP status code from an unknown Octokit error value. */
 function statusOf(error: unknown): number | undefined {
@@ -51,6 +52,8 @@ export interface FindingRecord {
   /** Null means no current FiscalCR thread backs this finding (demoted/threadless). */
   threadId: string | null;
   lastSeenSha: string;
+  /** Full head SHA recorded when review reconciliation resolves an open finding; undefined for older records. */
+  fixedAtSha?: string;
   transitions: FindingTransition[];
 }
 
@@ -202,6 +205,9 @@ function parseFinding(value: unknown): FindingRecord | null {
     title: value.title,
     threadId: value.threadId,
     lastSeenSha: value.lastSeenSha,
+    fixedAtSha: value.status === 'fixed' && typeof value.fixedAtSha === 'string' && value.fixedAtSha.length > 0
+      ? value.fixedAtSha
+      : undefined,
     transitions: transitions.slice(-MAX_TRANSITIONS_PER_FINDING),
   };
 }
@@ -448,7 +454,7 @@ export function reconcileFindingInventory(
       !observedFingerprints.has(finding.fingerprint) &&
       coveredByReviewedScope
     ) {
-      findings[position] = transition(finding, 'fixed', at, 'review');
+      findings[position] = { ...transition(finding, 'fixed', at, 'review'), fixedAtSha: headSha };
       fixed.push(finding.fingerprint);
     }
   }
@@ -488,9 +494,15 @@ export function mergeConcurrentReviewState(
       )
       .sort((a, b) => a.at.localeCompare(b.at))
       .slice(-MAX_TRANSITIONS_PER_FINDING);
+    const winningTransition = transitions.at(-1);
+    const winningFinding = winningTransition && latestFinding.transitions.includes(winningTransition)
+      ? latestFinding
+      : proposedFinding;
+    const status = winningTransition?.status ?? proposedFinding.status;
     return {
       ...proposedFinding,
-      status: transitions.at(-1)?.status ?? proposedFinding.status,
+      status,
+      fixedAtSha: status === 'fixed' ? winningFinding.fixedAtSha : undefined,
       threadId: proposedFinding.threadId ?? latestFinding.threadId,
       transitions,
     };
@@ -674,9 +686,9 @@ export interface StickyCommentInput {
   state: ReviewState | LegacyReviewState;
   demoted: Array<{ path: string; startLine: number; severity: Severity; title: string }>;
   walkthrough?: WalkthroughEntry[];
-  /** Preserve the code-owned diagram already stored in the sticky body. */
-  preserveExistingDiagram?: boolean;
-  /** Current persisted sticky body used when no new diagram is rendered. */
+  /** Preserve the code-owned visualization already stored in the sticky body. */
+  preserveExistingVisual?: boolean;
+  /** Current persisted sticky body used when no new visualization is rendered. */
   existingBody?: string;
 }
 
@@ -704,21 +716,21 @@ function findLineHeadingIndex(body: string, heading: string): number {
 }
 
 /**
- * Locate a complete generated diagram block independently of the findings
- * heading: the map precedes the walkthrough. A candidate must use the
- * renderer-owned heading and Mermaid fence, so a marker pasted into summary
- * text is ignored.
+ * Locate a complete generated visualization block independently of the findings
+ * heading: the visualization precedes the walkthrough. A candidate must use
+ * the renderer-owned heading and Mermaid/table shape, so a marker pasted into
+ * summary text is ignored.
  */
-interface OptionalDiagramBlock {
+interface OptionalVisualBlock {
   start: number;
   end: number;
   body: string;
 }
 
-function findOptionalDiagram(body: string): OptionalDiagramBlock | null {
+function findOptionalVisual(body: string): OptionalVisualBlock | null {
   let searchFrom = body.length;
   while (searchFrom >= 0) {
-    const startIdx = body.lastIndexOf(DIAGRAM_SECTION_START, searchFrom);
+    const startIdx = body.lastIndexOf(VISUAL_SECTION_START, searchFrom);
     if (startIdx < 0) return null;
     const startAtLine = startIdx === 0 || body[startIdx - 1] === '\n';
     if (!startAtLine) {
@@ -726,24 +738,24 @@ function findOptionalDiagram(body: string): OptionalDiagramBlock | null {
       continue;
     }
 
-    const endIdx = body.indexOf(DIAGRAM_SECTION_END, startIdx + DIAGRAM_SECTION_START.length);
+    const endIdx = body.indexOf(VISUAL_SECTION_END, startIdx + VISUAL_SECTION_START.length);
     if (endIdx < 0) return null;
     const endAtLine = endIdx === 0 || body[endIdx - 1] === '\n';
-    const afterEnd = body[endIdx + DIAGRAM_SECTION_END.length];
+    const afterEnd = body[endIdx + VISUAL_SECTION_END.length];
     if (!endAtLine || (afterEnd !== undefined && afterEnd !== '\n')) {
       searchFrom = startIdx - 1;
       continue;
     }
 
-    const content = body.slice(startIdx + DIAGRAM_SECTION_START.length, endIdx);
+    const content = body.slice(startIdx + VISUAL_SECTION_START.length, endIdx);
     const rendered = content.startsWith('\n') && content.endsWith('\n')
       ? content.slice(1, -1)
       : '';
     const validShape =
-      /^### (?:Concept|Implementation) map(?:\n|$)/.test(rendered) &&
-      rendered.includes('```mermaid') &&
-      !rendered.includes(DIAGRAM_SECTION_START) &&
-      !rendered.includes(DIAGRAM_SECTION_END);
+      /^(?:### (?:Concept|Implementation) (?:map|visualization)|### Sequence (?:diagram|visualization)|### Change table)(?:\n|$)/.test(rendered) &&
+      (rendered.includes('```mermaid') || /\n\| (?:\\\||[^|\n])+(?: \| (?:\\\||[^|\n])+)+ \|\n\| (?:--- \| )+--- \|/.test(rendered)) &&
+      !rendered.includes(VISUAL_SECTION_START) &&
+      !rendered.includes(VISUAL_SECTION_END);
     if (!validShape) {
       searchFrom = startIdx - 1;
       continue;
@@ -751,22 +763,23 @@ function findOptionalDiagram(body: string): OptionalDiagramBlock | null {
 
     return {
       start: startIdx,
-      end: endIdx + DIAGRAM_SECTION_END.length,
-      body: body.slice(startIdx, endIdx + DIAGRAM_SECTION_END.length),
+      end: endIdx + VISUAL_SECTION_END.length,
+      body: body.slice(startIdx, endIdx + VISUAL_SECTION_END.length),
     };
   }
   return null;
 }
 
-function omitOptionalDiagram(body: string): string {
-  const diagram = findOptionalDiagram(body);
-  return diagram ? `${body.slice(0, diagram.start)}${body.slice(diagram.end)}` : body;
+function omitOptionalVisual(body: string): string {
+  const visual = findOptionalVisual(body);
+  return visual ? `${body.slice(0, visual.start)}${body.slice(visual.end)}` : body;
 }
+
 /**
- * Locate the legacy diagram format used before code-owned section boundaries
+ * Locate the legacy visual format used before code-owned section boundaries
  * were added. Require its complete generated shape before removing it.
  */
-function findLegacyDiagram(body: string): OptionalDiagramBlock | null {
+function findLegacyVisual(body: string): OptionalVisualBlock | null {
   const match =
     /^### Visual changes\nSource commit:[^\n]*\n\n```mermaid\n[\s\S]*?\n```\n\nEvidence:\n(?:- [^\n]*(?:\n|$))*/m.exec(
       body,
@@ -779,31 +792,30 @@ function findLegacyDiagram(body: string): OptionalDiagramBlock | null {
   };
 }
 
-function omitLegacyDiagram(body: string): string {
-  const diagram = findLegacyDiagram(body);
-  return diagram ? `${body.slice(0, diagram.start)}${body.slice(diagram.end)}` : body;
+function omitLegacyVisual(body: string): string {
+  const visual = findLegacyVisual(body);
+  return visual ? `${body.slice(0, visual.start)}${body.slice(visual.end)}` : body;
 }
 
-function omitAnyDiagram(body: string): string {
-  return omitLegacyDiagram(omitOptionalDiagram(body));
+function omitAnyVisual(body: string): string {
+  return omitLegacyVisual(omitOptionalVisual(body));
 }
 
-
-function existingDiagramBlock(body: string | undefined): string | undefined {
-  return body === undefined ? undefined : findOptionalDiagram(body)?.body;
+function existingVisualBlock(body: string | undefined): string | undefined {
+  return body === undefined ? undefined : findOptionalVisual(body)?.body;
 }
 
 /**
- * Replace the lifecycle marker, dropping only the optional diagram block when
- * the result would otherwise exceed the sticky budget (e.g. a webhook refresh
- * added reopened finding rows or a retained diagram plus a grown marker pushed
- * past the cap). Findings and state are never trimmed to make room.
+ * Replace the lifecycle marker, dropping only the optional visualization block
+ * when the result would otherwise exceed the sticky budget (e.g. a webhook
+ * refresh added reopened finding rows or a retained visualization plus a grown
+ * marker pushed past the cap). Findings and state are never trimmed to make room.
  */
 export function replaceStateMarkerWithinBudget(body: string, state: ReviewState): string {
   const updated = replaceStateMarker(body, state);
   if (Buffer.byteLength(updated, 'utf8') <= MAX_STICKY_COMMENT_BYTES) return updated;
-  const withoutDiagram = omitAnyDiagram(body);
-  if (withoutDiagram !== body) return replaceStateMarker(withoutDiagram, state);
+  const withoutVisual = omitAnyVisual(body);
+  if (withoutVisual !== body) return replaceStateMarker(withoutVisual, state);
   return updated;
 }
 /** Render the human-readable sticky summary; fixed and dismissed findings stay hidden. */
@@ -893,25 +905,25 @@ export function renderStickyComment(input: StickyCommentInput): string {
 
   const baseline = [...head, ...walkthroughLines, ...tail].join('\n');
 
-  // Full reviews replace the map; incremental reviews preserve the last
-  // code-owned map when no delta diagram is intentionally generated.
-  const diagram = result.diagram;
-  const preservedDiagram =
-    !diagram && input.preserveExistingDiagram ? existingDiagramBlock(input.existingBody) : undefined;
-  if (!diagram && !preservedDiagram) return baseline;
+  // Full reviews replace the visualization; incremental reviews preserve the
+  // last code-owned visualization when no delta visual is intentionally generated.
+  const visual = result.visualize;
+  const preservedVisual =
+    !visual && input.preserveExistingVisual ? existingVisualBlock(input.existingBody) : undefined;
+  if (!visual && !preservedVisual) return baseline;
 
-  let diagramBlock: string | undefined = preservedDiagram;
-  if (diagram) {
+  let visualBlock: string | undefined = preservedVisual;
+  if (visual) {
     try {
-      const section = renderDiagramSection(diagram, 'mermaid');
-      diagramBlock = `${DIAGRAM_SECTION_START}\n${section}\n${DIAGRAM_SECTION_END}`;
+      const section = renderVisualSection(visual, 'mermaid');
+      visualBlock = `${VISUAL_SECTION_START}\n${section}\n${VISUAL_SECTION_END}`;
     } catch {
       return baseline;
     }
   }
 
-  // The map is the high-level explanation, before per-file walkthrough detail.
-  const candidate = [...head, diagramBlock!, ...walkthroughLines, ...tail].join('\n');
+  // The visualization is the high-level explanation, before per-file walkthrough detail.
+  const candidate = [...head, visualBlock!, ...walkthroughLines, ...tail].join('\n');
   if (Buffer.byteLength(candidate, 'utf8') > MAX_STICKY_COMMENT_BYTES) return baseline;
   return candidate;
 }
@@ -942,7 +954,7 @@ export function refreshStickyCommentState(body: string, state: ReviewState): str
   const sectionEnd = score >= 0 && score < footer ? score : footer;
   const after = body.slice(sectionEnd);
   // Replace only the generated findings table. Keep the score, demoted
-  // findings, run history, footer, and any previously rendered diagram.
+  // findings, run history, footer, and any previously rendered visualization.
   return replaceStateMarkerWithinBudget(`${before}${lines.join('\n')}${after}`, state);
 }
 

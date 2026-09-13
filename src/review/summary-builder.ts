@@ -1,6 +1,6 @@
 import type { ReviewResult, Severity } from '../types/review.js';
-import type { DiagramArtifact } from '../types/diagram.js';
-import { renderDiagramSection } from './diagram-renderer.js';
+import type { VisualArtifact } from '../types/visual.js';
+import { renderVisualSection } from './visual-renderer.js';
 import { renderTelemetrySummary } from './telemetry-summary.js';
 const SEVERITY_EMOJI: Record<Severity, string> = {
   critical: '🔴',
@@ -29,7 +29,7 @@ function renderThreadCleanup(
   ];
   if (cleanup.failed > 0) {
     lines.push(
-      `${cleanup.failed} inline thread(s) remain unresolved, usually because the GitHub token lacks thread-resolution permission.`,
+      `${cleanup.failed} inline thread(s) remain unresolved; see the logs for the GitHub API error.`,
     );
   }
   return lines;
@@ -45,8 +45,8 @@ function renderThreadCleanup(
 export function buildSummary(result: ReviewResult): string {
   const lines: string[] = ['## 🤖 FiscalCR Code Review', '', result.summary, ''];
 
-  const diagram = renderOptionalDiagram(result.diagram);
-  if (diagram) lines.push(diagram, '');
+  const visual = renderOptionalVisual(result.visualize);
+  if (visual) lines.push(visual, '');
   const cleanup = renderThreadCleanup(result.threadCleanup);
   if (cleanup.length > 0) lines.push(...cleanup, '');
 
@@ -76,10 +76,10 @@ export function buildSummary(result: ReviewResult): string {
 
   lines.push('### Score\n', `**Score:** ${result.score}/100`, '');
   lines.push(...renderTelemetrySummary(result));
-  const baseline = result.diagram
-    ? buildSummary({ ...result, diagram: undefined })
+  const baseline = result.visualize
+    ? buildSummary({ ...result, visualize: undefined })
     : lines.join('\n');
-  if (!diagram || Buffer.byteLength(lines.join('\n'), 'utf8') > MAX_CHECK_SUMMARY_BYTES) {
+  if (!visual || Buffer.byteLength(lines.join('\n'), 'utf8') > MAX_CHECK_SUMMARY_BYTES) {
     return baseline;
   }
   return lines.join('\n');
@@ -89,10 +89,10 @@ export function buildSummary(result: ReviewResult): string {
  * Rendering failure is isolated: the ordinary summary, findings, and metadata
  * remain publishable when an auxiliary artifact is malformed.
  */
-function renderOptionalDiagram(diagram?: DiagramArtifact): string | undefined {
-  if (!diagram) return undefined;
+function renderOptionalVisual(visual?: VisualArtifact): string | undefined {
+  if (!visual) return undefined;
   try {
-    return renderDiagramSection(diagram, 'text');
+    return renderVisualSection(visual, 'text');
   } catch {
     return undefined;
   }

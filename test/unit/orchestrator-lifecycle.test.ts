@@ -5,8 +5,8 @@ import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import type { ReviewConfig } from '../../src/config/schema.js';
 import { fingerprintAnnotation, fingerprintMarker } from '../../src/github/fingerprint.js';
 import {
-  DIAGRAM_SECTION_END,
-  DIAGRAM_SECTION_START,
+  VISUAL_SECTION_END,
+  VISUAL_SECTION_START,
   EMPTY_COUNTS,
   parseStateMarker,
   renderStateMarker,
@@ -15,7 +15,7 @@ import {
 } from '../../src/github/review-state.js';
 import type { ReviewAnnotation } from '../../src/types/review.js';
 import type { ChatCompletionParams } from '../../src/providers/interface.js';
-import { CHANGE_DIAGRAM_PROMPT } from '../../src/pipeline/generated/change-diagram-prompt.js';
+import { VISUALIZE_PROMPT } from '../../src/pipeline/generated/visualize-prompt.js';
 
 const PATCH = '@@ -1,1 +1,11 @@\n line one\n+line two\n+line three\n+line four\n+line five\n+line six\n+line seven\n+line eight\n+line nine\n+line ten\n+line eleven';
 
@@ -96,8 +96,16 @@ interface Fixture {
     line?: number | null;
     originalLine?: number | null;
   }>;
+  reviewComments?: Array<{
+    id: number;
+    body: string;
+    path: string;
+    in_reply_to_id?: number;
+  }>;
 }
 function fakeOctokit(fixture: Fixture = {}) {
+  const reviewComments = fixture.reviewComments ? [...fixture.reviewComments] : [];
+  let nextReviewCommentId = 5000;
   const stickyBody = fixture.stickyBody ??
     (fixture.legacyState
       ? `summary\n${renderStateMarker(fixture.legacyState)}`
@@ -135,6 +143,12 @@ function fakeOctokit(fixture: Fixture = {}) {
           : { data: [] },
       ),
       createReview: vi.fn(async () => ({ data: { id: 11 } })),
+      createReplyForReviewComment: vi.fn(async ({ comment_id, body }: { comment_id: number; body: string }) => {
+        const id = nextReviewCommentId++;
+        reviewComments.push({ id, body, path: 'src/a.ts', in_reply_to_id: comment_id });
+        return { data: { id } };
+      }),
+      listReviewComments: vi.fn(async () => ({ data: reviewComments.slice() })),
       dismissReview: vi.fn(async () => ({})),
     },
     repos: {
@@ -193,9 +207,6 @@ function fakeOctokit(fixture: Fixture = {}) {
             thread: { id: variables?.threadId ?? '', isResolved: true },
           },
         };
-      }
-      if (query.includes('addPullRequestReviewThreadReply')) {
-        return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
       }
       return {};
     }),
@@ -458,6 +469,49 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(state!.blockingReviewId).toBeNull();
     expect(result.stats.critical).toBe(0);
   });
+  it('replies inline when GraphQL thread access is unavailable', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
+      reviewComments: [{ id: 101, body: fingerprintMarker(FP), path: 'src/a.ts' }],
+    });
+    octokit.graphql = undefined as never;
+
+    await new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg()).reviewPullRequest(params);
+
+    expect(octokit.pulls.createReplyForReviewComment).toHaveBeenCalledWith({
+      owner: 'o',
+      repo: 'r',
+      pull_number: 1,
+      comment_id: 101,
+      body: '✅ Finding fixed — code changed in `new-sha`.\n\n<!-- fiscalcr:resolution:v1 101:new-sha -->',
+    });
+    expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
+  });
+  it('replies inline when thread mutation is forbidden', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', isOutdated: true }],
+      reviewComments: [{ id: 101, body: fingerprintMarker(FP), path: 'src/a.ts' }],
+    });
+    const listThreads = octokit.graphql;
+    octokit.graphql = vi.fn(async (query: string, variables?: { threadId?: string }) => {
+      if (query.includes('reviewThreads')) return listThreads(query, variables);
+      throw new Error('403 Resource not accessible by integration');
+    }) as never;
+
+    await new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg()).reviewPullRequest(params);
+
+    expect(octokit.pulls.createReplyForReviewComment).toHaveBeenCalledWith({
+      owner: 'o',
+      repo: 'r',
+      pull_number: 1,
+      comment_id: 101,
+      body: '✅ Finding fixed — code changed in `new-sha`.\n\n<!-- fiscalcr:resolution:v1 101:new-sha -->',
+    });
+    expect(octokit.graphql.mock.calls.some(([query]) => (query as string).includes('resolveReviewThread'))).toBe(true);
+  });
+
   it('uses original lines to fix deletion-only delta findings', async () => {
     const octokit = fakeOctokit({
       stickyState: priorState(),
@@ -566,6 +620,35 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(result.stats.critical).toBe(2);
     expect(result.callCount).toBe(0);
   });
+  it('retries failed fixed-finding replies on a later skipped run', async () => {
+    const baseFinding = priorState().findings[0];
+    const octokit = fakeOctokit({
+      stickyState: priorState({
+        lastReviewedSha: 'new-sha',
+        blockingReviewId: null,
+        findings: [{
+          ...baseFinding,
+          status: 'fixed',
+          fixedAtSha: 'fix-sha-123456789',
+        }],
+      }),
+      reviewComments: [{ id: 101, body: fingerprintMarker(FP), path: 'src/a.ts' }],
+    });
+    octokit.pulls.createReplyForReviewComment.mockRejectedValueOnce(new Error('503'));
+    const llm = fastPathLLM([]);
+    const orchestrator = new ReviewOrchestrator(octokit as never, llm, cfg());
+
+    const first = await orchestrator.reviewPullRequest(params);
+    expect(first.threadReplies).toEqual({ attempted: 1, replied: 0, failed: 1, unavailable: true });
+    expect(llm.chatCompletion).not.toHaveBeenCalled();
+
+    const second = await orchestrator.reviewPullRequest(params);
+    expect(second.threadReplies).toEqual({ attempted: 1, replied: 1, failed: 0, unavailable: false });
+    expect(octokit.pulls.createReplyForReviewComment).toHaveBeenCalledTimes(2);
+    expect(octokit.pulls.createReplyForReviewComment.mock.calls.at(-1)?.[0].body).toContain(
+      '<!-- fiscalcr:resolution:v1 101:fix-sha-123456789 -->',
+    );
+  });
 
   it('forceFull re-reviews everything but still dedupes posted findings', async () => {
     const octokit = fakeOctokit({ stickyState: priorState() });
@@ -636,7 +719,7 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
 describe('change diagram (opt-in) in sticky lifecycle', () => {
   // Two-hunk diagram (one per changed file) — evidence ids e0/e1.
   const DIAGRAM_E0E1 = {
-    outcome: 'diagram',
+    outcome: 'visualize',
     nodes: [
       { id: 'n1', label: 'Request handler', change: 'modified', evidence: ['e0'] },
       { id: 'n2', label: 'Input validation', change: 'added', evidence: ['e1'] },
@@ -649,7 +732,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
   };
   // Single-hunk diagram (delta scope reviews only one selected file) — id e0.
   const DIAGRAM_E0 = {
-    outcome: 'diagram',
+    outcome: 'visualize',
     nodes: [
       { id: 'n1', label: 'Request handler', change: 'modified', evidence: ['e0'] },
       { id: 'n2', label: 'Input validation', change: 'added', evidence: ['e0'] },
@@ -662,7 +745,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
   function diagramLLM(diagramJson: unknown, base = fastPathLLM([FINDING])) {
     return {
       chatCompletion: vi.fn(async (params: ChatCompletionParams) => {
-        if (params.messages[0].content === CHANGE_DIAGRAM_PROMPT) {
+        if (params.messages[0].content === VISUALIZE_PROMPT) {
           return {
             content: JSON.stringify(diagramJson),
             usage: { input: 100, output: 50, cached: 10 },
@@ -677,13 +760,13 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
   function diagramFailingLLM(mode: 'throw' | 'malformed' | 'truncated') {
     return {
       chatCompletion: vi.fn(async (params: ChatCompletionParams) => {
-        if (params.messages[0].content === CHANGE_DIAGRAM_PROMPT) {
+        if (params.messages[0].content === VISUALIZE_PROMPT) {
           if (mode === 'throw') throw new Error('diagram provider exploded');
           if (mode === 'malformed') {
             // Valid JSON but a dangling edge endpoint -> rejected by the parser.
             return {
               content: JSON.stringify({
-                outcome: 'diagram',
+                outcome: 'visualize',
                 nodes: [{ id: 'n1', label: 'Handler', change: 'modified', evidence: ['e0'] }],
                 edges: [{ from: 'n1', to: 'nX', label: 'x', change: 'added', evidence: ['e0'] }],
               }),
@@ -692,7 +775,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
           }
           // Truncated JSON -> extractJson rejects it as a unit.
           return {
-            content: '{"outcome":"diagram","nodes":[{"id":"n1"',
+            content: '{"outcome":"visualize","nodes":[{"id":"n1"',
             usage: { input: 100, output: 50, cached: 10 },
           };
         }
@@ -723,7 +806,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
       },
       review: {
         ...DEFAULT_CONFIG.review,
-        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+        visualize: { ...DEFAULT_CONFIG.review.visualize, enabled: true },
       },
     };
     const orchestrator = new ReviewOrchestrator(octokit as never, llm, config);
@@ -731,7 +814,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     const result = await orchestrator.reviewPullRequest(params);
 
     const allCalls = llm.chatCompletion.mock.calls.map(([p]) => p);
-    const diagramCalls = allCalls.filter((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT);
+    const diagramCalls = allCalls.filter((p) => p.messages[0].content === VISUALIZE_PROMPT);
     expect(diagramCalls).toHaveLength(1);
     expect(diagramCalls[0].model).toBe('k3-256k');
     expect(result.callCount).toBe(allCalls.length);
@@ -743,9 +826,9 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     });
 
     const body = savedBody(octokit);
-    expect(body).toContain('### Concept map');
+    expect(body).toContain('### Concept visualization');
     expect(body).toContain('```mermaid');
-    expect(result.diagram?.scope).toBe('full');
+    expect(result.visualize?.scope).toBe('full');
   });
 
   it('default off: no diagram call and no graph in the published body', async () => {
@@ -756,8 +839,8 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     const result = await orchestrator.reviewPullRequest(params);
 
     const allCalls = llm.chatCompletion.mock.calls.map(([p]) => p);
-    expect(allCalls.some((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
-    expect(result.diagram).toBeUndefined();
+    expect(allCalls.some((p) => p.messages[0].content === VISUALIZE_PROMPT)).toBe(false);
+    expect(result.visualize).toBeUndefined();
     const body = savedBody(octokit);
     expect(body).not.toContain('### Concept map');
   });
@@ -765,7 +848,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
   it('delta scope preserves the last diagram without generating a replacement', async () => {
     const prior = priorState();
     const historicalGraph = [
-      DIAGRAM_SECTION_START,
+      VISUAL_SECTION_START,
       '### Concept map',
       '',
       '```mermaid',
@@ -774,7 +857,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
       '  n1["Input"]',
       '  n0 -->|"validates"| n1',
       '```',
-      DIAGRAM_SECTION_END,
+      VISUAL_SECTION_END,
     ].join('\n');
     const octokit = fakeOctokit({
       stickyState: prior,
@@ -785,13 +868,13 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     const orchestrator = new ReviewOrchestrator(
       octokit as never,
       llm,
-      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+      cfg({ visualize: { ...DEFAULT_CONFIG.review.visualize, enabled: true } }),
     );
 
     const result = await orchestrator.reviewPullRequest(params);
 
-    expect(result.diagram).toBeUndefined();
-    expect(llm.chatCompletion.mock.calls.some(([p]) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
+    expect(result.visualize).toBeUndefined();
+    expect(llm.chatCompletion.mock.calls.some(([p]) => p.messages[0].content === VISUALIZE_PROMPT)).toBe(false);
     const body = savedBody(octokit);
     expect(body).toContain(historicalGraph);
   });
@@ -810,7 +893,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
 
     const result = await orchestrator.reviewPullRequest(params);
 
-    expect(result.diagram).toBeUndefined();
+    expect(result.visualize).toBeUndefined();
     const body = savedBody(octokit);
     expect(body).toBeDefined();
     expect(body).not.toContain('### Visual changes');
@@ -836,7 +919,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     const orchestrator = new ReviewOrchestrator(
       octokit as never,
       llm,
-      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+      cfg({ visualize: { ...DEFAULT_CONFIG.review.visualize, enabled: true } }),
     );
 
     const result = await orchestrator.reviewPullRequest(params);
@@ -867,13 +950,13 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     const orchestrator = new ReviewOrchestrator(
       octokit as never,
       llm,
-      cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+      cfg({ visualize: { ...DEFAULT_CONFIG.review.visualize, enabled: true } }),
     );
 
     const result = await orchestrator.reviewPullRequest(params);
 
-    expect(result.diagram).toBeDefined();
-    expect(result.diagram!.partial).toBe(true);
+    expect(result.visualize).toBeDefined();
+    expect(result.visualize!.partial).toBe(true);
     // Fix authority / conclusion come from the review, not from the (partial) diagram.
     expect(result.stats.critical).toBe(1);
     const check = octokit.checks.update.mock.calls.at(-1)?.[0] as { conclusion: string };
@@ -888,14 +971,14 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
       const orchestrator = new ReviewOrchestrator(
         octokit as never,
         llm,
-        cfg({ diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true } }),
+        cfg({ visualize: { ...DEFAULT_CONFIG.review.visualize, enabled: true } }),
       );
 
       const result = await orchestrator.reviewPullRequest(params);
 
       // The ordinary review result is intact.
       expect(result.stats.critical).toBe(1);
-      expect(result.diagram).toBeUndefined();
+      expect(result.visualize).toBeUndefined();
       expect(result.callCount).toBe(2);
       expect(result.tokensUsed).toEqual(
         mode === 'throw'

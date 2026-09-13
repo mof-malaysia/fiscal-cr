@@ -49,7 +49,7 @@ That concludes my review.`;
   });
   it('rejects a valid object smuggled inside a truncated outer array when repair is off', () => {
     const graph = JSON.stringify({
-      outcome: 'diagram',
+      outcome: 'visualize',
       nodes: [{ id: 'a', label: 'Validation', change: 'modified', evidence: [] }],
       edges: [],
     });
@@ -57,11 +57,11 @@ That concludes my review.`;
     expect(extractJson(raw, { repairTruncated: false })).toBeNull();
   });
   it('rejects a fenced block whose JSON body is malformed when repair is off', () => {
-    const raw = '```json\n{"outcome":"diagram"},\n```';
+    const raw = '```json\n{"outcome":"visualize"},\n```';
     expect(extractJson(raw, { repairTruncated: false })).toBeNull();
   });
   it('still accepts a complete fenced JSON object when repair is off', () => {
-    const graph = { outcome: 'diagram', nodes: [], edges: [] };
+    const graph = { outcome: 'visualize', nodes: [], edges: [] };
     const raw = '```json\n' + JSON.stringify(graph) + '\n```';
     expect(extractJson(raw, { repairTruncated: false })).toEqual(graph);
   });

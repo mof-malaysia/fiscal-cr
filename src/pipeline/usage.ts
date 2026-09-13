@@ -237,7 +237,7 @@ export class UsageTracker {
   }
 
   stageCosts(): StageCostBreakdown[] {
-    const stageOrder: TelemetryStage[] = ['intent', 'group-review', 'synthesis', 'fast-path', 'diagram'];
+    const stageOrder: TelemetryStage[] = ['intent', 'group-review', 'synthesis', 'fast-path', 'visualize'];
     return stageOrder
       .map((stage) => this.costsByStage.get(stage))
       .filter((summary): summary is StageCostBreakdown => summary !== undefined)

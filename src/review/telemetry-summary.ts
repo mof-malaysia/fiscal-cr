@@ -17,7 +17,7 @@ const STAGE_LABELS: Record<ReviewStage, string> = {
   'group-review': 'Group reviews',
   synthesis: 'Finding synthesis',
   'fast-path': 'Fast-path review',
-  diagram: 'Change diagram',
+  visualize: 'Visualization',
 };
 
 function stageLabel(stage: keyof typeof STAGE_LABELS): string {
