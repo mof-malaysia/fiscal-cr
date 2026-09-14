@@ -6,9 +6,12 @@ import type { ChatCompletionParams } from '../../src/providers/interface.js';
 import { UsageTracker, type TelemetryEvent } from '../../src/pipeline/usage.js';
 import { runFastPath } from '../../src/pipeline/fast-path.js';
 import type { PullRequestContext } from '../../src/types/review.js';
-const PATCH = '@@ -1,2 +1,3 @@\n line one\n+line two\n+line three';
+import { CHANGE_DIAGRAM_PROMPT } from '../../src/pipeline/generated/change-diagram-prompt.js';
+const PATCH = '@@ -1,1 +1,3 @@\n line one\n+line two\n+line three';
 
-function fakeOctokit(files: Array<{ filename: string; patch?: string }>) {
+function fakeOctokit(
+  files: Array<{ filename: string; patch?: string; additions?: number; deletions?: number }>,
+) {
   return {
     checks: {
       create: vi.fn(async () => ({ data: { id: 42 } })),
@@ -32,8 +35,8 @@ function fakeOctokit(files: Array<{ filename: string; patch?: string }>) {
               data: files.map((f) => ({
                 filename: f.filename,
                 status: 'modified',
-                additions: 2,
-                deletions: 0,
+                additions: f.additions ?? 2,
+                deletions: f.deletions ?? 0,
                 patch: f.patch ?? PATCH,
               })),
             }
@@ -86,6 +89,8 @@ const isSynthesisCall = (p: ChatCompletionParams) =>
   p.messages[0].content.includes('review lead');
 const isFastPathCall = (p: ChatCompletionParams) =>
   p.messages[0].content.includes('"intent"') && p.messages[0].content.includes('"findings"');
+const isDiagramCall = (p: ChatCompletionParams) =>
+  p.messages[0].content === CHANGE_DIAGRAM_PROMPT;
 
 function cfg(pipelineOverrides: Partial<ReviewConfig['pipeline']> = {}): ReviewConfig {
   return {
@@ -158,9 +163,25 @@ const groupResponse = (title: string) => ({
     },
   ],
 });
+const BIG_PATCH = `@@ -1,1 +1,11 @@
+ line one
++line two
++line three
++line four
++line five
++line six
++line seven
++line eight
++line nine
++line ten
++line eleven`;
+
 
 function bigPrOctokit() {
-  const octokit = fakeOctokit([{ filename: 'src/a.ts' }, { filename: 'lib/b.ts' }]);
+  const octokit = fakeOctokit([
+    { filename: 'src/a.ts', patch: BIG_PATCH, additions: 10 },
+    { filename: 'lib/b.ts', patch: BIG_PATCH, additions: 10 },
+  ]);
   octokit.repos.getContent = vi.fn(async ({ path }: { path: string }) => ({
     data: {
       content: Buffer.from(`// ${path}\n${'x'.repeat(90_000)}`).toString('base64'),
@@ -248,6 +269,39 @@ describe('ReviewOrchestrator pipeline routing', () => {
       ]),
     );
   });
+  it('small PR with diagrams enabled skips the auxiliary diagram call', async () => {
+    const octokit = fakeOctokit([{ filename: 'src/a.ts' }]);
+    const llm = scriptedLLM([
+      {
+        match: isFastPathCall,
+        content: {
+          intent: 'Small change',
+          summary: 'Looks fine',
+          score: 95,
+          walkthrough: [{ path: 'src/a.ts', summary: 'tweak' }],
+          findings: [],
+        },
+      },
+    ]);
+    const config = {
+      ...cfg(),
+      review: {
+        ...DEFAULT_CONFIG.review,
+        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+      },
+    };
+    const result = await new ReviewOrchestrator(octokit as never, llm, config).reviewPullRequest({
+      owner: 'o',
+      repo: 'r',
+      pullNumber: 1,
+      headSha: 'head-sha',
+    });
+
+    expect(llm.calls).toHaveLength(1);
+    expect(llm.calls.some(isDiagramCall)).toBe(false);
+    expect(result.diagram).toBeUndefined();
+  });
+
 
   it('large PR runs intent + N groups + synthesis and aggregates usage', async () => {
     // Two files with big contents so the pipeline splits them into 2 groups.
@@ -629,5 +683,73 @@ describe('ReviewOrchestrator pipeline routing', () => {
 
     const updateCall = octokit.checks.update.mock.calls.at(-1)?.[0] as { conclusion: string };
     expect(updateCall.conclusion).toBe('failure');
+  });
+});
+
+describe('change diagram generation in pipeline', () => {
+  // Two-hunk diagram (one per changed file) — evidence ids e0/e1.
+  const DIAGRAM_E0E1 = {
+    outcome: 'diagram',
+    nodes: [
+      { id: 'n1', label: 'Handler', change: 'modified', evidence: ['e0'] },
+      { id: 'n2', label: 'Validator', change: 'added', evidence: ['e1'] },
+      { id: 'n3', label: 'Store', change: 'context', evidence: ['e0', 'e1'] },
+    ],
+    edges: [
+      { from: 'n1', to: 'n2', label: 'validates', change: 'added', evidence: ['e0'] },
+      { from: 'n2', to: 'n3', label: 'persists', change: 'modified', evidence: ['e1'] },
+    ],
+  };
+
+  it('large PR with diagram enabled adds exactly one synthesis-model diagram call and counts its spend', async () => {
+    const llm = scriptedLLM([
+      ...multiPassScript(),
+      { match: isDiagramCall, content: DIAGRAM_E0E1 },
+    ]);
+    const config = {
+      ...cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+      review: {
+        ...DEFAULT_CONFIG.review,
+        diagram: { ...DEFAULT_CONFIG.review.diagram, enabled: true },
+      },
+      modelPreset: 'team',
+      modelPresets: {
+        team: {
+          intent: 'team-intent',
+          fastPath: 'team-fast-path',
+          groupReview: 'team-group-review',
+          synthesis: 'team-synthesis',
+        },
+      },
+      models: {},
+      model: 'legacy-model',
+    };
+    const orchestrator = new ReviewOrchestrator(bigPrOctokit() as never, llm, config);
+
+    const result = await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    const allCalls = llm.calls;
+    const diagramCalls = allCalls.filter(isDiagramCall);
+    expect(diagramCalls).toHaveLength(1);
+    expect(allCalls).toHaveLength(5); // 1 intent + 2 groups + 1 synthesis + 1 diagram
+    expect(diagramCalls[0].model).toBe('team-synthesis');
+    expect(result.callCount).toBe(5);
+    expect(result.tokensUsed).toEqual({ input: 500, output: 250, cached: 50 });
+    expect(result.diagram?.scope).toBe('full');
+  });
+
+  it('large PR with diagram disabled adds no diagram call', async () => {
+    const llm = scriptedLLM(multiPassScript());
+    const orchestrator = new ReviewOrchestrator(
+      bigPrOctokit() as never,
+      llm,
+      cfg({ fastPathThreshold: 1_000, groupTokenBudget: 30_000 }),
+    );
+
+    const result = await orchestrator.reviewPullRequest({ owner: 'o', repo: 'r', pullNumber: 1, headSha: 'head-sha' });
+
+    expect(llm.chatCompletion).toHaveBeenCalledTimes(4);
+    expect(result.callCount).toBe(4);
+    expect(result.diagram).toBeUndefined();
   });
 });

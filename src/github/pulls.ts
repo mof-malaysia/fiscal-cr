@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from './client.js';
 import type { PullRequestContext, ChangedFile } from '../types/review.js';
 import type { ReviewConfig } from '../config/schema.js';
 import { ApiFileSource, type FileContentSource } from '../review/file-source.js';
@@ -12,7 +12,7 @@ export interface ExtractOptions {
 }
 
 export async function extractPullRequestContext(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   owner: string,
   repo: string,
   pullNumber: number,

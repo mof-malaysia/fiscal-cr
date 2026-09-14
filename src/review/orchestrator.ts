@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from '../github/client.js';
 import { modelForRole, type ReviewConfig } from '../config/schema.js';
 import type {
   PullRequestContext,
@@ -25,20 +25,21 @@ import {
   applyManualThreadResolution,
   reconcileFindingInventory,
   renderStickyComment,
-  replaceStateMarker,
+  replaceStateMarkerWithinBudget,
   saveStickyComment,
   withReviewStateLock,
   type FindingRecord,
   type StickyComment,
   type ReviewState,
 } from '../github/review-state.js';
-import { listFiscalcrThreads, resolveOutdatedThreads, type FiscalcrThread } from '../github/threads.js';
+import { hasGraphql, listFiscalcrThreads, resolveOutdatedThreads, type FiscalcrThread } from '../github/threads.js';
 import { decideScope, type ScopeDecision } from './delta.js';
 import { filterFiles } from './file-filter.js';
 import { buildSummary } from './summary-builder.js';
 import { ApiFileSource, LocalFileSource } from './file-source.js';
 import { countBySeverity, deterministicScore } from '../pipeline/pass3-synthesis.js';
 import { runReviewPipeline } from '../pipeline/run-review.js';
+import { generateChangeDiagram, shouldGenerateChangeDiagram } from '../pipeline/change-diagram.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
 import { resolvePricingAsync, type PricingContext } from '../utils/pricing.js';
@@ -154,7 +155,7 @@ function planStickyPublication(input: {
 
 export class ReviewOrchestrator {
   constructor(
-    private octokit: Octokit,
+    private octokit: FiscalcrOctokit,
     private llm: LLMProvider,
     private config: ReviewConfig,
     private options: OrchestratorOptions = {},
@@ -301,6 +302,34 @@ export class ReviewOrchestrator {
         workspaceRoot: this.options.workspaceRoot,
         deltaHint,
       });
+
+      // Step 5b: Optionally generate a bounded change diagram before the final
+      // cost accounting. A disabled config or unusable evidence makes no model
+      // call; any auxiliary failure is contained locally so the ordinary review
+      // result and conclusion are never affected.
+      if (
+        scope.mode === 'full' &&
+        this.config.review.diagram.enabled &&
+        shouldGenerateChangeDiagram(prContext, this.config.review.diagram)
+      ) {
+        try {
+          const diagram = await generateChangeDiagram(this.llm, prContext, this.config, usage, {
+            scope: 'full',
+            reviewedPaths: result.reviewedPaths,
+          });
+          if (diagram) {
+            result.diagram = diagram;
+          }
+        } catch {
+          // Minimal protection: the generator guards its own steps, but an
+          // unexpected rejection must not leak into the review outcome.
+          logger.warn('Change diagram generation failed; continuing without diagram');
+        }
+        // Refresh token/call totals so diagram spend — including any invalid or
+        // failed call — is reflected in the returned accounting.
+        result.tokensUsed = usage.total();
+        result.callCount = usage.calls();
+      }
       result.costEstimate = {
         usd: roundCost(usage.cost()),
         ...pricingResolution,
@@ -318,6 +347,7 @@ export class ReviewOrchestrator {
           scope,
           state,
           commentId: stickyRef?.commentId ?? null,
+          commentBody: stickyRef?.body,
         }),
       );
     } catch (err) {
@@ -404,11 +434,12 @@ export class ReviewOrchestrator {
         repo: target.repo,
         pullNumber: sticky.pullNumber,
         commentId: sticky.commentId,
-        body: replaceStateMarker(sticky.body, {
+        body: replaceStateMarkerWithinBudget(sticky.body, {
           ...state,
           checkRunId: target.checkRunId,
           checkRunHeadSha: sticky.headSha,
         }),
+        expectedBody: sticky.body,
       });
     }
 
@@ -487,17 +518,22 @@ export class ReviewOrchestrator {
     scope: ScopeDecision;
     state: ReviewState | null;
     commentId: number | null;
+    commentBody?: string;
   }): Promise<ReviewResult> {
     const { checkRunId, prContext, result, scope, state } = input;
     const { owner, repo, pullNumber, headSha } = prContext;
     const commentsCfg = this.config.review.comments;
     let threads: Array<{ fingerprint: string; id: string; isResolved: boolean }> = [];
-    let threadsAvailable = true;
-    try {
-      threads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
-    } catch (err) {
-      threadsAvailable = false;
-      logger.warn({ err }, 'Could not list review threads — lifecycle remains threadless');
+    let threadsAvailable = hasGraphql(this.octokit);
+    if (threadsAvailable) {
+      try {
+        threads = await listFiscalcrThreads(this.octokit, { owner, repo, pullNumber });
+      } catch (err) {
+        threadsAvailable = false;
+        logger.warn({ err }, 'Could not list review threads — lifecycle remains threadless');
+      }
+    } else {
+      logger.warn('GraphQL unavailable — lifecycle remains threadless');
     }
 
     const reviewedPaths = scope.mode === 'full' ? result.reviewedPaths : [];
@@ -655,13 +691,15 @@ export class ReviewOrchestrator {
     }
     let stateToSave = newState;
     let stickyCommentId = input.commentId;
-    let expectedEtag: string | undefined;
+    let expectedBody = input.commentBody;
     try {
       const latestSticky = await loadReviewState(this.octokit, { owner, repo, pullNumber });
+      if (latestSticky) {
+        expectedBody = latestSticky.body;
+      }
       if (latestSticky?.state) {
         stateToSave = mergeConcurrentReviewState(stateForPublication, newState, latestSticky.state);
         stickyCommentId = latestSticky.commentId;
-        expectedEtag = latestSticky.etag;
       }
     } catch (err) {
       logger.warn({ err }, 'Could not reread lifecycle state before save — preserving planned state');
@@ -671,7 +709,7 @@ export class ReviewOrchestrator {
       repo,
       pullNumber,
       commentId: stickyCommentId,
-      expectedEtag,
+      expectedBody,
       body: renderStickyComment({
         result,
         state: stateToSave,

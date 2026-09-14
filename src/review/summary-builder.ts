@@ -1,5 +1,7 @@
 import type { ReviewResult, Severity } from '../types/review.js';
+import type { DiagramArtifact } from '../types/diagram.js';
 import { calculateCost } from '../utils/tokens.js';
+import { renderDiagramSection } from './diagram-renderer.js';
 const SEVERITY_EMOJI: Record<Severity, string> = {
   critical: '🔴',
   warning: '🟡',
@@ -64,5 +66,34 @@ export function buildSummary(result: ReviewResult): string {
   }
   lines.push('</details>');
 
-  return lines.join('\n');
+  const baseline = lines.join('\n');
+  return appendOptionalDiagram(baseline, result.diagram);
+}
+
+/**
+ * Conservative UTF-8 budget for the complete App check summary body. If the
+ * optional change-diagram section would push the body past this limit, omit it
+ * and publish the unchanged baseline (findings and state are never truncated).
+ */
+const MAX_CHECK_SUMMARY_BYTES = 60_000;
+
+/**
+ * Append the optional non-visual (text) change-diagram section to the App check
+ * summary. The plain-text renderer is used so no raw Mermaid syntax reaches this
+ * surface. Rendering failure is isolated: any error returns the untouched
+ * baseline so the review conclusion and findings stay intact.
+ */
+function appendOptionalDiagram(baseline: string, diagram?: DiagramArtifact): string {
+  if (!diagram) return baseline;
+  let section: string;
+  try {
+    section = renderDiagramSection(diagram, 'text');
+  } catch {
+    return baseline;
+  }
+  const candidate = `${baseline}\n\n${section}`;
+  if (Buffer.byteLength(candidate, 'utf8') > MAX_CHECK_SUMMARY_BYTES) {
+    return baseline;
+  }
+  return candidate;
 }

@@ -81,10 +81,18 @@ jobs:
 | `tokens_used`       | Total input + output tokens          |
 | `cost_estimate`     | Estimated API cost in USD            |
 
-### Notes on precedence
+### Notes on precedence and PR-head configuration
 
-- Repo config is loaded from `.fiscalcr-review.yml` by default.
-- Action inputs override repo config only when you explicitly provide them.
+- Action mode loads review policy from `.fiscalcr-review.yml` at the reviewed
+  pull request's `headSha`, while `provider` and `base_url` are pinned to the
+  same file at the trusted base revision. Non-PR contexts keep the default
+  branch lookup behavior.
+- Explicit Action inputs override repository configuration only when provided.
+  In particular, `provider`, `model`, `base_url`, `language`, `fail_on`, and
+  `experimental` inputs take precedence over their config-file values.
+- Treat other PR-head configuration as untrusted input for forked or otherwise
+  untrusted pull requests. The trusted base revision prevents PR config from
+  redirecting the provider request containing the API key.
 - Model presets (`modelPreset` selector, `modelPresets` custom maps) are
   configured in the repo's `.fiscalcr-review.yml`; there is no Action input
   for preset selection. The `model` input remains a global override and wins
@@ -226,6 +234,10 @@ review:
   minSeverity: suggestion
   maxAnnotations: 30
   failOn: critical
+  diagram:
+    enabled: false # opt-in: publish a visual change diagram alongside the review
+    minChangedFiles: 2 # minimum reviewable files before diagram generation
+    minChangedLines: 20 # minimum additions plus deletions before generation
   incremental:
     enabled: true # re-review only files changed since the last reviewed commit
     maxDeltaFiles: 150 # larger deltas fall back to a full review
@@ -430,6 +442,28 @@ log line. Webhook transient failures return non-2xx for observability, but
 GitHub redelivery durability is not guaranteed by FiscalCR. Use the
 `concurrency` group shown in the Quick Start so concurrent runs on the same PR
 do not race state.
+
+### Visual change diagrams
+
+Set `review.diagram.enabled: true` in `.fiscalcr-review.yml` to publish an
+optional visual change diagram alongside the review. The feature is opt-in and
+disabled by default.
+- To avoid noisy diagrams and unnecessary model spend, generation is skipped
+  before the model call unless the configured file and line thresholds are met.
+
+- Diagrams are generated from bounded evidence of the reviewed patch only
+  (the diff and changed files). Generation introduces no new analysis and
+  never changes any finding, severity, or review state.
+- PR surfaces render the diagram as Mermaid: both the sticky summary comment
+  and the `legacy` comment mode embed a Mermaid diagram.
+- App check runs and GitHub Action check-run summaries use a readable text
+  fallback instead of Mermaid.
+- Generation is auxiliary and nonfatal. If it fails, the review is still
+  published without the diagram; findings and state are unaffected.
+- Incremental summaries do not duplicate the diagram; only full reviews
+  publish it.
+- When the feature is disabled, a normal re-render removes any previously
+  published diagram.
 
 ## Cost model
 

@@ -5,13 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "build:action": "ncc build action/index.ts -o action/dist",
+    "generate:prompts": "node scripts/embed-prompts.mjs",
+    "dev": "pnpm generate:prompts && tsx watch src/index.ts",
+    "build": "pnpm generate:prompts && tsc",
+    "build:action": "pnpm generate:prompts && ncc build action/index.ts -o action/dist",
     "start": "node dist/index.js",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "lint": "tsc --noEmit",
+    "test": "pnpm generate:prompts && vitest run",
+    "test:watch": "pnpm generate:prompts && vitest",
+    "lint": "pnpm generate:prompts && tsc --noEmit",
     "clean": "rm -rf dist action/dist"
   },
   "keywords": [

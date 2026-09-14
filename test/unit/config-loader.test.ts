@@ -30,6 +30,26 @@ describe('loadConfig', () => {
     expect(config.experimental).toBe(true);
   });
 
+  it('passes the reviewed ref when loading PR-head config', async () => {
+    const getContent = vi.fn().mockResolvedValue({
+      data: {
+        content: Buffer.from('model: pr-head-model\n', 'utf8').toString('base64'),
+        encoding: 'base64',
+      },
+    });
+    const octokit = { repos: { getContent } } as any;
+
+    const config = await loadConfig(octokit, 'owner', 'repo', '.fiscalcr-review.yml', 'head-sha');
+
+    expect(getContent).toHaveBeenCalledWith({
+      owner: 'owner',
+      repo: 'repo',
+      path: '.fiscalcr-review.yml',
+      ref: 'head-sha',
+    });
+    expect(config.model).toBe('pr-head-model');
+  });
+
   it('keeps arbitrary modelParams keys via passthrough and validates typed ones', async () => {
     const yaml = [
       'provider: openai',
@@ -373,5 +393,88 @@ describe('loadConfig', () => {
     await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow(
       'GitHub API unavailable',
     );
+  });
+});
+describe('review.diagram.enabled config', () => {
+  it('defaults review.diagram.enabled to false', () => {
+    expect(DEFAULT_CONFIG.review.diagram.enabled).toBe(false);
+  });
+  it('defaults diagram complexity thresholds', () => {
+    expect(DEFAULT_CONFIG.review.diagram.minChangedFiles).toBe(2);
+    expect(DEFAULT_CONFIG.review.diagram.minChangedLines).toBe(20);
+  });
+
+
+  it('opts in via review.diagram.enabled: true', async () => {
+    const yaml = 'review:\n  diagram:\n    enabled: true\n';
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
+    expect(config.review.diagram.enabled).toBe(true);
+  });
+  it('loads configurable diagram complexity thresholds', async () => {
+    const yaml = [
+      'review:',
+      '  diagram:',
+      '    enabled: true',
+      '    minChangedFiles: 3',
+      '    minChangedLines: 40',
+      '',
+    ].join('\n');
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
+    expect(config.review.diagram).toMatchObject({
+      enabled: true,
+      minChangedFiles: 3,
+      minChangedLines: 40,
+    });
+  });
+
+  it('rejects invalid diagram complexity thresholds', async () => {
+    const yaml = 'review:\n  diagram:\n    minChangedFiles: 0\n';
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+    await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
+  });
+
+
+  it('rejects a non-boolean (string) review.diagram.enabled', async () => {
+    const yaml = 'review:\n  diagram:\n    enabled: "yes"\n';
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+    await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
+  });
+
+  it('rejects a numeric review.diagram.enabled', async () => {
+    const yaml = 'review:\n  diagram:\n    enabled: 1\n';
+    const octokit = {
+      repos: {
+        getContent: vi.fn().mockResolvedValue({
+          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+        }),
+      },
+    } as any;
+    await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
   });
 });

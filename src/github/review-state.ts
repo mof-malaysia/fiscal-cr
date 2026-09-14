@@ -1,6 +1,7 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from './client.js';
 import type { ReviewAnnotation, ReviewResult, ReviewedRange, Severity, WalkthroughEntry } from '../types/review.js';
 import { fingerprintAnnotation } from './fingerprint.js';
+import { renderDiagramSection } from '../review/diagram-renderer.js';
 import { logger } from '../utils/logger.js';
 
 const STATE_MARKER_PREFIX = '<!-- fiscalcr:state:v2 ';
@@ -17,6 +18,9 @@ const MAX_AUTO_RESOLVED_THREADS = 50;
 export const MAX_STATE_MARKER_BYTES = 24_000;
 /** Conservative budget for the complete sticky comment body. */
 export const MAX_STICKY_COMMENT_BYTES = 60_000;
+/** Code-owned boundaries wrapping the optional generated diagram block. */
+export const DIAGRAM_SECTION_START = '<!-- fiscalcr:diagram:start -->';
+export const DIAGRAM_SECTION_END = '<!-- fiscalcr:diagram:end -->';
 
 /** Read an HTTP status code from an unknown Octokit error value. */
 function statusOf(error: unknown): number | undefined {
@@ -533,13 +537,11 @@ export interface StickyComment {
   legacyState?: LegacyReviewState;
   /** Original body, preserved as a normal enumerable field. */
   body: string;
-  /** ETag from the matched comment resource, used for optimistic updates. */
-  etag?: string;
 }
 
 /** Find the app-authored sticky FiscalCR comment by marker. */
 export async function loadReviewState(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: { owner: string; repo: string; pullNumber: number },
 ): Promise<StickyComment | null> {
   const { owner, repo, pullNumber } = params;
@@ -560,27 +562,11 @@ export async function loadReviewState(
         comment.user?.login === 'github-actions[bot]' ||
         ('performed_via_github_app' in comment && comment.performed_via_github_app !== null);
       if ((hasV2 || hasV1) && appAuthored) {
-        let etag: string | undefined;
-        const getComment = (
-          octokit.issues as typeof octokit.issues & {
-            getComment?: (params: { owner: string; repo: string; comment_id: number }) => Promise<{
-              headers?: { etag?: string };
-            }>;
-          }
-        ).getComment;
-        if (getComment) {
-          try {
-            etag = (await getComment({ owner, repo, comment_id: comment.id })).headers?.etag;
-          } catch (err) {
-            logger.debug({ err, commentId: comment.id }, 'Could not read sticky comment ETag');
-          }
-        }
         return {
           commentId: comment.id,
           state: parseV2StateMarker(body),
           body,
           ...(hasV1 ? { legacyState: parseLegacyStateMarker(body) ?? undefined } : {}),
-          ...(etag ? { etag } : {}),
         };
       }
     }
@@ -591,14 +577,15 @@ export async function loadReviewState(
 
 /** Create/update only after the caller has completed all other side effects. */
 export async function saveStickyComment(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: {
     owner: string;
     repo: string;
     pullNumber: number;
     commentId: number | null;
     body: string;
-    expectedEtag?: string;
+    /** Body observed before composing the update; detects external changes. */
+    expectedBody?: string;
   },
 ): Promise<number> {
   if (Buffer.byteLength(params.body, 'utf8') > MAX_STICKY_COMMENT_BYTES) {
@@ -606,20 +593,23 @@ export async function saveStickyComment(
   }
   const { owner, repo, pullNumber, body } = params;
   let commentId = params.commentId;
-  let expectedEtag = params.expectedEtag;
   if (commentId === null) {
     const existing = await loadReviewState(octokit, { owner, repo, pullNumber });
     commentId = existing?.commentId ?? null;
-    expectedEtag ??= existing?.etag;
   }
   if (commentId !== null) {
+    if (params.expectedBody !== undefined) {
+      const current = await loadReviewState(octokit, { owner, repo, pullNumber });
+      if (current?.commentId === commentId && current.body !== params.expectedBody) {
+        throw new Error('Sticky comment changed before update; retrying with fresh state');
+      }
+    }
     try {
       await octokit.issues.updateComment({
         owner,
         repo,
         comment_id: commentId,
         body,
-        ...(expectedEtag ? { headers: { 'If-Match': expectedEtag } } : {}),
       });
       return commentId;
     } catch (err) {
@@ -645,69 +635,170 @@ export interface StickyCommentInput {
   walkthrough?: WalkthroughEntry[];
 }
 
+/**
+ * Escape the code-owned open-findings heading in untrusted text so section
+ * refreshes cannot mistake model output for the generated lifecycle section.
+ */
+function escapeOpenFindingsHeading(value: string): string {
+  return value.replace(/^### Open findings:/gm, '###\\ Open findings:');
+}
+
+/**
+ * Locate a Markdown heading only when it begins a line, preferring the
+ * generated tail section over earlier untrusted text.
+ */
+function findLineHeadingIndex(body: string, heading: string): number {
+  let from = body.length;
+  for (;;) {
+    const idx = body.lastIndexOf(heading, from);
+    if (idx < 0) return -1;
+    const prev = idx === 0 ? '' : body[idx - 1];
+    if (prev === '' || prev === '\n') return idx;
+    from = idx - 1;
+  }
+}
+
+/**
+ * Remove the optional generated diagram block, if present. The block is
+ * code-owned and always rendered immediately before the line-start
+ * `### Open findings:` heading, and the renderer escapes every raw delimiter
+ * so untrusted content cannot forge a boundary. Anchor the lookup on that
+ * heading and require the boundary pair to be directly adjacent to it: a
+ * forged marker inside untrusted summary/intent/finding text is ignored, and
+ * when the expected pair is absent or not adjacent to the section the body is
+ * left unchanged rather than deleting content outside the generated diagram.
+ */
+  function omitOptionalDiagram(body: string): string {
+  // The code-owned diagram block is always rendered immediately before the
+  // line-start open-findings heading. Locate that heading first so a marker
+  // forged inside untrusted text cannot be mistaken for the real boundary pair.
+  const headingIdx = findLineHeadingIndex(body, '### Open findings:');
+  if (headingIdx < 0) return body;
+
+  // The end boundary must sit directly adjacent to the heading, joined only by
+  // the single newline the renderer emits between the block and the tail.
+  // Otherwise this is not the code-owned block and we delete nothing.
+  const endIdx = body.lastIndexOf(DIAGRAM_SECTION_END, headingIdx - 1);
+  if (endIdx < 0) return body;
+  if (body.slice(endIdx + DIAGRAM_SECTION_END.length, headingIdx) !== '\n') return body;
+
+  // The matching start boundary must precede the end with no extra boundary
+  // markers nested between them. A forged start/end inside the pair would break
+  // the clean boundary, so we leave the body untouched.
+  const startIdx = body.lastIndexOf(DIAGRAM_SECTION_START, endIdx - 1);
+  if (startIdx < 0) return body;
+  const between = body.slice(startIdx + DIAGRAM_SECTION_START.length, endIdx);
+  if (between.includes(DIAGRAM_SECTION_START) || between.includes(DIAGRAM_SECTION_END)) return body;
+
+  // Drop the whole code-owned block, including the newline joining it to the
+  // heading, so the refreshed body resumes cleanly at "### Open findings:".
+  return `${body.slice(0, startIdx)}${body.slice(headingIdx)}`;
+}
+
+/**
+ * Replace the lifecycle marker, dropping only the optional diagram block when
+ * the result would otherwise exceed the sticky budget (e.g. a webhook refresh
+ * added reopened finding rows or a retained diagram plus a grown marker pushed
+ * past the cap). Findings and state are never trimmed to make room.
+ */
+export function replaceStateMarkerWithinBudget(body: string, state: ReviewState): string {
+  const updated = replaceStateMarker(body, state);
+  if (Buffer.byteLength(updated, 'utf8') <= MAX_STICKY_COMMENT_BYTES) return updated;
+  if (!updated.includes(DIAGRAM_SECTION_START)) return updated;
+  return replaceStateMarker(omitOptionalDiagram(body), state);
+}
 /** Render the human-readable sticky summary; fixed and dismissed findings stay hidden. */
 export function renderStickyComment(input: StickyCommentInput): string {
   const { result, state, demoted } = input;
   const walkthrough = input.walkthrough ?? result.walkthrough;
-  const lines: string[] = [];
-  lines.push('## 🤖 FiscalCR Code Review\n');
-  if (result.intent) lines.push(`> ${result.intent}\n`);
-  lines.push(result.summary, '');
-  lines.push(`**Score:** ${result.score}/100 · last reviewed \`${state.lastReviewedSha.slice(0, 7)}\``, '');
+
+  // Head: everything up to and including the walkthrough block.
+  const head: string[] = [];
+  head.push('## 🤖 FiscalCR Code Review\n');
+  if (result.intent) head.push(`> ${escapeOpenFindingsHeading(result.intent)}\n`);
+  head.push(escapeOpenFindingsHeading(result.summary), '');
+  head.push(`**Score:** ${result.score}/100 · last reviewed \`${state.lastReviewedSha.slice(0, 7)}\``, '');
   if (state.v === 2 && state.migratedFromV1) {
-    lines.push('> Migrated from the v1 marker; prior finding statuses were not inferred.', '');
+    head.push('> Migrated from the v1 marker; prior finding statuses were not inferred.', '');
   }
 
   if (walkthrough && walkthrough.length > 0) {
-    lines.push('<details>', '<summary>📝 Walkthrough</summary>\n', '| File | Change Summary |', '|------|----------------|');
-    for (const entry of walkthrough) lines.push(`| \`${entry.path}\` | ${entry.summary.replace(/\|/g, '\\|')} |`);
-    lines.push('</details>\n');
+    head.push('<details>', '<summary>📝 Walkthrough</summary>\n', '| File | Change Summary |', '|------|----------------|');
+    for (const entry of walkthrough) {
+      head.push(`| \`${entry.path}\` | ${escapeOpenFindingsHeading(entry.summary).replace(/\|/g, '\\|')} |`);
+    }
+    head.push('</details>\n');
   }
 
+  // Tail: open findings, demoted, run history, footer, and the hidden state marker.
+  const tail: string[] = [];
   const active = state.v === 2 ? state.findings.filter((finding) => finding.status === 'open') : [];
   const openCounts = state.v === 2 ? { ...EMPTY_COUNTS } : state.openCounts;
   for (const finding of active) openCounts[finding.severity]++;
   const openTotal = state.v === 2 ? active.length : Object.values(openCounts).reduce((a, b) => a + b, 0);
-  lines.push(`### Open findings: ${openTotal}`);
+  tail.push(`### Open findings: ${openTotal}`);
   if (openTotal > 0) {
-    lines.push('| Severity | Location | Finding |', '|----------|----------|---------|');
+    tail.push('| Severity | Location | Finding |', '|----------|----------|---------|');
     const visible = [...active]
       .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
       .slice(0, MAX_VISIBLE_FINDINGS);
     for (const finding of visible) {
-      lines.push(
-        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${finding.title.replace(/\|/g, '\\|')} |`,
+      tail.push(
+        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${escapeOpenFindingsHeading(finding.title).replace(/\|/g, '\\|')} |`,
       );
     }
     if (visible.length < active.length) {
-      lines.push('', `_…${active.length - visible.length} more open finding(s) are included in the counts above._`);
+      tail.push('', `_…${active.length - visible.length} more open finding(s) are included in the counts above._`);
     }
-    lines.push('', '| Severity | Open |', '|----------|------|');
+    tail.push('', '| Severity | Open |', '|----------|------|');
     for (const [severity, count] of Object.entries(openCounts)) {
-      if (count > 0) lines.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
+      if (count > 0) tail.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
     }
   }
-  lines.push('');
+  tail.push('');
 
   if (demoted.length > 0) {
-    lines.push('<details>', `<summary>⚠️ ${demoted.length} finding(s) could not be placed inline</summary>\n`);
-    for (const d of demoted) lines.push(`- ${SEVERITY_EMOJI[d.severity]} \`${d.path}:${d.startLine}\` — ${d.title}`);
-    lines.push('\nSee the check-run annotations for details.', '</details>\n');
+    tail.push('<details>', `<summary>⚠️ ${demoted.length} finding(s) could not be placed inline</summary>\n`);
+    for (const d of demoted) {
+      tail.push(`- ${SEVERITY_EMOJI[d.severity]} \`${d.path}:${d.startLine}\` — ${escapeOpenFindingsHeading(d.title)}`);
+    }
+    tail.push('\nSee the check-run annotations for details.', '</details>\n');
   }
   if (state.runs.length > 0) {
-    lines.push('<details>', '<summary>🕘 Run history</summary>\n', '| Commit | When | Scope | New findings | Cost |', '|--------|------|-------|--------------|------|');
-    for (const run of [...state.runs].reverse()) lines.push(`| \`${run.sha}\` | ${run.at} | ${run.scope} | ${run.newFindings} | $${run.cost} |`);
-    lines.push('</details>\n');
+    tail.push('<details>', '<summary>🕘 Run history</summary>\n', '| Commit | When | Scope | New findings | Cost |', '|--------|------|-------|--------------|------|');
+    for (const run of [...state.runs].reverse()) tail.push(`| \`${run.sha}\` | ${run.at} | ${run.scope} | ${run.newFindings} | $${run.cost} |`);
+    tail.push('</details>\n');
   }
-  lines.push('---', '*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*', '', renderStateMarker(state));
-  return lines.join('\n');
-}
+  tail.push('---', '*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*', '', renderStateMarker(state));
 
-/** Refresh the lifecycle section in an existing sticky comment after a webhook event. */
+  // Baseline preserves the existing body byte-for-byte when no diagram is present.
+  const baseline = [...head, ...tail].join('\n');
+
+  const diagram = result.diagram;
+  if (!diagram) return baseline;
+
+  // Diagram-specific failures must not prevent the baseline comment from publishing.
+  let section: string;
+  try {
+    section = renderDiagramSection(diagram, 'mermaid');
+  } catch {
+    return baseline;
+  }
+
+  // Insert after the walkthrough and before the open-findings heading, wrapped
+  // in code-owned boundaries so untrusted content cannot forge a section edge.
+  // Omit the diagram when the whole serialized body (marker included) would
+  // overflow the existing sticky budget, so findings and state are never
+  // truncated to fit.
+  const diagramBlock = `${DIAGRAM_SECTION_START}\n${section}\n${DIAGRAM_SECTION_END}`;
+  const candidate = [...head, diagramBlock, ...tail].join('\n');
+  if (Buffer.byteLength(candidate, 'utf8') > MAX_STICKY_COMMENT_BYTES) return baseline;
+  return candidate;
+}
 export function refreshStickyCommentState(body: string, state: ReviewState): string {
-  const start = body.indexOf('### Open findings:');
+  const start = findLineHeadingIndex(body, '### Open findings:');
   const footer = start >= 0 ? body.indexOf('\n---\n', start) : -1;
-  if (start < 0 || footer < 0) return replaceStateMarker(body, state);
+  if (start < 0 || footer < 0) return replaceStateMarkerWithinBudget(body, state);
 
   const active = state.findings.filter((finding) => finding.status === 'open');
   const openCounts = { ...EMPTY_COUNTS };
@@ -717,7 +808,7 @@ export function refreshStickyCommentState(body: string, state: ReviewState): str
     lines.push('| Severity | Location | Finding |', '|----------|----------|---------|');
     for (const finding of [...active].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])) {
       lines.push(
-        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${finding.title.replace(/\|/g, '\\|')} |`,
+        `| ${SEVERITY_EMOJI[finding.severity]} ${finding.severity} | \`${finding.path}:${finding.startLine}\` | ${escapeOpenFindingsHeading(finding.title).replace(/\|/g, '\\|')} |`,
       );
     }
     lines.push('', '| Severity | Open |', '|----------|------|');
@@ -726,7 +817,12 @@ export function refreshStickyCommentState(body: string, state: ReviewState): str
     }
   }
   lines.push('');
-  return replaceStateMarker(`${body.slice(0, start)}${lines.join('\n')}${body.slice(footer)}`, state);
+  const before = body.slice(0, start);
+  const after = body.slice(footer);
+  // Preserve any previously rendered (code-owned) optional diagram block and
+  // place the refreshed findings table + marker; drop the diagram only if the
+  // refreshed body would exceed the sticky budget.
+  return replaceStateMarkerWithinBudget(`${before}${lines.join('\n')}${after}`, state);
 }
 
 /** Replace an existing v1/v2 marker without disturbing surrounding comment text. */

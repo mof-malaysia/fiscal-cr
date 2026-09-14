@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from './client.js';
 import type { ReviewAnnotation, Severity } from '../types/review.js';
 import { logger } from '../utils/logger.js';
 
@@ -14,7 +14,7 @@ const SEVERITY_TO_LEVEL: Record<Severity, CheckAnnotationLevel> = {
 const MAX_ANNOTATIONS_PER_REQUEST = 50;
 
 export async function createCheckRun(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: { owner: string; repo: string; headSha: string; name?: string },
 ): Promise<number> {
   const { data } = await octokit.checks.create({
@@ -31,7 +31,7 @@ export async function createCheckRun(
 }
 
 export async function completeCheckRun(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   params: {
     owner: string;
     repo: string;

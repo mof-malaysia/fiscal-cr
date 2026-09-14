@@ -372,19 +372,20 @@ describe('buildRunMetrics (multi-pass)', () => {
     expect(m.degraded).toBe(true);
   });
 
-  it('only counts findings from group-review captures, never intent/synthesis', () => {
-    // Adversarial: intent and synthesis responses contain findings-shaped JSON.
+  it('only counts findings from group-review captures, never intent/synthesis/diagram', () => {
+    // Adversarial: non-detector responses contain findings-shaped JSON.
     const findings = JSON.stringify({ findings: [{ path: 'src/utils/retry.ts', startLine: 1, endLine: 1, severity: 'warning', category: 'bug', title: 'x', body: 'y' }] });
     const group = '{"summary":"group"}';
     const m = multiMetrics([
       { ...captureFromResponse(response(findings), 1, 100), stage: 'intent' },
       { ...captureFromResponse(response(group), 2, 100), stage: 'group-review' },
       { ...captureFromResponse(response(findings), 3, 100), stage: 'synthesis' },
+      { ...captureFromResponse(response(findings), 4, 100), stage: 'diagram' },
     ]);
-    // parseFastPathResponse-style scanning would count 2; stage truth counts 0.
+    // parseFastPathResponse-style scanning would count 3; stage truth counts 0.
     expect(m.generatedFindings).toBe(0);
     expect(m.findings).toHaveLength(0);
-    expect(m.providerCalls).toBe(3);
+    expect(m.providerCalls).toBe(4);
   });
 
   it('associateCallStages maps captures to stages in fire order, skipping failures', async () => {

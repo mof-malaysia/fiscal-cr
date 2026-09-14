@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, normalize, sep } from 'node:path';
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from '../github/client.js';
 import { pLimit } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 
@@ -25,7 +25,7 @@ export class ApiFileSource implements FileContentSource {
   readonly isLocal = false;
 
   constructor(
-    private readonly octokit: Octokit,
+    private readonly octokit: FiscalcrOctokit,
     private readonly owner: string,
     private readonly repo: string,
     private readonly ref: string,

@@ -1,6 +1,8 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { ReviewOrchestrator } from "../src/review/orchestrator.js";
+import { createActionOctokit } from "./github-client.js";
+import { mergeActionConfig } from "./config.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
 import { modelForRole } from "../src/config/schema.js";
@@ -9,6 +11,13 @@ import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
 import { modelParamsFromActionInput } from "./model-params.js";
+import { renderDiagramSection } from "../src/review/diagram-renderer.js";
+/**
+ * Conservative UTF-8 budget for the complete Action job summary body. The
+ * optional change-diagram section is omitted if it would push the body past
+ * this limit, preserving the baseline conclusion and findings.
+ */
+const JOB_SUMMARY_BUDGET_BYTES = 1024 * 1024;
 
 async function run(): Promise<void> {
   try {
@@ -50,12 +59,20 @@ async function run(): Promise<void> {
 
     core.info(`Reviewing PR #${pullNumber} (${headSha.slice(0, 7)}, event: ${eventAction})`);
 
-    // @actions/github getOctokit puts REST methods under .rest,
-    // but our code expects @octokit/rest shape (octokit.checks, octokit.pulls, etc.)
-    const restOctokit = octokit.rest;
+    // Keep the Action client's REST namespace and GraphQL method together.
+    const fiscalcrOctokit = createActionOctokit(octokit);
 
-    // Load config from repo
-    const config = await loadConfig(restOctokit as any, owner, repo, configPath);
+    // Load review policy from the PR head, but keep network routing pinned to
+    // the trusted base revision so PR config cannot exfiltrate the API key.
+    const headConfig = await loadConfig(fiscalcrOctokit, owner, repo, configPath, headSha);
+    const trustedConfig = await loadConfig(
+      fiscalcrOctokit,
+      owner,
+      repo,
+      configPath,
+      context.payload.pull_request.base.sha,
+    );
+    const config = mergeActionConfig(headConfig, trustedConfig);
     if (languageInput) {
       config.language = languageInput as typeof config.language;
     }
@@ -107,7 +124,7 @@ async function run(): Promise<void> {
     // Run review
     const telemetry = telemetryFromActionInput(core);
     const orchestrator = new ReviewOrchestrator(
-      restOctokit as any,
+      fiscalcrOctokit,
       llm,
       config,
       {
@@ -174,6 +191,28 @@ async function run(): Promise<void> {
         ["Warning", result.stats.warning.toString()],
         ["Suggestion", result.stats.suggestion.toString()],
       ]);
+
+    // Optional change-diagram section. Text-only (no Mermaid fences): GitHub
+    // renders Mermaid only in PR/issues/Markdown, not in check/Action job
+    // summaries. Rendering failure is isolated so it never breaks the baseline
+    // job summary. The bounded diagram is still guarded against the 1 MiB
+    // job-summary budget using the current raw buffer length.
+    if (result.diagram) {
+      try {
+        const diagramSection = renderDiagramSection(result.diagram, 'text');
+        const fits =
+          Buffer.byteLength(
+            `${core.summary.stringify()}\n\n${diagramSection}${process.platform === "win32" ? "\r\n" : "\n"}`,
+            "utf8",
+          ) <= JOB_SUMMARY_BUDGET_BYTES;
+        if (fits) {
+          core.summary.addRaw(`\n\n${diagramSection}`);
+        }
+      } catch {
+        // Keep the baseline job summary intact on any diagram rendering error.
+      }
+    }
+
     await core.summary.write();
 
     // Fail the action if needed

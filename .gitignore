@@ -1,5 +1,6 @@
 node_modules/
 dist/
+action/dist/
 .env
 .env.local
 *.log
@@ -18,3 +19,4 @@ coverage/
 # Local LLM eval benchmark artifacts
 .eval-results/
 **plans/
+src/pipeline/generated/

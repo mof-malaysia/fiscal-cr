@@ -1,4 +1,4 @@
-import type { Octokit } from '@octokit/rest';
+import type { FiscalcrOctokit } from '../github/client.js';
 import YAML from 'yaml';
 import { reviewConfigSchema, type ReviewConfig } from './schema.js';
 import { DEFAULT_CONFIG } from './defaults.js';
@@ -18,16 +18,18 @@ function isNotFoundError(err: unknown): err is { status: number } {
 }
 
 export async function loadConfig(
-  octokit: Octokit,
+  octokit: FiscalcrOctokit,
   owner: string,
   repo: string,
   configPath: string = CONFIG_FILENAME,
+  ref?: string,
 ): Promise<ReviewConfig> {
   try {
     const { data } = await octokit.repos.getContent({
       owner,
       repo,
       path: configPath,
+      ...(ref ? { ref } : {}),
     });
 
     if (!('content' in data) || data.encoding !== 'base64') {

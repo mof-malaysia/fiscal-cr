@@ -295,7 +295,7 @@ export async function handleFiscalcrThreadEvent(
           repo: input.repo,
           pullNumber: input.pullNumber,
           commentId: sticky.commentId,
-          expectedEtag: sticky.etag,
+          expectedBody: sticky.body,
           body: refreshStickyCommentState(sticky.body, updated),
         });
         return;
