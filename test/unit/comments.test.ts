@@ -34,6 +34,7 @@ function annotation(overrides: Partial<ReviewAnnotation> = {}): ReviewAnnotation
 }
 function diagram(): DiagramArtifact {
   return {
+    mode: 'concept',
     nodes: [{ id: 'n1', label: 'Auth handler', change: 'modified', evidence: ['e1'] }],
     edges: [],
     evidence: [{ id: 'e1', path: 'src/auth.ts' }],
@@ -44,14 +45,15 @@ function diagram(): DiagramArtifact {
 }
 function bigDiagram(): DiagramArtifact {
   return {
-    nodes: Array.from({ length: 60 }, (_, i) => ({
+    mode: 'concept',
+    nodes: Array.from({ length: 200 }, (_, i) => ({
       id: `n${i}`,
-      label: 'x'.repeat(200),
-      change: 'modified' as const,
-      evidence: [],
+      label: `node-${i}-${'x'.repeat(200)}`,
+      change: 'context' as const,
+      evidence: ['e1'],
     })),
     edges: [],
-    evidence: [],
+    evidence: [{ id: 'e1', path: 'src/big.ts' }],
     headSha: 'head-sha',
     scope: 'full',
     partial: false,
@@ -171,7 +173,7 @@ describe('createIncrementalReview', () => {
     });
     const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
     expect(call.body).toBe('incremental summary');
-    expect(call.body).not.toContain('### Visual changes');
+    expect(call.body).not.toContain('### Concept map');
   });
 });
 
@@ -225,7 +227,7 @@ describe('createPRReview (legacy mode)', () => {
       }),
     );
   });
-  it('includes the optional diagram between the walkthrough and the severity table', async () => {
+  it('places the optional diagram between the summary and walkthrough', async () => {
     const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 1 } })) } };
     await createPRReview(octokit as never, {
       ...params,
@@ -237,10 +239,12 @@ describe('createPRReview (legacy mode)', () => {
       failOn: 'never',
     });
     const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
-    expect(call.body).toContain('### Visual changes');
+    expect(call.body).toContain('### Concept map');
     expect(call.body).toContain('```mermaid');
-    expect(call.body.indexOf('### Visual changes')).toBeGreaterThan(call.body.indexOf('Walkthrough'));
-    expect(call.body.indexOf('### Visual changes')).toBeLessThan(call.body.indexOf('| Severity | Count |'));
+    expect(call.body).not.toContain('> Adds a feature');
+    expect(call.body.indexOf('### Concept map')).toBeGreaterThan(call.body.indexOf('Legacy summary'));
+    expect(call.body.indexOf('### Concept map')).toBeLessThan(call.body.indexOf('Walkthrough'));
+    expect(call.body.indexOf('Walkthrough')).toBeLessThan(call.body.indexOf('| Severity | Count |'));
   });
   it('keeps the 422 fallback body within the cap, omitting the optional diagram when needed', async () => {
     const createReview = vi
@@ -263,7 +267,7 @@ describe('createPRReview (legacy mode)', () => {
     expect(fallbackCall.body).toContain('could not be placed');
     expect(Buffer.byteLength(fallbackCall.body, 'utf8')).toBeLessThanOrEqual(60_000);
     // Only the optional diagram is dropped to make room — findings are preserved.
-    expect(fallbackCall.body).not.toContain('### Visual changes');
+    expect(fallbackCall.body).not.toContain('### Concept map');
     expect(fallbackCall.body).toContain('| 🔴 critical | 1 |');
   });
 });

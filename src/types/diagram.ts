@@ -1,3 +1,4 @@
+export type DiagramMode = 'concept' | 'implementation';
 export type DiagramChange = 'added' | 'modified' | 'removed' | 'context';
 
 export interface DiagramEvidence {
@@ -27,6 +28,7 @@ export interface DiagramGraph {
 }
 
 export interface DiagramArtifact extends DiagramGraph {
+  mode: DiagramMode;
   evidence: Array<{ id: string; path: string }>;
   headSha: string;
   scope: 'full' | 'delta';

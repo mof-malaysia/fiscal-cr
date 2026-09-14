@@ -8,19 +8,48 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
   suggestion: '🔵',
   nitpick: '⚪',
 };
+const MAX_CHECK_SUMMARY_BYTES = 60_000;
+
+function renderThreadCleanup(
+  cleanup: NonNullable<ReviewResult['threadCleanup']> | undefined,
+): string[] {
+  if (!cleanup) return [];
+  if (cleanup.unavailable) {
+    return [
+      '### Inline thread cleanup',
+      '',
+      'Thread cleanup was unavailable; finding status is independent of inline conversation status.',
+    ];
+  }
+  const lines = [
+    '### Inline thread cleanup',
+    '',
+    `Resolved ${cleanup.resolved} of ${cleanup.attempted} outdated inline thread(s).`,
+    'Finding status is independent of inline conversation status.',
+  ];
+  if (cleanup.failed > 0) {
+    lines.push(
+      `${cleanup.failed} inline thread(s) remain unresolved, usually because the GitHub token lacks thread-resolution permission.`,
+    );
+  }
+  return lines;
+}
 
 /**
  * Build a markdown summary for the Check Run output.
+ *
+ * The check surface follows the reviewer reading order: summary, optional map,
+ * walkthrough, findings, then score and accounting metadata. Intent remains
+ * synthesis context and is not rendered as a second summary.
  */
 export function buildSummary(result: ReviewResult): string {
   const cost = result.costEstimate?.usd ?? calculateCost(result.tokensUsed);
-  const lines: string[] = [];
-  lines.push(`## Score: ${result.score}/100\n`);
-  if (result.intent) {
-    lines.push(`> ${result.intent}\n`);
-  }
-  lines.push(result.summary);
-  lines.push('');
+  const lines: string[] = ['## 🤖 FiscalCR Code Review', '', result.summary, ''];
+
+  const diagram = renderOptionalDiagram(result.diagram);
+  if (diagram) lines.push(diagram, '');
+  const cleanup = renderThreadCleanup(result.threadCleanup);
+  if (cleanup.length > 0) lines.push(...cleanup, '');
 
   if (result.walkthrough && result.walkthrough.length > 0) {
     lines.push('### Walkthrough\n');
@@ -32,7 +61,6 @@ export function buildSummary(result: ReviewResult): string {
     lines.push('');
   }
 
-  // Stats table
   const hasIssues = Object.values(result.stats).some((v) => v > 0);
   if (hasIssues) {
     lines.push('### Findings\n');
@@ -40,60 +68,43 @@ export function buildSummary(result: ReviewResult): string {
     lines.push('|----------|-------|');
     for (const severity of ['critical', 'warning', 'suggestion', 'nitpick'] as Severity[]) {
       const count = result.stats[severity];
-      if (count > 0) {
-        lines.push(`| ${SEVERITY_EMOJI[severity]} ${severity} | ${count} |`);
-      }
+      if (count > 0) lines.push(`| ${SEVERITY_EMOJI[severity]} ${severity} | ${count} |`);
     }
     lines.push('');
   } else {
     lines.push('### ✅ No issues found\n');
   }
 
-  // Token usage
+  lines.push('### Score\n', `**Score:** ${result.score}/100`, '');
   lines.push('<details>');
   lines.push('<summary>📊 Token Usage</summary>\n');
-  lines.push(`| Metric | Value |`);
-  lines.push(`|--------|-------|`);
+  lines.push('| Metric | Value |');
+  lines.push('|--------|-------|');
   lines.push(`| Input tokens | ${result.tokensUsed.input.toLocaleString()} |`);
   lines.push(`| Output tokens | ${result.tokensUsed.output.toLocaleString()} |`);
   lines.push(`| Cached tokens | ${result.tokensUsed.cached.toLocaleString()} |`);
-  if (result.callCount !== undefined) {
-    lines.push(`| LLM calls | ${result.callCount} |`);
-  }
+  if (result.callCount !== undefined) lines.push(`| LLM calls | ${result.callCount} |`);
   lines.push(`| Estimated cost | $${cost} |`);
-  if (result.costEstimate) {
-    lines.push(`| Pricing source | ${result.costEstimate.source} |`);
-  }
+  if (result.costEstimate) lines.push(`| Pricing source | ${result.costEstimate.source} |`);
   lines.push('</details>');
-
-  const baseline = lines.join('\n');
-  return appendOptionalDiagram(baseline, result.diagram);
+  const baseline = result.diagram
+    ? buildSummary({ ...result, diagram: undefined })
+    : lines.join('\n');
+  if (!diagram || Buffer.byteLength(lines.join('\n'), 'utf8') > MAX_CHECK_SUMMARY_BYTES) {
+    return baseline;
+  }
+  return lines.join('\n');
 }
 
 /**
- * Conservative UTF-8 budget for the complete App check summary body. If the
- * optional change-diagram section would push the body past this limit, omit it
- * and publish the unchanged baseline (findings and state are never truncated).
+ * Rendering failure is isolated: the ordinary summary, findings, and metadata
+ * remain publishable when an auxiliary artifact is malformed.
  */
-const MAX_CHECK_SUMMARY_BYTES = 60_000;
-
-/**
- * Append the optional non-visual (text) change-diagram section to the App check
- * summary. The plain-text renderer is used so no raw Mermaid syntax reaches this
- * surface. Rendering failure is isolated: any error returns the untouched
- * baseline so the review conclusion and findings stay intact.
- */
-function appendOptionalDiagram(baseline: string, diagram?: DiagramArtifact): string {
-  if (!diagram) return baseline;
-  let section: string;
+function renderOptionalDiagram(diagram?: DiagramArtifact): string | undefined {
+  if (!diagram) return undefined;
   try {
-    section = renderDiagramSection(diagram, 'text');
+    return renderDiagramSection(diagram, 'text');
   } catch {
-    return baseline;
+    return undefined;
   }
-  const candidate = `${baseline}\n\n${section}`;
-  if (Buffer.byteLength(candidate, 'utf8') > MAX_CHECK_SUMMARY_BYTES) {
-    return baseline;
-  }
-  return candidate;
 }

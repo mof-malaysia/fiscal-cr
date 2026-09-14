@@ -307,6 +307,9 @@ Respond with a single JSON object:
 
 Rules:
 - Judge findings by the one-line descriptions given; do not invent new findings.
+- The summary explains the PR once. Do not quote or restate the PR intent verbatim;
+  preserve distinct facts from the group summaries and intent only when they add
+  information not already stated.
 - Be conservative with likelyFalsePositives — only flag findings that clearly contradict the PR intent or duplicate the walkthrough's understanding.${experimentalStyle}${language}`;
 }
 

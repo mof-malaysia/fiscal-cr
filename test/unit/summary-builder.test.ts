@@ -31,6 +31,7 @@ function diagram(overrides: Partial<DiagramArtifact> = {}): DiagramArtifact {
     { from: 'n2', to: 'n0', label: 'was used by', change: 'removed', evidence: ['e1'] },
   ];
   return {
+    mode: 'concept',
     nodes,
     edges,
     evidence: [
@@ -60,6 +61,7 @@ function oversizedDiagram(): DiagramArtifact {
     evidence: ['e1'],
   }));
   return {
+    mode: 'concept',
     nodes,
     edges,
     evidence: [{ id: 'e1', path: 'src/big.ts' }],
@@ -68,40 +70,27 @@ function oversizedDiagram(): DiagramArtifact {
     partial: false,
   };
 }
-
 describe('buildSummary change-diagram integration', () => {
-  it('leaves the baseline body unchanged when no diagram is present', () => {
+  it('renders the summary once without a separate intent quote', () => {
     const out = buildSummary(baseResult());
-    expect(out).not.toContain('### Visual changes');
-    expect(out).not.toContain('```mermaid');
-    expect(out).not.toContain('Nodes:');
-    // Baseline content remains intact.
-    expect(out).toContain('## Score: 92/100');
-    expect(out).toContain('Improve request handling');
-    expect(out).toContain('The review found no blocking issues.');
-    expect(out).toContain('| 🟡 warning | 1 |');
-    expect(out).toContain('📊 Token Usage');
+    expect(out).not.toContain('Improve request handling');
+    expect(out.match(/The review found no blocking issues\./g)).toHaveLength(1);
+    expect(out).toContain('## 🤖 FiscalCR Code Review');
+    expect(out).toContain('### Score');
   });
 
-  it('renders a readable text view with change prefixes and no raw graph syntax', () => {
+  it('renders summary, map, walkthrough, findings, and metadata in order', () => {
     const out = buildSummary(baseResult({ diagram: diagram() }));
-    expect(out).toContain('### Visual changes');
-    // Text surface: no Mermaid fence and no raw flowchart syntax.
-    expect(out).not.toContain('```mermaid');
-    expect(out).not.toContain('flowchart TD');
-    expect(out).not.toContain('-->|');
-    expect(out).toContain('Nodes:');
-    expect(out).toContain('Edges:');
-    // Edge/element change semantics are conveyed via readable prefixes.
-    expect(out).toContain('- [modified] n0: Auth middleware');
-    expect(out).toContain('- [added] n1: Database client');
-    expect(out).toContain('- [removed] n2: Legacy logger');
-    expect(out).toContain('- [added] n0 -> n1: connects to');
-    expect(out).toContain('- [removed] n2 -> n0: was used by');
-    expect(out).toContain('Source commit: deadbeefcafe');
+    expect(out.indexOf('The review found no blocking issues.')).toBeLessThan(out.indexOf('### Concept map'));
+    expect(out.indexOf('### Concept map')).toBeLessThan(out.indexOf('### Walkthrough'));
+    expect(out.indexOf('### Walkthrough')).toBeLessThan(out.indexOf('### Findings'));
+    expect(out.indexOf('### Findings')).toBeLessThan(out.indexOf('### Score'));
+    expect(out).not.toContain('[modified]');
+    expect(out).not.toContain('Evidence:');
+    expect(out).not.toContain('Source commit:');
   });
 
-  it('keeps findings, stats, and token usage when a diagram is present', () => {
+  it('keeps findings and token usage when a diagram is present', () => {
     const out = buildSummary(baseResult({ diagram: diagram() }));
     expect(out).toContain('| 🟡 warning | 1 |');
     expect(out).toContain('| 🔵 suggestion | 2 |');
@@ -110,29 +99,28 @@ describe('buildSummary change-diagram integration', () => {
     expect(out).toContain('| Estimated cost | $0.0123 |');
   });
 
-  it('omits the diagram past the 60000-byte cap and returns the exact baseline', () => {
-    const big = 'x'.repeat(57_000);
-    const noDiagram = buildSummary(baseResult({ summary: big }));
-    // The baseline alone is within the conservative check-summary budget.
-    expect(Buffer.byteLength(noDiagram, 'utf8')).toBeLessThan(60_000);
-
-    const out = buildSummary(baseResult({ summary: big, diagram: oversizedDiagram() }));
-    // Overflow: the optional section is dropped and the baseline is byte-exact.
-    expect(out).toBe(noDiagram);
-    expect(out).not.toContain('### Visual changes');
+  it('reports inline thread cleanup separately from finding counts', () => {
+    const out = buildSummary(
+      baseResult({
+        threadCleanup: { attempted: 8, resolved: 0, failed: 8 },
+      }),
+    );
+    expect(out).toContain('Resolved 0 of 8 outdated inline thread(s).');
+    expect(out).toContain('8 inline thread(s) remain unresolved');
+    expect(out).toContain('Finding status is independent');
   });
 
-  it('isolates diagram rendering failure and returns the exact baseline', () => {
-    const noDiagram = buildSummary(baseResult());
-    // Intentionally malformed artifact forces the renderer to throw; the
-    // ordinary summary must survive untouched.
-    const malformed = {
-      headSha: 'abc',
-      scope: 'full',
-      partial: false,
-    } as unknown as DiagramArtifact;
-    const out = buildSummary(baseResult({ diagram: malformed }));
+  it('omits the diagram past the 60000-byte cap and returns the baseline', () => {
+    const big = 'x'.repeat(57_000);
+    const noDiagram = buildSummary(baseResult({ summary: big }));
+    const out = buildSummary(baseResult({ summary: big, diagram: oversizedDiagram() }));
     expect(out).toBe(noDiagram);
-    expect(out).not.toContain('### Visual changes');
+    expect(out).not.toContain('### Concept map');
+  });
+
+  it('isolates diagram rendering failure and returns the baseline', () => {
+    const noDiagram = buildSummary(baseResult());
+    const malformed = { nodes: undefined } as unknown as DiagramArtifact;
+    expect(buildSummary(baseResult({ diagram: malformed }))).toBe(noDiagram);
   });
 });

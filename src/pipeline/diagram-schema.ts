@@ -73,8 +73,8 @@ const rawEdgeSchema = z
 const rawDiagramSchema = z
   .object({
     outcome: z.literal('diagram'),
-    nodes: z.array(rawNodeSchema).min(1).max(MAX_NODES),
-    edges: z.array(rawEdgeSchema).max(MAX_EDGES),
+    nodes: z.array(rawNodeSchema).min(2).max(MAX_NODES),
+    edges: z.array(rawEdgeSchema).min(1).max(MAX_EDGES),
   })
   .strict();
 
@@ -86,6 +86,7 @@ const rawDiagramSchema = z
  *  - unparseable or truncated JSON,
  *  - `outcome: 'omit'` (and any non-diagram outcome),
  *  - strict-key / schema violations,
+ *  - graphs with fewer than two nodes or one edge,
  *  - node/edge count or label-length caps exceeded,
  *  - duplicate node ids, dangling edge endpoints,
  *  - evidence references that do not resolve to the supplied evidence,

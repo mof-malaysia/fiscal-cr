@@ -5,6 +5,8 @@ import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import type { ReviewConfig } from '../../src/config/schema.js';
 import { fingerprintAnnotation, fingerprintMarker } from '../../src/github/fingerprint.js';
 import {
+  DIAGRAM_SECTION_END,
+  DIAGRAM_SECTION_START,
   EMPTY_COUNTS,
   parseStateMarker,
   renderStateMarker,
@@ -28,6 +30,28 @@ const FINDING: ReviewAnnotation = {
   confidence: 0.95,
 };
 const FP = fingerprintAnnotation(FINDING);
+const DELETION_FINDING: ReviewAnnotation = {
+  path: 'src/b.ts',
+  startLine: 4,
+  endLine: 4,
+  severity: 'warning',
+  category: 'bug',
+  title: 'Stale branch after deletion',
+  body: 'This finding belongs to a deletion-only file',
+  confidence: 0.9,
+};
+const DELETION_FP = fingerprintAnnotation(DELETION_FINDING);
+const NEW_FINDING: ReviewAnnotation = {
+  path: 'src/a.ts',
+  startLine: 3,
+  endLine: 3,
+  severity: 'warning',
+  category: 'security',
+  title: 'Newly introduced unsafe branch',
+  body: 'Allows an unsafe branch to execute',
+  confidence: 0.9,
+};
+const NEW_FP = fingerprintAnnotation(NEW_FINDING);
 
 function priorState(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
@@ -57,17 +81,29 @@ function priorState(overrides: Partial<ReviewState> = {}): ReviewState {
 }
 interface Fixture {
   stickyState?: ReviewState;
+  stickyBody?: string;
   legacyState?: LegacyReviewState;
   compareFiles?: string[];
   changedFiles?: string[];
-  threads?: Array<{ id: string; fp: string; path: string; severity: string }>;
+  patch?: string;
+  patches?: Record<string, string>;
+  threads?: Array<{
+    id: string;
+    fp: string;
+    path: string;
+    severity: string;
+    isOutdated?: boolean;
+    line?: number | null;
+    originalLine?: number | null;
+  }>;
 }
 function fakeOctokit(fixture: Fixture = {}) {
-  const stickyBody = fixture.legacyState
-    ? `summary\n${renderStateMarker(fixture.legacyState)}`
-    : fixture.stickyState
-      ? `summary\n${renderStateMarker(fixture.stickyState)}`
-      : null;
+  const stickyBody = fixture.stickyBody ??
+    (fixture.legacyState
+      ? `summary\n${renderStateMarker(fixture.legacyState)}`
+      : fixture.stickyState
+        ? `summary\n${renderStateMarker(fixture.stickyState)}`
+        : null);
   return {
     checks: {
       create: vi.fn(async () => ({ data: { id: 42 } })),
@@ -93,7 +129,7 @@ function fakeOctokit(fixture: Fixture = {}) {
                 status: 'modified',
                 additions: 10,
                 deletions: 0,
-                patch: PATCH,
+                patch: fixture.patches?.[filename] ?? fixture.patch ?? PATCH,
               })),
             }
           : { data: [] },
@@ -128,7 +164,7 @@ function fakeOctokit(fixture: Fixture = {}) {
       createComment: vi.fn(async () => ({ data: { id: 9 } })),
       updateComment: vi.fn(async () => ({})),
     },
-    graphql: vi.fn(async (query: string) => {
+    graphql: vi.fn(async (query: string, variables?: { threadId?: string }) => {
       if (query.includes('reviewThreads')) {
         return {
           repository: {
@@ -138,7 +174,10 @@ function fakeOctokit(fixture: Fixture = {}) {
                 nodes: (fixture.threads ?? []).map((t) => ({
                   id: t.id,
                   isResolved: false,
+                  isOutdated: t.isOutdated ?? false,
                   path: t.path,
+                  line: t.line ?? null,
+                  originalLine: t.originalLine ?? null,
                   comments: {
                     nodes: [{ body: `🔴 **[${t.severity}]** x\n\n${fingerprintMarker(t.fp)}` }],
                   },
@@ -147,6 +186,16 @@ function fakeOctokit(fixture: Fixture = {}) {
             },
           },
         };
+      }
+      if (query.includes('resolveReviewThread')) {
+        return {
+          resolveReviewThread: {
+            thread: { id: variables?.threadId ?? '', isResolved: true },
+          },
+        };
+      }
+      if (query.includes('addPullRequestReviewThreadReply')) {
+        return { addPullRequestReviewThreadReply: { comment: { id: 'audit-1' } } };
       }
       return {};
     }),
@@ -332,6 +381,52 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     );
     expect(octokit.issues.createComment).not.toHaveBeenCalled();
   });
+  it('preserves an existing thread ID when the current thread is outdated', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', isOutdated: true }],
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([FINDING]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.threadId).toBe('t1');
+  });
+  it('drops a thread ID when the GitHub thread no longer exists', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [],
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([FINDING]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    expect(savedState(octokit)!.findings.find((finding) => finding.fingerprint === FP)?.threadId).toBeNull();
+  });
+  it('posts inline comments for findings inserted into an existing sticky state', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical' }],
+    });
+    const orchestrator = new ReviewOrchestrator(
+      octokit as never,
+      fastPathLLM([FINDING, NEW_FINDING]),
+      cfg(),
+    );
+
+    await orchestrator.reviewPullRequest(params);
+
+    const review = octokit.pulls.createReview.mock.calls[0][0] as {
+      comments: Array<{ path: string; line: number; body: string }>;
+    };
+    expect(review.comments).toEqual([
+      expect.objectContaining({
+        path: NEW_FINDING.path,
+        line: NEW_FINDING.endLine,
+        body: expect.stringContaining(fingerprintMarker(NEW_FP)),
+      }),
+    ]);
+  });
 
   it('delta fix candidate: closes findings only when their changed lines were reviewed', async () => {
     const octokit = fakeOctokit({
@@ -362,6 +457,65 @@ describe('ReviewOrchestrator sticky lifecycle', () => {
     expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
     expect(state!.blockingReviewId).toBeNull();
     expect(result.stats.critical).toBe(0);
+  });
+  it('uses original lines to fix deletion-only delta findings', async () => {
+    const octokit = fakeOctokit({
+      stickyState: priorState(),
+      changedFiles: ['src/a.ts'],
+      patch: '@@ -2,1 +2,0 @@\n-removed line',
+      threads: [{ id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', originalLine: 2 }],
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    const state = savedState(octokit);
+    expect(state!.findings.find((finding) => finding.fingerprint === FP)?.status).toBe('fixed');
+    expect(state!.autoResolvedThreads).toContain('t1');
+    expect(
+      octokit.graphql.mock.calls.filter(([query]) => (query as string).includes('resolveReviewThread')),
+    ).toHaveLength(1);
+  });
+  it('covers mixed delta files with and without commentable ranges', async () => {
+    const secondFinding = {
+      fingerprint: DELETION_FP,
+      status: 'open' as const,
+      severity: 'warning' as const,
+      path: DELETION_FINDING.path,
+      startLine: DELETION_FINDING.startLine,
+      endLine: DELETION_FINDING.endLine,
+      title: DELETION_FINDING.title,
+      threadId: 't2',
+      lastSeenSha: 'old-sha',
+      transitions: [{ status: 'open' as const, at: '2026-01-01', source: 'review' as const }],
+    };
+    const octokit = fakeOctokit({
+      stickyState: priorState({
+        findings: [...priorState().findings, secondFinding],
+      }),
+      changedFiles: ['src/a.ts', 'src/b.ts'],
+      compareFiles: ['src/a.ts', 'src/b.ts'],
+      patches: {
+        'src/a.ts': PATCH,
+        'src/b.ts': '@@ -4,1 +4,0 @@\n-removed line',
+      },
+      threads: [
+        { id: 't1', fp: FP, path: 'src/a.ts', severity: 'critical', line: 2, originalLine: 2 },
+        { id: 't2', fp: DELETION_FP, path: 'src/b.ts', severity: 'warning', line: null, originalLine: 4 },
+      ],
+    });
+    const orchestrator = new ReviewOrchestrator(octokit as never, fastPathLLM([]), cfg());
+
+    await orchestrator.reviewPullRequest(params);
+
+    const state = savedState(octokit);
+    expect(state!.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ fingerprint: FP, status: 'fixed' }),
+        expect.objectContaining({ fingerprint: DELETION_FP, status: 'fixed' }),
+      ]),
+    );
+    expect(state!.autoResolvedThreads).toEqual(expect.arrayContaining(['t1', 't2']));
   });
 
   it('migrates a v1 marker before skipping a PR with no reviewable files', async () => {
@@ -579,7 +733,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     const allCalls = llm.chatCompletion.mock.calls.map(([p]) => p);
     const diagramCalls = allCalls.filter((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT);
     expect(diagramCalls).toHaveLength(1);
-    expect(diagramCalls[0].model).toBe('synthesis-test');
+    expect(diagramCalls[0].model).toBe('k3-256k');
     expect(result.callCount).toBe(allCalls.length);
     // Shared usage totals fold in the diagram call (its 10 cached tokens; pipeline calls carry 0).
     expect(result.tokensUsed).toEqual({
@@ -589,7 +743,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     });
 
     const body = savedBody(octokit);
-    expect(body).toContain('### Visual changes');
+    expect(body).toContain('### Concept map');
     expect(body).toContain('```mermaid');
     expect(result.diagram?.scope).toBe('full');
   });
@@ -605,12 +759,26 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     expect(allCalls.some((p) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
     expect(result.diagram).toBeUndefined();
     const body = savedBody(octokit);
-    expect(body).not.toContain('### Visual changes');
+    expect(body).not.toContain('### Concept map');
   });
 
-  it('delta scope never generates a diagram, even for complex changes', async () => {
+  it('delta scope preserves the last diagram without generating a replacement', async () => {
+    const prior = priorState();
+    const historicalGraph = [
+      DIAGRAM_SECTION_START,
+      '### Concept map',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      '  n0["Request"]',
+      '  n1["Input"]',
+      '  n0 -->|"validates"| n1',
+      '```',
+      DIAGRAM_SECTION_END,
+    ].join('\n');
     const octokit = fakeOctokit({
-      stickyState: priorState(),
+      stickyState: prior,
+      stickyBody: `${historicalGraph}\n\nsummary\n${renderStateMarker(prior)}`,
       compareFiles: ['src/a.ts', 'src/b.ts'],
     });
     const llm = diagramLLM(DIAGRAM_E0);
@@ -625,7 +793,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     expect(result.diagram).toBeUndefined();
     expect(llm.chatCompletion.mock.calls.some(([p]) => p.messages[0].content === CHANGE_DIAGRAM_PROMPT)).toBe(false);
     const body = savedBody(octokit);
-    expect(body).not.toContain('### Visual changes');
+    expect(body).toContain(historicalGraph);
   });
 
   it('disabled normal run removes a previously published graph via a fresh render', async () => {

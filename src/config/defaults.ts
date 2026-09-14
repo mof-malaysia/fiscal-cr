@@ -26,6 +26,7 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     },
     diagram: {
       enabled: false,
+      mode: "auto",
       minChangedFiles: 2,
       minChangedLines: 20,
     },
