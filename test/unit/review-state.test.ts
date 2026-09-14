@@ -365,8 +365,20 @@ function firstState(findings: ReviewState['findings']): ReviewState {
 
 describe('renderStickyComment', () => {
   it('embeds the state marker, open counts, run history, and walkthrough', () => {
-    const body = renderStickyComment({ result: result(), state: state(), demoted: [] });
+    const body = renderStickyComment({
+      result: {
+        ...result(),
+        callCount: 2,
+        costEstimate: { usd: 0.0123, source: 'exact', provider: 'openrouter', model: 'openai/gpt-5' },
+      },
+      state: state(),
+      demoted: [],
+    });
     expect(parseStateMarker(body)).toEqual(state());
+    expect(body).toContain('📊 Latest review usage & cost');
+    expect(body).toContain('| Uncached input | 100 |');
+    expect(body).toContain('**Cumulative review cost:** $0.0500');
+    expect(body).toContain('**Model:** `openrouter/openai/gpt-5`');
     expect(body).toContain('Open findings: 1');
     expect(body).toContain('critical | 1');
     expect(body).toContain('`abc1234`');
@@ -432,7 +444,7 @@ describe('renderStickyComment', () => {
     expect(refreshed).toContain('Open findings: 0');
     expect(refreshed).toContain('**Score:** 90/100');
     expect(refreshed).toContain('Demoted');
-    expect(refreshed).toContain('Run history');
+    expect(refreshed).toContain('Review history');
     expect(refreshed).not.toContain('| Existing |');
     expect(parseStateMarker(refreshed)).toEqual(updated);
   });

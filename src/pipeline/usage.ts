@@ -1,9 +1,16 @@
-import type { PricingContext, PricingResolution, PricingSource } from '../utils/pricing.js';
-import { calculateCostWithPricing, resolvePricing } from '../utils/pricing.js';
+import {
+  calculateCostBreakdownWithPricing,
+  calculateCostWithPricing,
+  resolvePricing,
+  type PricingContext,
+  type TokenCostBreakdown,
+  type PricingResolution,
+  type PricingSource,
+} from '../utils/pricing.js';
 import type { LLMTokenUsage } from '../providers/interface.js';
-import type { ChatMessage } from '../types/review.js';
+import type { ChatMessage, ModelCostBreakdown, ReviewStage, StageCostBreakdown } from '../types/review.js';
 import { estimateTokens } from '../utils/tokens.js';
-export type TelemetryStage = 'intent' | 'group-review' | 'synthesis' | 'fast-path' | 'diagram';
+export type TelemetryStage = ReviewStage;
 export type TelemetryFinishReason =
   | 'stop'
   | 'length'
@@ -14,6 +21,8 @@ export type TelemetryFinishReason =
 export interface LLMCallTelemetryEvent {
   type: 'llm_call';
   stage: TelemetryStage;
+  /** Effective model used for this stage; staged reviews may vary by call. */
+  model?: string;
   groupIndex?: number;
   fileCount?: number;
   estimatedInputTokens: number;
@@ -78,6 +87,13 @@ export class UsageTracker {
   private totals: LLMTokenUsage = { input: 0, output: 0, cached: 0 };
   private callCount = 0;
   private totalCostUsd = 0;
+  private readonly costBreakdownUsd: Omit<TokenCostBreakdown, 'totalUsd'> = {
+    inputUsd: 0,
+    outputUsd: 0,
+    cachedUsd: 0,
+  };
+  private readonly costsByModel = new Map<string, ModelCostBreakdown>();
+  private readonly costsByStage = new Map<TelemetryStage, StageCostBreakdown>();
   private readonly pricing: PricingResolution;
   private readonly pricingContext: PricingContext;
   private readonly pricingByModel: Map<string, PricingResolution>;
@@ -104,6 +120,13 @@ export class UsageTracker {
     return resolved;
   }
 
+  private modelIdentity(pricing: PricingResolution, call?: LLMCallTelemetry): string | undefined {
+    const model = call?.model ?? pricing.model;
+    if (!model) return undefined;
+    const provider = pricing.provider ?? this.pricingContext.provider;
+    return provider ? `${provider}/${model}` : model;
+  }
+
   startCall(): void {
     this.callCount++;
   }
@@ -113,12 +136,64 @@ export class UsageTracker {
     this.totals.output += usage.output;
     this.totals.cached += usage.cached;
     const pricing = this.pricingForModel(call?.model);
-    this.totalCostUsd += calculateCostWithPricing(usage, pricing.pricing);
+    const breakdown = calculateCostBreakdownWithPricing(usage, pricing.pricing);
+    this.totalCostUsd += breakdown.totalUsd;
+    this.costBreakdownUsd.inputUsd += breakdown.inputUsd;
+    this.costBreakdownUsd.outputUsd += breakdown.outputUsd;
+    this.costBreakdownUsd.cachedUsd += breakdown.cachedUsd;
+
+    if (this.telemetry && call) {
+      const current = this.costsByStage.get(call.stage) ?? {
+        stage: call.stage,
+        calls: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        inputUsd: 0,
+        outputUsd: 0,
+        cachedUsd: 0,
+        usd: 0,
+      };
+      current.calls++;
+      current.inputTokens += usage.input;
+      current.outputTokens += usage.output;
+      current.cachedTokens += usage.cached;
+      current.inputUsd += breakdown.inputUsd;
+      current.outputUsd += breakdown.outputUsd;
+      current.cachedUsd += breakdown.cachedUsd;
+      current.usd += breakdown.totalUsd;
+      this.costsByStage.set(current.stage, current);
+    }
+
+    const model = this.modelIdentity(pricing, call);
+    if (model) {
+      const current = this.costsByModel.get(model) ?? {
+        model,
+        calls: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        inputUsd: 0,
+        outputUsd: 0,
+        cachedUsd: 0,
+        usd: 0,
+      };
+      current.calls++;
+      current.inputTokens += usage.input;
+      current.outputTokens += usage.output;
+      current.cachedTokens += usage.cached;
+      current.inputUsd += breakdown.inputUsd;
+      current.outputUsd += breakdown.outputUsd;
+      current.cachedUsd += breakdown.cachedUsd;
+      current.usd += breakdown.totalUsd;
+      this.costsByModel.set(model, current);
+    }
     if (call && this.telemetry) {
       const finishReason = safeFinishReason(call.finishReason);
       this.emit({
         type: 'llm_call',
         stage: call.stage,
+        ...(call.model === undefined ? {} : { model: call.model }),
         ...(call.groupIndex === undefined ? {} : { groupIndex: call.groupIndex }),
         ...(call.fileCount === undefined ? {} : { fileCount: call.fileCount }),
         estimatedInputTokens: call.messages.reduce(
@@ -149,12 +224,29 @@ export class UsageTracker {
     return { ...this.totals };
   }
 
+
+  costBreakdown(): Omit<TokenCostBreakdown, 'totalUsd'> {
+    return { ...this.costBreakdownUsd };
+  }
   calls(): number {
     return this.callCount;
   }
 
   cost(): number {
     return this.totalCostUsd;
+  }
+
+  stageCosts(): StageCostBreakdown[] {
+    const stageOrder: TelemetryStage[] = ['intent', 'group-review', 'synthesis', 'fast-path', 'diagram'];
+    return stageOrder
+      .map((stage) => this.costsByStage.get(stage))
+      .filter((summary): summary is StageCostBreakdown => summary !== undefined)
+      .map((summary) => ({ ...summary }));
+  }
+  modelCosts(): ModelCostBreakdown[] {
+    return [...this.costsByModel.values()]
+      .map((summary) => ({ ...summary }))
+      .sort((a, b) => b.usd - a.usd || a.model.localeCompare(b.model));
   }
 
   pricingInfo(): PricingResolution {

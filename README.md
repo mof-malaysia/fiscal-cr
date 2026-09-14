@@ -116,6 +116,9 @@ Set `telemetry: true` to emit structured lines prefixed with
 pipeline stage, timing, output limits, and finding counts. They never contain
 prompts, source code, secrets, repository or pull request identifiers, or file
 paths. Telemetry is disabled by default and is not sent to an external service.
+When enabled, published review accounting also includes per-stage token and cost
+breakdowns for intent analysis, group reviews, synthesis, fast-path reviews, and
+change diagrams. Aggregate review and model accounting is always shown.
 `calls` counts pipeline-level LLM invocations; transparent provider retries are
 not counted separately.
 

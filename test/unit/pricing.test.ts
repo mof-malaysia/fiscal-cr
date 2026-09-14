@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  calculateCostBreakdownWithPricing,
   calculateCostWithPricing,
   FALLBACK_TOKEN_PRICING,
   resolvePricing,
@@ -210,6 +211,18 @@ describe('calculateCostWithPricing', () => {
       { input: 1_000_000, output: 100_000, cached: 400_000 },
       { inputPerMillion: 2, outputPerMillion: 8, cachedInputPerMillion: 0.5 },
     )).toBeCloseTo(1.2 + 0.2 + 0.8, 8);
+  });
+
+  it('reports input, cached, and output cost components separately', () => {
+    expect(calculateCostBreakdownWithPricing(
+      { input: 1_000_000, output: 100_000, cached: 400_000 },
+      { inputPerMillion: 2, outputPerMillion: 8, cachedInputPerMillion: 0.5 },
+    )).toEqual({
+      inputUsd: 1.2,
+      cachedUsd: 0.2,
+      outputUsd: 0.8,
+      totalUsd: 2.2,
+    });
   });
   it('uses the highest matching long-context tier', () => {
     expect(calculateCostWithPricing(

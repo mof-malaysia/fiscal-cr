@@ -1,7 +1,7 @@
 import type { ReviewResult, Severity } from '../types/review.js';
 import type { DiagramArtifact } from '../types/diagram.js';
-import { calculateCost } from '../utils/tokens.js';
 import { renderDiagramSection } from './diagram-renderer.js';
+import { renderTelemetrySummary } from './telemetry-summary.js';
 const SEVERITY_EMOJI: Record<Severity, string> = {
   critical: '🔴',
   warning: '🟡',
@@ -43,7 +43,6 @@ function renderThreadCleanup(
  * synthesis context and is not rendered as a second summary.
  */
 export function buildSummary(result: ReviewResult): string {
-  const cost = result.costEstimate?.usd ?? calculateCost(result.tokensUsed);
   const lines: string[] = ['## 🤖 FiscalCR Code Review', '', result.summary, ''];
 
   const diagram = renderOptionalDiagram(result.diagram);
@@ -76,17 +75,7 @@ export function buildSummary(result: ReviewResult): string {
   }
 
   lines.push('### Score\n', `**Score:** ${result.score}/100`, '');
-  lines.push('<details>');
-  lines.push('<summary>📊 Token Usage</summary>\n');
-  lines.push('| Metric | Value |');
-  lines.push('|--------|-------|');
-  lines.push(`| Input tokens | ${result.tokensUsed.input.toLocaleString()} |`);
-  lines.push(`| Output tokens | ${result.tokensUsed.output.toLocaleString()} |`);
-  lines.push(`| Cached tokens | ${result.tokensUsed.cached.toLocaleString()} |`);
-  if (result.callCount !== undefined) lines.push(`| LLM calls | ${result.callCount} |`);
-  lines.push(`| Estimated cost | $${cost} |`);
-  if (result.costEstimate) lines.push(`| Pricing source | ${result.costEstimate.source} |`);
-  lines.push('</details>');
+  lines.push(...renderTelemetrySummary(result));
   const baseline = result.diagram
     ? buildSummary({ ...result, diagram: undefined })
     : lines.join('\n');

@@ -290,15 +290,34 @@ function pricingForUsage(usage: { input: number }, pricing: TokenPricing): Prici
   }, undefined) ?? pricing;
 }
 
+export interface TokenCostBreakdown {
+  inputUsd: number;
+  outputUsd: number;
+  cachedUsd: number;
+  totalUsd: number;
+}
+
+export function calculateCostBreakdownWithPricing(
+  usage: { input: number; output: number; cached: number },
+  pricing: TokenPricing,
+): TokenCostBreakdown {
+  const rates = pricingForUsage(usage, pricing);
+  const uncachedInput = Math.max(0, usage.input - usage.cached);
+  const inputUsd = (uncachedInput / 1_000_000) * rates.inputPerMillion;
+  const cachedUsd = (usage.cached / 1_000_000) * rates.cachedInputPerMillion;
+  const outputUsd = (usage.output / 1_000_000) * rates.outputPerMillion;
+  return {
+    inputUsd,
+    outputUsd,
+    cachedUsd,
+    totalUsd: inputUsd + cachedUsd + outputUsd,
+  };
+}
+
+
 export function calculateCostWithPricing(
   usage: { input: number; output: number; cached: number },
   pricing: TokenPricing,
 ): number {
-  const rates = pricingForUsage(usage, pricing);
-  const uncachedInput = Math.max(0, usage.input - usage.cached);
-  return (
-    (uncachedInput / 1_000_000) * rates.inputPerMillion +
-    (usage.cached / 1_000_000) * rates.cachedInputPerMillion +
-    (usage.output / 1_000_000) * rates.outputPerMillion
-  );
+  return calculateCostBreakdownWithPricing(usage, pricing).totalUsd;
 }

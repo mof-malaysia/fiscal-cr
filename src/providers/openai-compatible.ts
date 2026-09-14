@@ -77,6 +77,9 @@ interface OpenAICompatibleResponse {
     prompt_tokens?: number;
     completion_tokens?: number;
     cached_tokens?: number;
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
   };
 }
 
@@ -181,7 +184,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const usage = {
       input: data.usage?.prompt_tokens ?? 0,
       output: data.usage?.completion_tokens ?? 0,
-      cached: data.usage?.cached_tokens ?? 0,
+      cached: data.usage?.prompt_tokens_details?.cached_tokens ?? data.usage?.cached_tokens ?? 0,
     };
 
     logger.info(

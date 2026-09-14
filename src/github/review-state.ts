@@ -2,6 +2,7 @@ import type { FiscalcrOctokit } from './client.js';
 import type { ReviewAnnotation, ReviewResult, ReviewedRange, Severity, WalkthroughEntry } from '../types/review.js';
 import { fingerprintAnnotation } from './fingerprint.js';
 import { renderDiagramSection } from '../review/diagram-renderer.js';
+import { renderTelemetrySummary } from '../review/telemetry-summary.js';
 import { logger } from '../utils/logger.js';
 
 const STATE_MARKER_PREFIX = '<!-- fiscalcr:state:v2 ';
@@ -856,6 +857,18 @@ export function renderStickyComment(input: StickyCommentInput): string {
     }
   }
   tail.push('', `**Score:** ${result.score}/100`, '');
+  const cumulativeCostUsd =
+    state.runs.length > 0
+      ? state.runs.reduce((total, run) => total + (Number.parseFloat(run.cost) || 0), 0)
+      : undefined;
+  tail.push(
+    ...renderTelemetrySummary(
+      result,
+      cumulativeCostUsd === undefined ? '📊 Token usage & cost' : '📊 Latest review usage & cost',
+      { cumulativeCostUsd },
+    ),
+    '',
+  );
 
   if (demoted.length > 0) {
     tail.push('<details>', `<summary>⚠️ ${demoted.length} finding(s) could not be placed inline</summary>\n`);
@@ -865,7 +878,12 @@ export function renderStickyComment(input: StickyCommentInput): string {
     tail.push('\nSee the check-run annotations for details.', '</details>\n');
   }
   if (state.runs.length > 0) {
-    tail.push('<details>', '<summary>🕘 Run history</summary>\n', '| Commit | When | Scope | New findings | Cost |', '|--------|------|-------|--------------|------|');
+    tail.push(
+      '<details>',
+      '<summary>🕘 Review history</summary>\n',
+      '| Commit | Date | Scope | New findings | Review cost |',
+      '|--------|------|-------|--------------|-------------|',
+    );
     for (const run of [...state.runs].reverse()) {
       tail.push(`| \`${run.sha}\` | ${run.at} | ${run.scope} | ${run.newFindings} | $${run.cost} |`);
     }

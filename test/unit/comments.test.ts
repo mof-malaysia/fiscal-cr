@@ -6,6 +6,7 @@ import {
   partitionPlaceable,
 } from '../../src/github/comments.js';
 import { fingerprintAnnotation } from '../../src/github/fingerprint.js';
+import { renderTelemetrySummary } from '../../src/review/telemetry-summary.js';
 import type { ChangedFile, ReviewAnnotation, ReviewResult } from '../../src/types/review.js';
 import type { DiagramArtifact } from '../../src/types/diagram.js';
 
@@ -211,6 +212,8 @@ describe('createPRReview (legacy mode)', () => {
     annotations: [annotation({ severity: 'critical' })],
     stats: { critical: 1, warning: 0, suggestion: 0, nitpick: 0 },
     tokensUsed: { input: 10, output: 5, cached: 0 },
+    callCount: 2,
+    costEstimate: { usd: 0.0123, source: 'exact', provider: 'openrouter', model: 'openai/gpt-5' },
   };
 
   it('posts one full review per run with REQUEST_CHANGES on criticals', async () => {
@@ -220,12 +223,97 @@ describe('createPRReview (legacy mode)', () => {
       result,
       failOn: 'critical',
     });
+    const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
+    expect(call.body).toContain('📊 Token usage & cost');
+    expect(call.body).toContain('| Uncached input | 10 |');
+    expect(call.body).toContain('**Review cost:** $0.0123');
+    expect(call.body).toContain('**Model:** `openrouter/openai/gpt-5`');
+    expect(call.body.indexOf('**Model:**')).toBeLessThan(call.body.indexOf('**Review cost:**'));
+    expect(call.body.indexOf('**Review cost:**')).toBeLessThan(call.body.indexOf('| Token usage | Tokens | Cost |'));
+    expect(call.body).not.toContain('**Cost by review stage**');
     expect(octokit.pulls.createReview).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'REQUEST_CHANGES',
         comments: [expect.objectContaining({ path: 'src/a.ts', line: 2 })],
       }),
     );
+  });
+  it('expands model details when staged reviews use multiple models', () => {
+    const body = renderTelemetrySummary({
+      ...result,
+      costEstimate: {
+        ...result.costEstimate!,
+        models: [
+          {
+            model: 'openrouter/openai/gpt-5',
+            calls: 2,
+            inputTokens: 8_000,
+            cachedTokens: 1_000,
+            outputTokens: 1_200,
+            inputUsd: 0.0088,
+            cachedUsd: 0.0001,
+            outputUsd: 0.012,
+            usd: 0.0209,
+          },
+          {
+            model: 'openrouter/anthropic/claude-sonnet-4.5',
+            calls: 1,
+            inputTokens: 4_000,
+            cachedTokens: 0,
+            outputTokens: 800,
+            inputUsd: 0.012,
+            cachedUsd: 0,
+            outputUsd: 0.012,
+            usd: 0.024,
+          },
+        ],
+      },
+    }).join('\n');
+
+    expect(body).toContain('**Models used:** 2');
+    expect(body).not.toContain('**Model:** `openrouter/openai/gpt-5`');
+    expect(body).toContain('**Cost by model**');
+    expect(body).toContain('| openrouter/openai/gpt-5 | 2 | 7,000 | 1,000 | 1,200 | $0.0209 |');
+    expect(body).toContain('| openrouter/anthropic/claude-sonnet-4.5 | 1 | 4,000 | 0 | 800 | $0.0240 |');
+    expect(body).not.toContain('| Token usage | Tokens | Cost |');
+    expect(body.match(/<details>/g)).toHaveLength(1);
+    expect(body.indexOf('📊 Token usage & cost')).toBeLessThan(body.indexOf('**Cost by model**'));
+  });
+  it('renders stage costs only when telemetry accounting is present', () => {
+    const body = renderTelemetrySummary({
+      ...result,
+      costEstimate: {
+        ...result.costEstimate!,
+        stages: [
+          {
+            stage: 'group-review',
+            calls: 2,
+            inputTokens: 7_000,
+            cachedTokens: 1_000,
+            outputTokens: 1_200,
+            inputUsd: 0.02,
+            cachedUsd: 0.0005,
+            outputUsd: 0.0095,
+            usd: 0.0209,
+          },
+          {
+            stage: 'diagram',
+            calls: 1,
+            inputTokens: 500,
+            cachedTokens: 0,
+            outputTokens: 200,
+            inputUsd: 0.001,
+            cachedUsd: 0,
+            outputUsd: 0.004,
+            usd: 0.005,
+          },
+        ],
+      },
+    }).join('\n');
+
+    expect(body).toContain('**Cost by review stage**');
+    expect(body).toContain('| Group reviews | 2 | 6,000 | 1,000 | 1,200 | $0.0209 |');
+    expect(body).toContain('| Change diagram | 1 | 500 | 0 | 200 | $0.0050 |');
   });
   it('places the optional diagram between the summary and walkthrough', async () => {
     const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 1 } })) } };

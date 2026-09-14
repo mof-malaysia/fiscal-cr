@@ -1,4 +1,5 @@
 import {
+  calculateCostBreakdownWithPricing,
   calculateCostWithPricing,
   FALLBACK_TOKEN_PRICING,
   resolvePricing,
@@ -36,6 +37,13 @@ export function calculateCostForModel(
   context: PricingContext,
 ): number {
   return roundCost(calculateCostWithPricing(usage, resolvePricing(context).pricing));
+}
+
+export function calculateCostBreakdownForModel(
+  usage: { input: number; output: number; cached: number },
+  context: PricingContext,
+) {
+  return calculateCostBreakdownWithPricing(usage, resolvePricing(context).pricing);
 }
 
 export function roundCost(cost: number): number {

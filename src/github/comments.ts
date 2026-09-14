@@ -2,8 +2,8 @@ import type { FiscalcrOctokit } from './client.js';
 import type { ChangedFile, ReviewAnnotation, ReviewResult, Severity } from '../types/review.js';
 import { commentableLines } from '../review/diff-analyzer.js';
 import { fingerprintAnnotation, fingerprintMarker } from './fingerprint.js';
-import { calculateCostForModel } from '../utils/tokens.js';
 import { renderDiagramSection } from '../review/diagram-renderer.js';
+import { renderTelemetrySummary } from '../review/telemetry-summary.js';
 import { logger } from '../utils/logger.js';
 
 const SEVERITY_EMOJI: Record<Severity, string> = {
@@ -228,7 +228,6 @@ export async function createPRReview(
 }
 
 function buildReviewBody(result: ReviewResult): string {
-  const cost = result.costEstimate?.usd ?? calculateCostForModel(result.tokensUsed, {});
 
   const head: string[] = ['## 🤖 FiscalCR Code Review\n', result.summary, ''];
 
@@ -252,12 +251,7 @@ function buildReviewBody(result: ReviewResult): string {
     if (count > 0) tail.push(`| ${SEVERITY_EMOJI[severity as Severity]} ${severity} | ${count} |`);
   }
   tail.push('', `**Score:** ${result.score}/100`, '');
-  tail.push('<details>', '<summary>Token Usage & Cost</summary>\n');
-  tail.push(`- Input: ${result.tokensUsed.input.toLocaleString()} tokens`);
-  tail.push(`- Output: ${result.tokensUsed.output.toLocaleString()} tokens`);
-  tail.push(`- Cached: ${result.tokensUsed.cached.toLocaleString()} tokens`);
-  tail.push(`- Estimated cost: $${cost} (${result.costEstimate?.source ?? 'fallback'} pricing)`);
-  tail.push('</details>\n');
+  tail.push(...renderTelemetrySummary(result));
   tail.push('---', '*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
 
   // Baseline preserves all findings and metadata when no diagram is present.
