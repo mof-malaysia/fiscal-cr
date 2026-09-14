@@ -8,7 +8,7 @@ import {
 import { fingerprintAnnotation } from '../../src/github/fingerprint.js';
 import { renderTelemetrySummary } from '../../src/review/telemetry-summary.js';
 import type { ChangedFile, ReviewAnnotation, ReviewResult } from '../../src/types/review.js';
-import type { DiagramArtifact } from '../../src/types/diagram.js';
+import type { VisualArtifact } from '../../src/types/visual.js';
 
 // New-file patch: lines 1-3 are additions → commentable; anything else is not.
 const PATCH = '@@ -0,0 +1,3 @@\n+line one\n+line two\n+line three';
@@ -33,7 +33,7 @@ function annotation(overrides: Partial<ReviewAnnotation> = {}): ReviewAnnotation
     ...overrides,
   };
 }
-function diagram(): DiagramArtifact {
+function visual(): VisualArtifact {
   return {
     mode: 'concept',
     nodes: [{ id: 'n1', label: 'Auth handler', change: 'modified', evidence: ['e1'] }],
@@ -44,7 +44,7 @@ function diagram(): DiagramArtifact {
     partial: false,
   };
 }
-function bigDiagram(): DiagramArtifact {
+function bigVisual(): VisualArtifact {
   return {
     mode: 'concept',
     nodes: Array.from({ length: 200 }, (_, i) => ({
@@ -163,7 +163,7 @@ describe('createIncrementalReview', () => {
     })).rejects.toThrow('timeout');
     expect(createReview).toHaveBeenCalledTimes(1);
   });
-  it('does not inject a diagram into the incremental review body', async () => {
+  it('does not inject a visualization into the incremental review body', async () => {
     const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 99 } })) } };
     await createIncrementalReview(octokit as never, {
       ...params,
@@ -297,7 +297,7 @@ describe('createPRReview (legacy mode)', () => {
             usd: 0.0209,
           },
           {
-            stage: 'diagram',
+            stage: 'visualize',
             calls: 1,
             inputTokens: 500,
             cachedTokens: 0,
@@ -313,28 +313,28 @@ describe('createPRReview (legacy mode)', () => {
 
     expect(body).toContain('**Cost by review stage**');
     expect(body).toContain('| Group reviews | 2 | 6,000 | 1,000 | 1,200 | $0.0209 |');
-    expect(body).toContain('| Change diagram | 1 | 500 | 0 | 200 | $0.0050 |');
+    expect(body).toContain('| Visualization | 1 | 500 | 0 | 200 | $0.0050 |');
   });
-  it('places the optional diagram between the summary and walkthrough', async () => {
+  it('places the optional visualization between the summary and walkthrough', async () => {
     const octokit = { pulls: { createReview: vi.fn(async () => ({ data: { id: 1 } })) } };
     await createPRReview(octokit as never, {
       ...params,
       result: {
         ...result,
         walkthrough: [{ path: 'src/a.ts', summary: 'tweak' }],
-        diagram: diagram(),
+        visualize: visual(),
       },
       failOn: 'never',
     });
     const call = octokit.pulls.createReview.mock.calls[0][0] as { body: string };
-    expect(call.body).toContain('### Concept map');
+    expect(call.body).toContain('### Concept visualization');
     expect(call.body).toContain('```mermaid');
     expect(call.body).not.toContain('> Adds a feature');
-    expect(call.body.indexOf('### Concept map')).toBeGreaterThan(call.body.indexOf('Legacy summary'));
-    expect(call.body.indexOf('### Concept map')).toBeLessThan(call.body.indexOf('Walkthrough'));
+    expect(call.body.indexOf('### Concept visualization')).toBeGreaterThan(call.body.indexOf('Legacy summary'));
+    expect(call.body.indexOf('### Concept visualization')).toBeLessThan(call.body.indexOf('Walkthrough'));
     expect(call.body.indexOf('Walkthrough')).toBeLessThan(call.body.indexOf('| Severity | Count |'));
   });
-  it('keeps the 422 fallback body within the cap, omitting the optional diagram when needed', async () => {
+  it('keeps the 422 fallback body within the cap, omitting the optional visualization when needed', async () => {
     const createReview = vi
       .fn()
       .mockRejectedValueOnce(Object.assign(new Error('Validation Failed'), { status: 422 }))
@@ -346,7 +346,7 @@ describe('createPRReview (legacy mode)', () => {
         ...result,
         summary: 'x'.repeat(58_000),
         walkthrough: [{ path: 'src/a.ts', summary: 'tweak' }],
-        diagram: bigDiagram(),
+        visualize: bigVisual(),
       },
       failOn: 'never',
     });
@@ -354,8 +354,8 @@ describe('createPRReview (legacy mode)', () => {
     // The 422 retry appends a fallback note; the whole body must stay within the cap.
     expect(fallbackCall.body).toContain('could not be placed');
     expect(Buffer.byteLength(fallbackCall.body, 'utf8')).toBeLessThanOrEqual(60_000);
-    // Only the optional diagram is dropped to make room — findings are preserved.
-    expect(fallbackCall.body).not.toContain('### Concept map');
+    // Only the optional visualization is dropped to make room — findings are preserved.
+    expect(fallbackCall.body).not.toContain('### Concept visualization');
     expect(fallbackCall.body).toContain('| 🔴 critical | 1 |');
   });
 });

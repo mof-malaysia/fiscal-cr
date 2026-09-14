@@ -26,7 +26,7 @@ Router for this repo. Full walkthrough: [`index.md`](index.md). Subsystem deep-d
 ## Non-negotiables
 
 - **Both entry points** — self-hosted App (`src/index.ts` → `src/app.ts` → `src/github/webhooks.ts`) and GitHub Action (`action/index.ts`) — share `ReviewOrchestrator` and must keep working after any change.
-- **`action/dist/` is generated** by `pnpm build:action` (ncc bundle) and committed. Rebuild and commit the result; never hand-edit. `tsconfig` excludes it.
+- **`action/dist/` is generated** by `pnpm build:action` (ncc bundle) and gitignored locally. The release workflow force-adds the bundle to the release build; never hand-edit it. `tsconfig` excludes it.
 - **Config changes touch schema + defaults together.** Invalid repo config fails fast by design (`loadConfig` throws `ConfigError`); missing config falls back to defaults.
 - **Behavioral changes need focused tests** (`pnpm test`, vitest) and a green `pnpm lint` (`tsc --noEmit`).
 - **Review state is a bounded v2 hidden marker** inside the sticky PR comment (`<!-- fiscalcr:state:v2 … -->`) — no external storage. It tracks open/fixed/dismissed records, recent event identities, check identity, and bounded runs; v1 migration is lazy and explicitly lossy.

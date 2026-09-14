@@ -1,11 +1,11 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import {
-  generateChangeDiagram,
-  selectDiagramMode,
-  shouldGenerateChangeDiagram,
-  DIAGRAM_MAX_INPUT_TOKENS,
-} from '../../src/pipeline/change-diagram.js';
+  generateVisual,
+  selectVisualMode,
+  shouldGenerateVisual,
+  VISUALIZE_MAX_INPUT_TOKENS,
+} from '../../src/pipeline/visualize.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import type {
   LLMProvider,
@@ -52,26 +52,36 @@ function makeCtx(overrides: Partial<PullRequestContext> = {}): PullRequestContex
 function makeConfig(
   enabled: boolean,
   language: ReviewConfig['language'] = 'en',
-  mode: ReviewConfig['review']['diagram']['mode'] = 'auto',
+  mode: ReviewConfig['review']['visualize']['mode'] = 'auto',
 ): ReviewConfig {
   return {
     ...DEFAULT_CONFIG,
     language,
     review: {
       ...DEFAULT_CONFIG.review,
-      diagram: { ...DEFAULT_CONFIG.review.diagram, enabled, mode },
+      visualize: { ...DEFAULT_CONFIG.review.visualize, enabled, mode },
     },
   };
 }
 
-/** A strict-schema-valid diagram response referencing evidence id e0. */
+/** A strict-schema-valid visualize response referencing evidence id e0. */
 const VALID_RESPONSE = JSON.stringify({
-  outcome: 'diagram',
+  outcome: 'visualize',
   nodes: [
     { id: 'n1', label: 'Auth input', change: 'modified', evidence: ['e0'] },
     { id: 'n2', label: 'Validated request', change: 'modified', evidence: ['e0'] },
   ],
   edges: [{ from: 'n1', to: 'n2', label: 'validates', change: 'modified', evidence: ['e0'] }],
+});
+
+const SEQUENCE_RESPONSE = JSON.stringify({
+  outcome: 'visualize',
+  representation: 'sequence',
+  participants: [
+    { id: 'client', label: 'Client', change: 'context', evidence: ['e0'] },
+    { id: 'service', label: 'Service', change: 'modified', evidence: ['e0'] },
+  ],
+  messages: [{ from: 'client', to: 'service', label: 'dispatches action', change: 'added', evidence: ['e0'] }],
 });
 
 interface SentEvidence {
@@ -97,11 +107,11 @@ function dataBlockOf(userMsg: string): SentData {
   return JSON.parse(userMsg.split('Data: ')[1]!) as SentData;
 }
 
-describe('generateChangeDiagram', () => {
-  it('gates diagrams to complex multi-file changes', () => {
-    const thresholds = DEFAULT_CONFIG.review.diagram;
+describe('generateVisual', () => {
+  it('gates visualization to complex multi-file changes', () => {
+    const thresholds = DEFAULT_CONFIG.review.visualize;
     expect(
-      shouldGenerateChangeDiagram(
+      shouldGenerateVisual(
         makeCtx({
           changedFiles: [
             { filename: 'a.ts', status: 'modified', additions: 10, deletions: 0, patch: 'patch' },
@@ -112,7 +122,7 @@ describe('generateChangeDiagram', () => {
       ),
     ).toBe(true);
     expect(
-      shouldGenerateChangeDiagram(
+      shouldGenerateVisual(
         makeCtx({
           changedFiles: [
             { filename: 'a.ts', status: 'modified', additions: 19, deletions: 0, patch: 'patch' },
@@ -123,7 +133,7 @@ describe('generateChangeDiagram', () => {
       ),
     ).toBe(false);
     expect(
-      shouldGenerateChangeDiagram(
+      shouldGenerateVisual(
         makeCtx({
           changedFiles: [
             { filename: 'a.ts', status: 'modified', additions: 20, deletions: 0, patch: 'patch' },
@@ -141,31 +151,31 @@ describe('generateChangeDiagram', () => {
       ],
     });
 
-    expect(shouldGenerateChangeDiagram(ctx, DEFAULT_CONFIG.review.diagram)).toBe(false);
+    expect(shouldGenerateVisual(ctx, DEFAULT_CONFIG.review.visualize)).toBe(false);
     expect(
-      shouldGenerateChangeDiagram(ctx, {
-        ...DEFAULT_CONFIG.review.diagram,
+      shouldGenerateVisual(ctx, {
+        ...DEFAULT_CONFIG.review.visualize,
         minChangedLines: 10,
       }),
     ).toBe(true);
     expect(
-      shouldGenerateChangeDiagram(ctx, {
-        ...DEFAULT_CONFIG.review.diagram,
+      shouldGenerateVisual(ctx, {
+        ...DEFAULT_CONFIG.review.visualize,
         minChangedFiles: 3,
       }),
     ).toBe(false);
   });
   it('selects explicit concept and implementation modes', () => {
     const ctx = makeCtx({ changedFiles: [{ filename: 'src/api.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' }] });
-    expect(selectDiagramMode(ctx, 'concept')).toBe('concept');
-    expect(selectDiagramMode(ctx, 'implementation')).toBe('implementation');
+    expect(selectVisualMode(ctx, 'concept')).toBe('concept');
+    expect(selectVisualMode(ctx, 'implementation')).toBe('implementation');
   });
 
   it('selects concept mode for normal runtime changes in auto mode', () => {
     const ctx = makeCtx({
       changedFiles: [{ filename: 'src/player.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' }],
     });
-    expect(selectDiagramMode(ctx, 'auto')).toBe('concept');
+    expect(selectVisualMode(ctx, 'auto')).toBe('concept');
   });
 
   it('selects implementation mode for API/schema evidence in auto mode', () => {
@@ -175,18 +185,18 @@ describe('generateChangeDiagram', () => {
         { filename: 'src/schema.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' },
       ],
     });
-    expect(selectDiagramMode(ctx, 'auto')).toBe('implementation');
+    expect(selectVisualMode(ctx, 'auto')).toBe('implementation');
   });
 
   it('omits unsupported UI-only, test-only, and documentation-only changes in auto mode', () => {
     expect(
-      selectDiagramMode(
+      selectVisualMode(
         makeCtx({ changedFiles: [{ filename: 'src/styles.css', status: 'modified', additions: 1, deletions: 0, patch: 'x' }] }),
         'auto',
       ),
     ).toBeUndefined();
     expect(
-      selectDiagramMode(
+      selectVisualMode(
         makeCtx({ changedFiles: [{ filename: 'test/player.test.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' }] }),
         'auto',
       ),
@@ -201,7 +211,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(false), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(false), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
@@ -214,7 +224,7 @@ describe('generateChangeDiagram', () => {
     const ctx = makeCtx({
       changedFiles: [{ filename: 'a.ts', status: 'modified', additions: 0, deletions: 0 }],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: [],
     });
@@ -235,7 +245,7 @@ describe('generateChangeDiagram', () => {
       ],
     });
 
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['large.ts'],
     });
@@ -251,7 +261,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'src/a.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['src/a.ts'],
     });
@@ -266,6 +276,26 @@ describe('generateChangeDiagram', () => {
     expect(result!.evidence).toEqual([{ id: 'e0', path: 'src/a.ts' }]);
     expect((result!.evidence[0] as Record<string, unknown>).patch).toBeUndefined();
   });
+
+  it('lets auto mode choose the representation from bounded evidence', async () => {
+    const llm = makeLlm(SEQUENCE_RESPONSE);
+    const result = await generateVisual(
+      llm,
+      makeCtx({
+        changedFiles: [
+          { filename: 'src/player.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1,1 +1,1 @@\n-old\n+new\n' },
+        ],
+      }),
+      makeConfig(true),
+      makeUsage(),
+      { scope: 'full', reviewedPaths: ['src/player.ts'] },
+    );
+
+    expect(result?.mode).toBe('concept');
+    expect(result?.representation).toBe('sequence');
+    expect(result?.participants?.map((participant) => participant.id)).toEqual(['p0', 'p1']);
+    expect(userMessageOf(llm)).toContain('Select the clearest reviewer representation');
+  });
   it('passes the trusted explicit implementation mode and stores it in the artifact', async () => {
     const llm = makeLlm(VALID_RESPONSE);
     const ctx = makeCtx({
@@ -273,13 +303,13 @@ describe('generateChangeDiagram', () => {
         { filename: 'src/api/routes.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true, 'en', 'implementation'), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true, 'en', 'implementation'), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['src/api/routes.ts'],
     });
     expect(result?.mode).toBe('implementation');
     expect(dataBlockOf(userMessageOf(llm)).mode).toBe('implementation');
-    expect(userMessageOf(llm)).toContain('Selected diagram mode (trusted code-owned metadata): implementation.');
+    expect(userMessageOf(llm)).toContain('Selected visual mode (trusted code-owned metadata): implementation.');
   });
 
   it('excludes ignored files from evidence even for an explicit mode', async () => {
@@ -289,7 +319,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'test/routes.test.ts', status: 'modified', additions: 10, deletions: 10, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(
+    const result = await generateVisual(
       llm,
       ctx,
       makeConfig(true, 'en', 'concept'),
@@ -308,14 +338,14 @@ describe('generateChangeDiagram', () => {
         { filename: 'src/styles.css', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['src/styles.css'],
     });
     expect(result).toBeUndefined();
     expect(llm.chatCompletion).not.toHaveBeenCalled();
     expect(
-      selectDiagramMode(
+      selectVisualMode(
         makeCtx({ changedFiles: [{ filename: 'src/config/settings.ts', status: 'modified', additions: 1, deletions: 0, patch: 'x' }] }),
         'auto',
       ),
@@ -330,7 +360,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'src/a.ts', status: 'modified', additions: 1, deletions: 1, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['src/a.ts'],
     });
@@ -357,7 +387,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'outside.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-c\n+d\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'delta',
       reviewedPaths: ['selected.ts'],
     });
@@ -368,22 +398,24 @@ describe('generateChangeDiagram', () => {
     expect(data.evidence.map((item) => item.path)).toEqual(['selected.ts']);
   });
 
-  it('makes exactly one bounded json call to the provider', async () => {
+  it('uses the configured visualization output-token cap', async () => {
     const llm = makeLlm(VALID_RESPONSE);
     const ctx = makeCtx({
       changedFiles: [
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const config = makeConfig(true);
+    config.review.visualize.maxOutputTokens = 4_096;
+    await generateVisual(llm, ctx, config, makeUsage(), {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
     expect(llm.chatCompletion).toHaveBeenCalledTimes(1);
     const req = (llm.chatCompletion as unknown as Mock).mock.calls[0][0] as ChatCompletionParams;
     expect(req.responseFormat).toEqual({ type: 'json_object' });
-    expect(req.maxTokens).toBe(2000);
-    expect(req.timeoutMs).toBe(60000);
+    expect(req.maxTokens).toBe(4_096);
+    expect(req.timeoutMs).toBe(60_000);
   });
 
   it('drops an oversized whole hunk and keeps the fitting ones (exact whole-hunk selection)', async () => {
@@ -396,7 +428,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'small2.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-x\n+y\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['small.ts', 'huge.ts', 'small2.ts'],
     });
@@ -420,7 +452,7 @@ describe('generateChangeDiagram', () => {
       patch: '@@ -1,1 +1,1 @@\n-a\n+b\n',
     }));
     const ctx = makeCtx({ changedFiles: files });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: files.map((f) => f.filename),
     });
@@ -437,7 +469,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'uncovered.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-x\n+y\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['covered.ts'],
     });
@@ -454,7 +486,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'nopatch.ts', status: 'modified', additions: 5, deletions: 0 },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['haspatch.ts', 'nopatch.ts'],
     });
@@ -468,7 +500,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'p.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['p.ts'],
     });
@@ -483,7 +515,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), usage, {
+    const result = await generateVisual(llm, ctx, makeConfig(true), usage, {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
@@ -493,14 +525,14 @@ describe('generateChangeDiagram', () => {
   });
 
   it('discards a length-truncated response and counts the spend', async () => {
-    const llm = makeLlm('{"outcome":"diagram"', 'length');
+    const llm = makeLlm('{"outcome":"visualize"', 'length');
     const usage = makeUsage();
     const ctx = makeCtx({
       changedFiles: [
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), usage, {
+    const result = await generateVisual(llm, ctx, makeConfig(true), usage, {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
@@ -517,7 +549,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), usage, {
+    const result = await generateVisual(llm, ctx, makeConfig(true), usage, {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
@@ -536,7 +568,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), usage, {
+    const result = await generateVisual(llm, ctx, makeConfig(true), usage, {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
@@ -556,14 +588,14 @@ describe('generateChangeDiagram', () => {
       patch,
     }));
     const ctx = makeCtx({ changedFiles: files });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: files.map((f) => f.filename),
     });
     expect(result).toBeDefined();
     const messages = ((llm.chatCompletion as unknown as Mock).mock.calls[0][0] as ChatCompletionParams).messages;
     const estimated = estimateTokens(messages[0].content) + estimateTokens(messages[1].content);
-    expect(estimated).toBeLessThanOrEqual(DIAGRAM_MAX_INPUT_TOKENS);
+    expect(estimated).toBeLessThanOrEqual(VISUALIZE_MAX_INPUT_TOKENS);
   });
   it('accepts an Anthropic end_turn finish reason and records the spend', async () => {
     const llm = makeLlm(VALID_RESPONSE, 'end_turn');
@@ -573,7 +605,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), usage, {
+    const result = await generateVisual(llm, ctx, makeConfig(true), usage, {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
@@ -589,7 +621,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
@@ -597,14 +629,14 @@ describe('generateChangeDiagram', () => {
   });
 
   it('rejects a tool_use finish reason but still records the spend', async () => {
-    const llm = makeLlm('{"outcome":"diagram"}', 'tool_use');
+    const llm = makeLlm('{"outcome":"visualize"}', 'tool_use');
     const usage = makeUsage();
     const ctx = makeCtx({
       changedFiles: [
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), usage, {
+    const result = await generateVisual(llm, ctx, makeConfig(true), usage, {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });
@@ -622,7 +654,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'truncated.ts', status: 'modified', additions: 0, deletions: 0, patch: '@@ -1,3 +1,3 @@\n context\n-old\n+new' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['good.ts', 'truncated.ts'],
     });
@@ -642,7 +674,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'broken.ts', status: 'modified', additions: 1, deletions: 1, patch: 'not a diff at all' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['good.ts', 'broken.ts'],
     });
@@ -662,7 +694,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'omitted.ts', status: 'modified', additions: 5, deletions: 5, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['omitted.ts'],
     });
@@ -682,7 +714,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'nonew.ts', status: 'modified', additions: 1, deletions: 1, patch: withNoNewline },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), makeUsage(), {
+    const result = await generateVisual(llm, ctx, makeConfig(true), makeUsage(), {
       scope: 'full',
       reviewedPaths: ['invalid.ts', 'nonew.ts'],
     });
@@ -703,7 +735,7 @@ describe('generateChangeDiagram', () => {
         { filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' },
       ],
     });
-    const result = await generateChangeDiagram(llm, ctx, makeConfig(true), usage, {
+    const result = await generateVisual(llm, ctx, makeConfig(true), usage, {
       scope: 'full',
       reviewedPaths: ['a.ts'],
     });

@@ -34,7 +34,7 @@ Triggered by workflow `on: pull_request` events. Reads inputs, loads repo config
 | File contents | `src/review/file-source.ts` | `repos.getContent` (base64, concurrency 8), or local `readFile` in Action mode |
 | Scope compare | `src/review/delta.ts` | `repos.compareCommitsWithBasehead` |
 | Config fetch | `src/config/loader.ts` | `repos.getContent` (base64) |
-| Threads | `src/github/threads.ts` | GraphQL `repository.pullRequest.reviewThreads` + `resolveReviewThread`/`addPullRequestReviewThreadReply` mutations |
+| Threads | `src/github/threads.ts` | GraphQL `repository.pullRequest.reviewThreads` + thread mutations; REST `pulls.listReviewComments`/`createReplyForReviewComment` keeps fixed-finding replies attached to the original inline comment when thread mutation is unavailable |
 
 ## Sticky state (`review-state.ts`)
 
@@ -88,12 +88,15 @@ their existing `fiscalcr:fp:v1` marker.
 
 ## Threads (`threads.ts`)
 
-`listFiscalcrThreads` keeps only current, FiscalCR-marked threads. Fixed inline
-findings are automatically resolved when enabled. Manual resolution is handled
-by the App's `pull_request_review_thread.resolved` webhook only when the current
-thread and record identity match; only an open thread-backed record can become
-dismissed. An `unresolved` event reopens only a matching dismissed record.
-Automatic resolution remains `fixed`, never `dismissed`.
+`listFiscalcrThreads` keeps only current, FiscalCR-marked threads. For fixed
+inline findings, `replyToFixedReviewComments` posts a durable REST
+acknowledgement to the original review comment; hidden markers make retries
+idempotent. GraphQL thread resolution runs separately and is best-effort.
+Manual resolution is handled by the App's `pull_request_review_thread.resolved`
+webhook only when the current thread and record identity match; only an open
+thread-backed record can become `dismissed`. An `unresolved` event reopens only
+a matching dismissed record. Automatic resolution remains `fixed`, never
+`dismissed`.
 
 ## Checks (`checks.ts`)
 

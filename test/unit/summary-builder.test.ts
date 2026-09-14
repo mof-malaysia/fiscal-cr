@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ReviewResult } from '../../src/types/review.js';
-import type { DiagramArtifact, DiagramNode, DiagramEdge } from '../../src/types/diagram.js';
+import type { VisualArtifact, VisualNode, VisualEdge } from '../../src/types/visual.js';
 import { buildSummary } from '../../src/review/summary-builder.js';
 
 function baseResult(overrides: Partial<ReviewResult> = {}): ReviewResult {
@@ -20,13 +20,13 @@ function baseResult(overrides: Partial<ReviewResult> = {}): ReviewResult {
   };
 }
 
-function diagram(overrides: Partial<DiagramArtifact> = {}): DiagramArtifact {
-  const nodes: DiagramNode[] = [
+function visual(overrides: Partial<VisualArtifact> = {}): VisualArtifact {
+  const nodes: VisualNode[] = [
     { id: 'n0', label: 'Auth middleware', change: 'modified', evidence: ['e1'] },
     { id: 'n1', label: 'Database client', change: 'added', evidence: ['e2'] },
     { id: 'n2', label: 'Legacy logger', change: 'removed', evidence: ['e1'] },
   ];
-  const edges: DiagramEdge[] = [
+  const edges: VisualEdge[] = [
     { from: 'n0', to: 'n1', label: 'connects to', change: 'added', evidence: ['e1', 'e2'] },
     { from: 'n2', to: 'n0', label: 'was used by', change: 'removed', evidence: ['e1'] },
   ];
@@ -45,15 +45,15 @@ function diagram(overrides: Partial<DiagramArtifact> = {}): DiagramArtifact {
   };
 }
 
-/** A deliberately oversized diagram so the rendered section crosses the cap. */
-function oversizedDiagram(): DiagramArtifact {
-  const nodes: DiagramNode[] = Array.from({ length: 80 }, (_, i) => ({
+/** A deliberately oversized visualization so the rendered section crosses the cap. */
+function oversizedVisual(): VisualArtifact {
+  const nodes: VisualNode[] = Array.from({ length: 80 }, (_, i) => ({
     id: `n${i}`,
     label: 'x'.repeat(80),
     change: 'context',
     evidence: ['e1'],
   }));
-  const edges: DiagramEdge[] = Array.from({ length: 40 }, (_, i) => ({
+  const edges: VisualEdge[] = Array.from({ length: 40 }, (_, i) => ({
     from: 'n0',
     to: `n${i + 1}`,
     label: 'y'.repeat(80),
@@ -70,7 +70,7 @@ function oversizedDiagram(): DiagramArtifact {
     partial: false,
   };
 }
-describe('buildSummary change-diagram integration', () => {
+describe('buildSummary visualization integration', () => {
   it('renders the summary once without a separate intent quote', () => {
     const out = buildSummary(baseResult());
     expect(out).not.toContain('Improve request handling');
@@ -80,9 +80,9 @@ describe('buildSummary change-diagram integration', () => {
   });
 
   it('renders summary, map, walkthrough, findings, and metadata in order', () => {
-    const out = buildSummary(baseResult({ diagram: diagram() }));
-    expect(out.indexOf('The review found no blocking issues.')).toBeLessThan(out.indexOf('### Concept map'));
-    expect(out.indexOf('### Concept map')).toBeLessThan(out.indexOf('### Walkthrough'));
+    const out = buildSummary(baseResult({ visualize: visual() }));
+    expect(out.indexOf('The review found no blocking issues.')).toBeLessThan(out.indexOf('### Concept visualization'));
+    expect(out.indexOf('### Concept visualization')).toBeLessThan(out.indexOf('### Walkthrough'));
     expect(out.indexOf('### Walkthrough')).toBeLessThan(out.indexOf('### Findings'));
     expect(out.indexOf('### Findings')).toBeLessThan(out.indexOf('### Score'));
     expect(out).not.toContain('[modified]');
@@ -90,8 +90,8 @@ describe('buildSummary change-diagram integration', () => {
     expect(out).not.toContain('Source commit:');
   });
 
-  it('keeps findings and token usage when a diagram is present', () => {
-    const out = buildSummary(baseResult({ diagram: diagram() }));
+  it('keeps findings and token usage when a visualization is present', () => {
+    const out = buildSummary(baseResult({ visualize: visual() }));
     expect(out).toContain('| 🟡 warning | 1 |');
     expect(out).toContain('| 🔵 suggestion | 2 |');
     expect(out).toContain('📊 Token usage & cost');
@@ -110,17 +110,17 @@ describe('buildSummary change-diagram integration', () => {
     expect(out).toContain('Finding status is independent');
   });
 
-  it('omits the diagram past the 60000-byte cap and returns the baseline', () => {
+  it('omits the visualization past the 60000-byte cap and returns the baseline', () => {
     const big = 'x'.repeat(57_000);
-    const noDiagram = buildSummary(baseResult({ summary: big }));
-    const out = buildSummary(baseResult({ summary: big, diagram: oversizedDiagram() }));
-    expect(out).toBe(noDiagram);
-    expect(out).not.toContain('### Concept map');
+    const noVisual = buildSummary(baseResult({ summary: big }));
+    const out = buildSummary(baseResult({ summary: big, visualize: oversizedVisual() }));
+    expect(out).toBe(noVisual);
+    expect(out).not.toContain('### Concept visualization');
   });
 
-  it('isolates diagram rendering failure and returns the baseline', () => {
-    const noDiagram = buildSummary(baseResult());
-    const malformed = { nodes: undefined } as unknown as DiagramArtifact;
-    expect(buildSummary(baseResult({ diagram: malformed }))).toBe(noDiagram);
+  it('isolates visualization rendering failure and returns the baseline', () => {
+    const noVisual = buildSummary(baseResult());
+    const malformed = { nodes: undefined } as unknown as VisualArtifact;
+    expect(buildSummary(baseResult({ visualize: malformed }))).toBe(noVisual);
   });
 });

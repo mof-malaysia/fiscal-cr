@@ -32,14 +32,20 @@ import {
   type StickyComment,
   type ReviewState,
 } from '../github/review-state.js';
-import { hasGraphql, listFiscalcrThreads, resolveOutdatedThreads, type FiscalcrThread } from '../github/threads.js';
+import {
+  hasGraphql,
+  listFiscalcrThreads,
+  replyToFixedReviewComments,
+  resolveOutdatedThreads,
+  type FiscalcrThread,
+} from '../github/threads.js';
 import { decideScope, type ScopeDecision } from './delta.js';
 import { filterFiles } from './file-filter.js';
 import { buildSummary } from './summary-builder.js';
 import { ApiFileSource, LocalFileSource } from './file-source.js';
 import { countBySeverity, deterministicScore } from '../pipeline/pass3-synthesis.js';
 import { runReviewPipeline } from '../pipeline/run-review.js';
-import { generateChangeDiagram, shouldGenerateChangeDiagram } from '../pipeline/change-diagram.js';
+import { generateVisual, shouldGenerateVisual } from '../pipeline/visualize.js';
 import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
 import { resolvePricingAsync, type PricingContext } from '../utils/pricing.js';
@@ -293,7 +299,7 @@ export class ReviewOrchestrator {
         modelForRole(this.config, 'fastPath'),
         modelForRole(this.config, 'groupReview'),
         modelForRole(this.config, 'synthesis'),
-        modelForRole(this.config, 'diagram'),
+        modelForRole(this.config, 'visualize'),
       ];
       const pricingEntries = await Promise.all(
         [...new Set(stageModels)].map(async (model) => [
@@ -313,30 +319,30 @@ export class ReviewOrchestrator {
         deltaHint,
       });
 
-      // Step 5b: Full reviews may generate a bounded replacement diagram before
+      // Step 5b: Full reviews may generate a bounded replacement visualization before
       // final cost accounting. Delta reviews deliberately do not call the
-      // auxiliary model; sticky publication preserves the last full-review map.
+      // auxiliary model; sticky publication preserves the last full-review visual.
       // Any auxiliary failure is contained locally so the ordinary review
       // result and conclusion are never affected.
       if (
         scope.mode === 'full' &&
-        this.config.review.diagram.enabled &&
-        shouldGenerateChangeDiagram(prContext, this.config.review.diagram)
+        this.config.review.visualize.enabled &&
+        shouldGenerateVisual(prContext, this.config.review.visualize)
       ) {
         try {
-          const diagram = await generateChangeDiagram(this.llm, prContext, this.config, usage, {
+          const visual = await generateVisual(this.llm, prContext, this.config, usage, {
             scope: 'full',
             reviewedPaths: result.reviewedPaths,
           });
-          if (diagram) {
-            result.diagram = diagram;
+          if (visual) {
+            result.visualize = visual;
           }
         } catch {
           // Minimal protection: the generator guards its own steps, but an
           // unexpected rejection must not leak into the review outcome.
-          logger.warn('Change diagram generation failed; continuing without diagram');
+          logger.warn('Visualization generation failed; continuing without visualization');
         }
-        // Refresh token/call totals so diagram spend — including any invalid or
+        // Refresh token/call totals so visualization spend — including any invalid or
         // failed call — is reflected in the returned accounting.
         result.tokensUsed = usage.total();
         result.callCount = usage.calls();
@@ -438,6 +444,7 @@ export class ReviewOrchestrator {
     sticky?: { commentId: number; pullNumber: number; body: string; headSha: string },
   ): Promise<ReviewResult> {
     const openCounts: Record<Severity, number> = { ...EMPTY_COUNTS };
+    let threadReplies: ReviewResult['threadReplies'] = undefined;
     for (const finding of state.findings) {
       if (finding.status === 'open') openCounts[finding.severity]++;
     }
@@ -454,6 +461,27 @@ export class ReviewOrchestrator {
         summary,
         annotations: [],
         externalId: JSON.stringify({ scope: 'skip' }),
+      });
+    }
+    if (this.config.review.comments.resolveOutdated && sticky) {
+      threadReplies = await withReviewStateLock(`${target.owner}/${target.repo}#${sticky.pullNumber}`, async () => {
+        try {
+          // Another run may have reopened a finding while this run waited.
+          const latest = await loadReviewState(this.octokit, {
+            owner: target.owner,
+            repo: target.repo,
+            pullNumber: sticky.pullNumber,
+          });
+          return await replyToFixedReviewComments(this.octokit, {
+            owner: target.owner,
+            repo: target.repo,
+            pullNumber: sticky.pullNumber,
+            fixedFindings: (latest?.state?.findings ?? []).filter((finding) => finding.status === 'fixed'),
+          });
+        } catch (err) {
+          logger.warn({ err, pullNumber: sticky.pullNumber }, 'Could not reload fixed findings for inline replies');
+          return { attempted: 0, replied: 0, failed: 0, unavailable: true };
+        }
       });
     }
     if (
@@ -507,6 +535,7 @@ export class ReviewOrchestrator {
       stats: openCounts,
       tokensUsed: { input: 0, output: 0, cached: 0 },
       callCount: 0,
+      threadReplies,
     };
   }
 
@@ -612,9 +641,13 @@ export class ReviewOrchestrator {
       headSha,
     });
     if (commentsCfg.resolveOutdated && stateForPublication) {
-      if (!threadsAvailable) {
-        result.threadCleanup = { attempted: 0, resolved: 0, failed: 0, unavailable: true };
-      } else {
+      result.threadReplies = await replyToFixedReviewComments(this.octokit, {
+        owner,
+        repo,
+        pullNumber,
+        fixedFindings: plan.findings.filter((finding) => finding.status === 'fixed'),
+      });
+      if (threadsAvailable) {
         const cleanup = await resolveOutdatedThreads(this.octokit, {
           owner,
           repo,
@@ -625,7 +658,6 @@ export class ReviewOrchestrator {
           currentFingerprints: new Set(
             (result.findings ?? result.annotations).map((annotation) => fingerprintAnnotation(annotation)),
           ),
-          headSha,
         });
         result.threadCleanup = {
           attempted: cleanup.attempted,
@@ -634,6 +666,8 @@ export class ReviewOrchestrator {
           unavailable: cleanup.unavailable,
         };
         plan.autoResolvedThreadIds = cleanup.resolved.map((thread) => thread.id);
+      } else {
+        result.threadCleanup = { attempted: 0, resolved: 0, failed: 0, unavailable: true };
       }
     }
     if (plan.capOverflow.length > 0) {
@@ -767,7 +801,7 @@ export class ReviewOrchestrator {
       renderStickyComment({
         result,
         state: stateToSave,
-        preserveExistingDiagram: scope.mode === 'delta',
+        preserveExistingVisual: scope.mode === 'delta',
         existingBody: expectedBody,
         demoted: demoted.map((annotation) => ({
           path: annotation.path,

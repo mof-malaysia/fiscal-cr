@@ -2,7 +2,7 @@ import type { FiscalcrOctokit } from './client.js';
 import type { ChangedFile, ReviewAnnotation, ReviewResult, Severity } from '../types/review.js';
 import { commentableLines } from '../review/diff-analyzer.js';
 import { fingerprintAnnotation, fingerprintMarker } from './fingerprint.js';
-import { renderDiagramSection } from '../review/diagram-renderer.js';
+import { renderVisualSection } from '../review/visual-renderer.js';
 import { renderTelemetrySummary } from '../review/telemetry-summary.js';
 import { logger } from '../utils/logger.js';
 
@@ -254,14 +254,14 @@ function buildReviewBody(result: ReviewResult): string {
   tail.push(...renderTelemetrySummary(result));
   tail.push('---', '*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*');
 
-  // Baseline preserves all findings and metadata when no diagram is present.
+  // Baseline preserves all findings and metadata when no visualization is present.
   const baseline = [...head, ...walkthrough, ...tail].join('\n');
-  const diagram = result.diagram;
-  if (!diagram) return baseline;
+  const visual = result.visualize;
+  if (!visual) return baseline;
 
   let section: string;
   try {
-    section = renderDiagramSection(diagram, 'mermaid');
+    section = renderVisualSection(visual, 'mermaid');
   } catch {
     return baseline;
   }

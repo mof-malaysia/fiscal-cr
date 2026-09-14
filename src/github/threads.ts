@@ -115,6 +115,97 @@ export async function listFiscalcrThreads(
   return threads;
 }
 
+export interface ReplyToFixedResult {
+  attempted: number;
+  replied: number;
+  failed: number;
+  unavailable: boolean;
+}
+
+/**
+ * Acknowledge fixed findings on their original inline comments via REST.
+ * Hidden markers are durable delivery receipts; thread resolution is separate.
+ */
+export async function replyToFixedReviewComments(
+  octokit: FiscalcrOctokit,
+  params: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    fixedFindings: Array<{ fingerprint: string; fixedAtSha?: string }>;
+  },
+): Promise<ReplyToFixedResult> {
+  const { owner, repo, pullNumber, fixedFindings } = params;
+  if (fixedFindings.length === 0) {
+    return { attempted: 0, replied: 0, failed: 0, unavailable: false };
+  }
+  const shaByFingerprint = new Map(
+    fixedFindings.map((finding) => [finding.fingerprint, finding.fixedAtSha]),
+  );
+
+  const rootByFingerprint = new Map<string, number>();
+  const deliveredMarkers = new Set<string>();
+  try {
+    for (let page = 1; ; page++) {
+      const { data: pageComments } = await octokit.pulls.listReviewComments({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: 100,
+        page,
+      });
+      for (const comment of pageComments) {
+        const body = comment.body ?? '';
+        if (comment.in_reply_to_id == null) {
+          const fingerprint = extractFingerprint(body);
+          if (fingerprint && shaByFingerprint.has(fingerprint)) {
+            const existing = rootByFingerprint.get(fingerprint);
+            if (existing === undefined || comment.id > existing) {
+              rootByFingerprint.set(fingerprint, comment.id);
+            }
+          }
+        } else {
+          for (const match of body.matchAll(/<!-- fiscalcr:resolution:v1 (\d+):(\S+) -->/g)) {
+            if (Number(match[1]) === comment.in_reply_to_id) deliveredMarkers.add(match[0]);
+          }
+        }
+      }
+      if (pageComments.length < 100) break;
+    }
+  } catch (err) {
+    logger.warn({ err, pullNumber }, 'Could not list review comments for fixed-finding replies');
+    return { attempted: 0, replied: 0, failed: 0, unavailable: true };
+  }
+
+  let attempted = 0;
+  let replied = 0;
+  let failed = 0;
+  for (const [fingerprint, rootId] of rootByFingerprint) {
+    const fixedAtSha = shaByFingerprint.get(fingerprint);
+    const marker = `<!-- fiscalcr:resolution:v1 ${rootId}:${fixedAtSha ?? 'unknown'} -->`;
+    if (deliveredMarkers.has(marker)) continue;
+    attempted++;
+    const body =
+      fixedAtSha !== undefined
+        ? `✅ Finding fixed — code changed in \`${fixedAtSha.slice(0, 7)}\`.\n\n${marker}`
+        : `✅ Finding fixed.\n\n${marker}`;
+    try {
+      await octokit.pulls.createReplyForReviewComment({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        comment_id: rootId,
+        body,
+      });
+      replied++;
+    } catch (err) {
+      failed++;
+      logger.warn({ err, commentId: rootId, fingerprint }, 'Could not post inline fixed-finding reply');
+    }
+  }
+  return { attempted, replied, failed, unavailable: failed > 0 };
+}
+
 function reviewedRangeContainsLine(range: ReviewedRange, line: number): boolean {
   if (range.startLine <= line && line <= range.endLine) return true;
   return (
@@ -161,7 +252,6 @@ export async function resolveOutdatedThreads(
      * authoritative set replaces the fallback path/range scope checks.
      */
     fixedFingerprints?: Set<string>;
-    headSha: string;
   },
 ): Promise<ThreadResolutionResult> {
   let threads: FiscalcrThread[];
@@ -205,26 +295,6 @@ export async function resolveOutdatedThreads(
       const resolvedThread = response.resolveReviewThread?.thread;
       if (resolvedThread?.id !== thread.id || resolvedThread.isResolved !== true) {
         throw new Error('GitHub did not confirm the review thread was resolved');
-      }
-      try {
-        await graphql(
-          `mutation($threadId: ID!, $body: String!) {
-            addPullRequestReviewThreadReply(
-              input: {
-                pullRequestReviewThreadId: $threadId
-                body: $body
-              }
-            ) {
-              comment { id }
-            }
-          }`,
-          {
-            threadId: thread.id,
-            body: `✅ Already handled — finding fixed in \`${params.headSha.slice(0, 7)}\`.`,
-          },
-        );
-      } catch (err) {
-        logger.warn({ err, threadId: thread.id }, 'Could not add review thread resolution audit reply');
       }
       resolved.push(thread);
     } catch (err) {

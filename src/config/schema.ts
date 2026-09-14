@@ -36,7 +36,7 @@ export const modelStageSchema = z
     fastPath: z.string().min(1).optional(),
     groupReview: z.string().min(1).optional(),
     synthesis: z.string().min(1).optional(),
-    diagram: z.string().min(1).optional(),
+    visualize: z.string().min(1).optional(),
   })
   .strict();
 
@@ -49,8 +49,8 @@ export const reviewConfigSchema = z.object({
   /**
    * Per-stage model overrides. `intent` drives the Pass 1 intent call,
    * `fastPath` the fast-path combined call, `groupReview` the per-group file
-   * reviews, `synthesis` the final synthesis call, and `diagram` the optional
-   * diagram call. An unset stage falls back to the selected `modelPreset` stage
+   * reviews, `synthesis` the final synthesis call, and `visualize` the optional
+   * visualization call. An unset stage falls back to the selected `modelPreset` stage
    * model, then to the legacy top-level `model`.
    */
   models: modelStageSchema.default({}),
@@ -116,13 +116,15 @@ export const reviewConfigSchema = z.object({
           testing: z.boolean().default(false),
         })
         .default({}),
-      diagram: z
+      visualize: z
         .object({
           enabled: z.boolean().default(false),
           mode: z.enum(['auto', 'concept', 'implementation']).default('auto'),
-          /** Minimum reviewable changed files before diagram generation. */
+          /** Maximum completion tokens for the visualization call. */
+          maxOutputTokens: z.number().int().min(1).default(2_000),
+          /** Minimum reviewable changed files before visualization generation. */
           minChangedFiles: z.number().int().min(1).max(100).default(2),
-          /** Minimum additions plus deletions before diagram generation. */
+          /** Minimum additions plus deletions before visualization generation. */
           minChangedLines: z.number().int().min(1).max(100_000).default(20),
         })
         .default({}),
@@ -223,9 +225,9 @@ export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
 
 /**
  * Resolve the model for a pipeline stage. Explicit per-stage overrides win,
- * then the selected preset stage model, then the top-level model. Diagram
- * generation intentionally falls back to the fast-path model when no explicit
- * diagram assignment exists, keeping the auxiliary call on the fast path by
+ * then the selected preset stage model, then the top-level model. Visualization
+ * intentionally falls back to the fast-path model when no explicit visualize
+ * assignment exists, keeping the auxiliary call on the fast path by
  * default.
  */
 export function modelForRole(config: ReviewConfig, role: ModelRole): string {
@@ -237,6 +239,6 @@ export function modelForRole(config: ReviewConfig, role: ModelRole): string {
       ? undefined
       : resolveStageMapFor(presetName, config.modelPresets)?.[role];
   if (presetStage !== undefined) return presetStage;
-  if (role === 'diagram') return modelForRole(config, 'fastPath');
+  if (role === 'visualize') return modelForRole(config, 'fastPath');
   return config.model;
 }

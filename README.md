@@ -55,11 +55,14 @@ jobs:
           base_url: https://your-llm-provider.com/v1
 ```
 
-The default `GITHUB_TOKEN` can publish findings but may not have permission to
-resolve inline review threads through GraphQL. To enable automatic thread
-cleanup, pass a GitHub App installation token or suitably scoped PAT through
-the `github_token` input. Finding status remains correct when thread cleanup
-is unavailable.
+When `review.comments.resolveOutdated` is enabled (the default), FiscalCR
+attempts to post a fixed-finding acknowledgement directly to the original
+inline review comment. The acknowledgement stays attached to the outdated
+comment; thread resolution runs separately and cleanup failures degrade to a
+log line.
+
+The Action uses the built-in `GITHUB_TOKEN` with `pull-requests: write` from
+the workflow above. No additional GitHub credential is required for inline replies.
 
 ### Action inputs
 
@@ -118,7 +121,7 @@ prompts, source code, secrets, repository or pull request identifiers, or file
 paths. Telemetry is disabled by default and is not sent to an external service.
 When enabled, published review accounting also includes per-stage token and cost
 breakdowns for intent analysis, group reviews, synthesis, fast-path reviews, and
-change diagrams. Aggregate review and model accounting is always shown.
+change visualizations. Aggregate review and model accounting is always shown.
 `calls` counts pipeline-level LLM invocations; transparent provider retries are
 not counted separately.
 
@@ -221,7 +224,7 @@ models:
   fastPath: gpt-5.6-terra
   groupReview: gpt-5.6-sol
   synthesis: gpt-5.6-sol
-  # diagram: gpt-5.6-terra # optional; defaults to fastPath's model
+  # visualize: gpt-5.6-terra # optional; defaults to fastPath's model
 baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
 experimental: false # opt in to prompt optimizations that may change between releases
@@ -244,10 +247,11 @@ review:
   minSeverity: suggestion
   maxAnnotations: 30
   failOn: critical
-  diagram:
-    enabled: false # opt-in: publish a visual change diagram alongside the review
+  visualize:
+    enabled: false # opt-in: publish a visualization alongside the review
     mode: auto # auto, concept, or implementation
-    minChangedFiles: 2 # minimum reviewable files before diagram generation
+    maxOutputTokens: 2000 # completion-token cap for the visualization call
+    minChangedFiles: 2 # minimum reviewable files before visualization generation
     minChangedLines: 20 # minimum additions plus deletions before generation
   incremental:
     enabled: true # re-review only files changed since the last reviewed commit
@@ -318,21 +322,21 @@ FiscalCR configures a model per pipeline stage under `models`:
 | `models.fastPath`      | Fast-path combined call (PRs under `pipeline.fastPathThreshold`)      |
 | `models.groupReview`   | Pass 2 per-group file reviews                                         |
 | `models.synthesis`     | Pass 3 final synthesis merging group summaries into one review        |
-| `models.diagram`       | Optional conceptual/implementation diagram call                       |
+| `models.visualize`     | Optional visualization call                                      |
 
 An unset stage falls back to the selected `modelPreset` stage model (see
 [Model presets](#model-presets)), then to the top-level `model`, so configs
 that only set `model` keep their single-model behavior — including configs
-with no `models` block at all. `models.diagram` is the exception: when it is
+with no `models` block at all. `models.visualize` is the exception: when it is
 unset, it falls back to the selected `fastPath` model before the top-level
 fallback. Built-in Kimi defaults are `k3-256k` for `intent`, `fastPath`, and
-`diagram`, and `k3` for `groupReview` and `synthesis`. With no config file all
+`visualize`, and `k3` for `groupReview` and `synthesis`. With no config file all
 stages use these defaults. Unknown keys under `models` (such as the legacy
 `big`/`small` roles) are rejected, so a stale config fails fast instead of
 silently ignoring a stage.
 Repo `models.*` values override the selected preset's stage models and the
 built-in defaults; an unset stage falls back to the preset stage model, then
-to the top-level repo `model` (or `fastPath` for an unset `diagram`). An
+to the top-level repo `model` (or `fastPath` for an unset `visualize`). An
 explicit `model` input on the GitHub Action or `MODEL`/`FISCALCR_MODEL` in App
 mode overrides all stages globally.
 
@@ -341,7 +345,7 @@ mode overrides all stages globally.
 Instead of listing every stage under `models`, select an opinionated preset
 with `modelPreset`. Presets are YAML-only and optional for explicit repo
 configs: omitting `modelPreset` keeps legacy behavior (`models.*` stage, then
-the top-level `model`; `models.diagram` otherwise falls back to `fastPath`),
+the top-level `model`; `models.visualize` otherwise falls back to `fastPath`),
 while missing config uses the provider-aware fallback.
 
 Built-in presets and their exact stage models:
@@ -352,17 +356,17 @@ Built-in presets and their exact stage models:
 |                    | `fastPath`    | `k3-256k`                    |
 |                    | `groupReview` | `k3`                         |
 |                    | `synthesis`   | `k3`                         |
-|                    | `diagram`     | `k3-256k`                    |
+|                    | `visualize`   | `k3-256k`                    |
 | `openai`           | `intent`      | `gpt-5.6-terra`              |
 |                    | `fastPath`    | `gpt-5.6-terra`              |
 |                    | `groupReview` | `gpt-5.6-sol`                |
 |                    | `synthesis`   | `gpt-5.6-sol`                |
-|                    | `diagram`     | `gpt-5.6-terra`              |
+|                    | `visualize`   | `gpt-5.6-terra`              |
 | `anthropic`        | `intent`      | `claude-sonnet-5`            |
 |                    | `fastPath`    | `claude-sonnet-5`            |
 |                    | `groupReview` | `claude-opus-5`              |
 |                    | `synthesis`   | `claude-opus-5`              |
-|                    | `diagram`     | `claude-sonnet-5`            |
+|                    | `visualize`   | `claude-sonnet-5`            |
 | `provider-default` | —             | Resolves to the `kimi`, `openai`, or `anthropic` preset from `provider`; `openai-compatible` has no preset and falls back to the top-level `model`. |
 
 ```yaml
@@ -373,9 +377,8 @@ modelPreset: anthropic
 You can also define your own presets under `modelPresets` (preset name →
 partial per-stage object) and select them by name with `modelPreset`. An entry
 under a built-in name merges over that preset; a new name defines a fresh
-preset whose unset stages fall back to the top-level `model` (except `diagram`,
+preset whose unset stages fall back to the top-level `model` (except `visualize`,
 which falls back to that preset's `fastPath` when available):
-
 ```yaml
 model: gpt-5.6-terra # fallback for stages a preset does not set
 modelPreset: team
@@ -384,7 +387,7 @@ modelPresets:
     intent: gpt-5.6-terra
     groupReview: gpt-5.6-sol
     fastPath: gpt-5.6-terra
-    diagram: gpt-5.6-terra
+    visualize: gpt-5.6-terra
   kimi:
     intent: k3-256k # overrides the built-in kimi intent
 ```
@@ -432,8 +435,9 @@ is used in Action and App mode.
   records and updates severity in place.
 - A successful review reconciles only its explicit reviewed-path manifest.
   Findings absent from that manifest remain unchanged; failed detector groups
-  therefore never fix findings. Fixed inline threads are resolved
-  automatically when permissions allow.
+  therefore never fix findings. When `review.comments.resolveOutdated` is
+  enabled, FiscalCR acknowledges fixed inline findings on their original
+  comments and resolves their threads automatically on a best-effort basis.
 - Human resolution of a current FiscalCR thread marks an open, thread-backed
   finding `dismissed`. Threadless and demoted findings cannot be dismissed.
 - An `unresolved` event reopens a matching dismissed finding after validating
@@ -465,38 +469,50 @@ GitHub redelivery durability is not guaranteed by FiscalCR. Use the
 `concurrency` group shown in the Quick Start so concurrent runs on the same PR
 do not race state.
 
-### Visual change diagrams
+### Visualizations
 
-Set `review.diagram.enabled: true` in `.fiscalcr-review.yml` to publish an
-optional visual change diagram alongside the review. The feature is opt-in and
-disabled by default. Select `review.diagram.mode` as:
+Set `review.visualize.enabled: true` in `.fiscalcr-review.yml` to publish an
+optional visualization alongside the review. Select `review.visualize.mode` as:
 
-- `auto` (default): use changed-file metadata to choose a concept or
-  implementation map, and omit unsupported UI-only, test-only, docs-only, or
-  config-only changes before the model call.
+- `auto` (default): classify changed-file metadata into concept or
+  implementation context, omit unsupported UI-only, test-only, docs-only, or
+  config-only changes before the model call, then let the model choose the
+  clearest representation from the bounded evidence.
 - `concept`: explain runtime behavior and user-visible flow.
 - `implementation`: explain architecture, boundaries, dependencies, and
   contracts.
 
-The auxiliary diagram uses `models.diagram` when configured. Otherwise it
-uses the selected preset's diagram model, then that preset's `fastPath` model,
-and finally the top-level `model`.
+The model chooses the clearest representation:
 
-- To avoid noisy diagrams and unnecessary model spend, generation is skipped
+- `flowchart` for relationships and dependency or responsibility flow;
+- `sequence` for ordered runtime interactions;
+- `table` for finite rules, state transitions, outcomes, or comparisons;
+- omission when no meaningful cross-file relationship is supported.
+
+FiscalCR validates the structured representation and formats it in code. PR
+surfaces render flowcharts and sequence visualizations with conservative GitHub
+Mermaid syntax; table representations render as Markdown tables. The model
+never emits raw Mermaid, Markdown, HTML, styles, links, or directives.
+
+The auxiliary visualization uses `models.visualize` when configured. Otherwise
+it uses the selected preset's visualize model, then that preset's `fastPath`
+model, and finally the top-level `model`.
+The visualization output cap is independent from `pipeline.maxOutputTokens` and
+is configured with `review.visualize.maxOutputTokens` (default: `2000`).
+
+- To avoid noisy artifacts and unnecessary model spend, generation is skipped
   before the model call unless the configured file and line thresholds are met.
 
-- Diagrams are generated from bounded evidence of the reviewed patch only
+- Visualizations are generated from bounded evidence of the reviewed patch only
   (the diff and changed files). Generation introduces no new analysis and
   never changes any finding, severity, or review state.
-- PR surfaces render the diagram as Mermaid: both the sticky summary comment
-  and the `legacy` comment mode embed a Mermaid diagram.
-- App check runs and GitHub Action check-run summaries use a readable text
-  fallback instead of Mermaid.
+- App check runs and GitHub Action check-run summaries use readable text
+  fallbacks instead of Mermaid.
 - Generation is auxiliary and nonfatal. If it fails, the review is still
-  published without the diagram; findings and state are unaffected.
-- Incremental reviews do not generate a new diagram; the sticky summary
-  preserves the previous full-review map unchanged. Full reviews may replace
-  it.
+  published without the visualization; findings and state are unaffected.
+- Incremental reviews do not generate a new visualization; the sticky summary
+  preserves the previous full-review visualization unchanged. Full reviews may
+  replace it.
 
 ## Cost model
 
