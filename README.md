@@ -55,6 +55,8 @@ jobs:
           provider: openai-compatible
           model: gpt-4.1-mini
           base_url: https://your-llm-provider.com/v1
+          # visualize: true
+          # comments: sticky
 ```
 
 With `review.comments.resolveOutdated` enabled (the default), fixed findings
@@ -79,6 +81,22 @@ The Action uses the built-in `GITHUB_TOKEN`; `pull-requests: write` is enough.
 | `config_path`  | No       | `.fiscalcr-review.yml`          | Path to config file relative to repo root                         |
 | `telemetry`    | No       | `false`                         | Emit metrics-only token telemetry to Action logs                  |
 | `experimental` | No       | Repo config or `false`          | Enable experimental prompt optimizations                          |
+| `visualize`   | No       | Repo config                     | Enable or disable review visualization (`true`/`false`)         |
+| `comments`    | No       | Repo config                     | Comment mode: `sticky` or `legacy`                              |
+
+The Action inputs are scalar workflow values. `visualize` maps to
+`review.visualize.enabled`, and `comments` maps to `review.comments.mode`.
+When either input is omitted, the corresponding repository setting is kept.
+
+For example, these settings can be supplied without a repository config file:
+
+```yaml
+      - uses: mof-malaysia/fiscal-cr@main
+        with:
+          api_key: ${{ secrets.LLM_API_KEY }}
+          visualize: true
+          comments: sticky
+```
 
 ### Action outputs
 

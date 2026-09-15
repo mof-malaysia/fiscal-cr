@@ -12,6 +12,11 @@ import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
 import { modelParamsFromActionInput } from "./model-params.js";
 import { renderVisualSection } from "../src/review/visual-renderer.js";
+import {
+  applyActionReviewConfig,
+  commentModeFromActionInput,
+  visualizeFromActionInput,
+} from "./review-config.js";
 /**
  * Conservative UTF-8 budget for the complete Action job summary body. The
  * optional visualization section is omitted if it would push the body past
@@ -35,6 +40,8 @@ async function run(): Promise<void> {
     const languageInput = core.getInput("language") || undefined;
     const experimentalInput = experimentalFromActionInput(core);
     const modelParamsInput = modelParamsFromActionInput(core);
+    const visualizeInput = visualizeFromActionInput(core);
+    const commentsInput = commentModeFromActionInput(core);
     const configPath = core.getInput("config_path") || ".fiscalcr-review.yml";
     const failOnInput = (core.getInput("fail_on") || undefined) as
       | "critical"
@@ -93,6 +100,10 @@ async function run(): Promise<void> {
     if (modelParamsInput !== undefined) {
       config.modelParams = modelParamsInput;
     }
+    applyActionReviewConfig(config, {
+      visualize: visualizeInput,
+      comments: commentsInput,
+    });
 
     // Honor auto-review settings (previously App-mode only)
     if (isDraft && !config.review.auto.drafts) {
