@@ -21,7 +21,13 @@ Each handler: resolve installation Octokit → `loadConfig` → `createLLMProvid
 
 ### Action mode (`action/index.ts`)
 
-Triggered by workflow `on: pull_request` events. Reads inputs, loads repo config, applies `review.auto` gates (`drafts`, `onOpen`, `onPush`), builds the orchestrator with `workspaceRoot` (local checkout), and maps the result to Action outputs + `core.summary` + `failOn` → `core.setFailed`. Note: `@actions/github`'s Octokit exposes REST under `.rest`; the orchestrator expects the `@octokit/rest` shape, so `octokit.rest` is passed.
+For `pull_request` workflows, Action mode loads policy at the PR head SHA and
+provider routing from the trusted base SHA. It applies explicit inputs
+(`provider`, `model`, `model_params`, `base_url`, `user_agent`, `language`,
+`fail_on`, `experimental`), honors `review.auto` gates, and passes the local
+checkout to `ReviewOrchestrator` with `createCheckRun: false`. Results become
+Action outputs and `core.summary`; `failOn` calls `core.setFailed`. The Action
+adapter keeps REST and GraphQL methods on the shared Octokit shape.
 
 ## GitHub API surface
 
@@ -58,10 +64,10 @@ are not lifecycle state.
 - v1 migration forces the next review full and is explicitly lossy: old
   fixed/dismissed history is not fabricated. A failed migration save leaves v1
   intact.
-Reviews reconcile a complete finding inventory against an explicit successful
-reviewed-scope manifest. Full reviews use paths; delta reviews use commentable
-line ranges, so an unrelated finding in the same file is not marked fixed.
-Failed detector groups cannot fix findings.
+- Reviews reconcile a complete finding inventory against an explicit successful
+  reviewed-scope manifest. Full reviews use paths; delta reviews use commentable
+  line ranges, so an unrelated finding in the same file is not marked fixed.
+- Failed detector groups cannot fix findings.
 - Active records render in the summary; fixed/dismissed records stay hidden.
   Transition history, terminal records, recent event identities, and run
   metadata are bounded. Old terminal records are evicted to fit a conservative
