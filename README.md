@@ -53,6 +53,8 @@ jobs:
           provider: openai-compatible
           model: gpt-4.1-mini
           base_url: https://your-llm-provider.com/v1
+          # visualize: true
+          # comments: sticky
 ```
 
 When `review.comments.resolveOutdated` is enabled (the default), FiscalCR
@@ -79,6 +81,22 @@ the workflow above. No additional GitHub credential is required for inline repli
 | `config_path`  | No       | `.fiscalcr-review.yml`          | Path to config file relative to repo root                         |
 | `telemetry`    | No       | `false`                         | Emit metrics-only token telemetry to Action logs                  |
 | `experimental` | No       | Repo config or `false`          | Enable experimental prompt optimizations                          |
+| `visualize`   | No       | Repo config                     | Enable or disable review visualization (`true`/`false`)         |
+| `comments`    | No       | Repo config                     | Comment mode: `sticky` or `legacy`                              |
+
+The Action inputs are scalar workflow values. `visualize` maps to
+`review.visualize.enabled`, and `comments` maps to `review.comments.mode`.
+When either input is omitted, the corresponding repository setting is kept.
+
+For example, these settings can be supplied without a repository config file:
+
+```yaml
+      - uses: mof-malaysia/fiscal-cr@main
+        with:
+          api_key: ${{ secrets.LLM_API_KEY }}
+          visualize: true
+          comments: sticky
+```
 
 ### Action outputs
 
@@ -97,8 +115,9 @@ the workflow above. No additional GitHub credential is required for inline repli
   same file at the trusted base revision. Non-PR contexts keep the default
   branch lookup behavior.
 - Explicit Action inputs override repository configuration only when provided.
-  In particular, `provider`, `model`, `base_url`, `language`, `fail_on`, and
-  `experimental` inputs take precedence over their config-file values.
+  In particular, `provider`, `model`, `base_url`, `language`, `fail_on`,
+  `experimental`, `visualize`, and `comments` inputs take precedence over
+  their config-file values.
 - Treat other PR-head configuration as untrusted input for forked or otherwise
   untrusted pull requests. The trusted base revision prevents PR config from
   redirecting the provider request containing the API key.

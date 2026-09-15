@@ -26,7 +26,7 @@ Both entry points funnel into the same `ReviewOrchestrator` (`src/review/orchest
 | GitHub Action | `action/index.ts` (ncc-bundled to `action/dist/index.js`) | `action.yml` (root) — `runs.main: action/dist/index.js`, node20 | Action inputs + `GITHUB_WORKSPACE` checkout |
 | Self-hosted App | `src/index.ts` → `src/app.ts` (Hono server) → `src/github/webhooks.ts` | `pnpm dev` / `pnpm start` | `.env` vars, webhook at `POST /api/webhook`, `GET /health` |
 
-Action inputs (`action/index.ts`, via `@actions/core`): `api_key` (required), `github_token`, `provider`, `model` (global override — pins every pipeline stage), `model_params`, `base_url`, `user_agent`, `language`, `fail_on`, `config_path` (default `.fiscalcr-review.yml`), opt-in `experimental` (prompt optimizations), and opt-in `telemetry` (metrics-only Action logs). Outputs: `review_summary`, `annotations_count`, `critical_count`, `tokens_used`, `cost_estimate`.
+- Action inputs (`action/index.ts`, via `@actions/core`): `api_key` (required), `github_token`, `provider`, `model` (global override — pins every pipeline stage), `model_params`, `base_url`, `user_agent`, `language`, `fail_on`, `config_path` (default `.fiscalcr-review.yml`), `visualize` (review visualization toggle), `comments` (sticky/legacy comment mode), opt-in `experimental` (prompt optimizations), and opt-in `telemetry` (metrics-only Action logs). Outputs: `review_summary`, `annotations_count`, `critical_count`, `tokens_used`, `cost_estimate`.
 
 App env vars (`src/index.ts`, `.env.example`): `API_KEY` (or `FISCALCR_API_KEY`), `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `MODEL_PROVIDER`, `MODEL` (or `FISCALCR_MODEL`), `BASE_URL` (or `FISCALCR_BASE_URL`), `LLM_USER_AGENT`, `PORT` (3000), `LOG_LEVEL`.
 
@@ -96,7 +96,7 @@ workflow → action/index.ts
   → core.getInput(...)                    // inputs + defaults
   → github.getOctokit(token)              // uses .rest shape
   → loadConfig(...)                       // via config_path input
-  → inputs override config (model/base_url/user_agent/language/fail_on)
+  → inputs override config (model/base_url/user_agent/language/fail_on/visualize/comments)
   → review.auto gates (drafts/onOpen/onPush)
   → new ReviewOrchestrator(octokit, llm, config, { workspaceRoot: GITHUB_WORKSPACE })
   → reviewPullRequest(...)
