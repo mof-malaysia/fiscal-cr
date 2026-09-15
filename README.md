@@ -6,9 +6,11 @@ AI-powered, model-agnostic code review for GitHub pull requests.
 
 ## Features
 
-- Model-agnostic provider support with native Anthropic, OpenAI, Kimi, and OpenAI-compatible APIs
-- Full-PR review with inline GitHub annotations and summary comments
-- Repo-level configuration via `.fiscalcr-review.yml`
+- Model-agnostic providers: Anthropic, OpenAI, Kimi, and compatible APIs
+- Full-PR reviews with inline annotations and summary comments
+- Optional visualizations for eligible full reviews
+- Sticky lifecycle state and legacy comment modes
+- Repo-level config via `.fiscalcr-review.yml`
 - GitHub Action and self-hosted GitHub App modes
 - Multilingual reviews in `en`, `zh-TW`, `zh-CN`, `ja`, and `ko`
 
@@ -55,14 +57,11 @@ jobs:
           base_url: https://your-llm-provider.com/v1
 ```
 
-When `review.comments.resolveOutdated` is enabled (the default), FiscalCR
-attempts to post a fixed-finding acknowledgement directly to the original
-inline review comment. The acknowledgement stays attached to the outdated
-comment; thread resolution runs separately and cleanup failures degrade to a
-log line.
+With `review.comments.resolveOutdated` enabled (the default), fixed findings
+receive a reply on their original inline comments. Thread cleanup is separate
+and best effort.
 
-The Action uses the built-in `GITHUB_TOKEN` with `pull-requests: write` from
-the workflow above. No additional GitHub credential is required for inline replies.
+The Action uses the built-in `GITHUB_TOKEN`; `pull-requests: write` is enough.
 
 ### Action inputs
 
@@ -70,10 +69,11 @@ the workflow above. No additional GitHub credential is required for inline repli
 | -------------- | -------- | ------------------------------- | ----------------------------------------------------------------- |
 | `api_key`      | Yes      | —                               | LLM API key                                                       |
 | `github_token` | No       | `${{ github.token }}`           | GitHub token for API access                                       |
-| `provider`     | No       | Repo config or built-in default | `openai-compatible`, `kimi`, `openai`, or `anthropic`          |
-| `model`        | No       | Repo config or built-in default | Model name; global override for every stage                      |
+| `provider`     | No       | Repo config or built-in default | `openai-compatible`, `kimi`, `openai`, or `anthropic`             |
+| `model`        | No       | Repo config or built-in default | Model name; overrides the four core review stages                 |
+| `model_params` | No       | Repo config                     | JSON object of provider-native fields merged into each model call  |
 | `base_url`     | No       | Repo config                     | Provider base URL override                                        |
-| `user_agent`   | No       | `fiscalcr/1.0`                  | Custom User-Agent for endpoints that whitelist clients (see note) |
+| `user_agent`   | No       | `fiscalcr/1.0`                  | Custom User-Agent for endpoints that whitelist clients            |
 | `language`     | No       | Repo config or built-in default | Review language override                                          |
 | `fail_on`      | No       | Repo config or built-in default | `critical`, `warning`, or `never`                                 |
 | `config_path`  | No       | `.fiscalcr-review.yml`          | Path to config file relative to repo root                         |
@@ -90,46 +90,31 @@ the workflow above. No additional GitHub credential is required for inline repli
 | `tokens_used`       | Total input + output tokens          |
 | `cost_estimate`     | Estimated API cost in USD            |
 
-### Notes on precedence and PR-head configuration
+### Configuration precedence
 
-- Action mode loads review policy from `.fiscalcr-review.yml` at the reviewed
-  pull request's `headSha`, while `provider` and `base_url` are pinned to the
-  same file at the trusted base revision. Non-PR contexts keep the default
-  branch lookup behavior.
-- Explicit Action inputs override repository configuration only when provided.
-  In particular, `provider`, `model`, `base_url`, `language`, `fail_on`, and
-  `experimental` inputs take precedence over their config-file values.
-- Treat other PR-head configuration as untrusted input for forked or otherwise
-  untrusted pull requests. The trusted base revision prevents PR config from
-  redirecting the provider request containing the API key.
-- Model presets (`modelPreset` selector, `modelPresets` custom maps) are
-  configured in the repo's `.fiscalcr-review.yml`; there is no Action input
-  for preset selection. The `model` input remains a global override and wins
-  over every pipeline stage, including stages a preset would select. A
-  `provider` input override also becomes effective for `provider-default`
-  selection, so stage models match the provider used for API calls.
-- `openai-compatible` requires an explicit `base_url`.
-- `anthropic` uses the native Messages API and defaults to
-  `https://api.anthropic.com/v1`; its API key is sent in `x-api-key`.
+- Action policy comes from the PR head SHA; `provider` and `base_url` come from
+  the trusted base SHA. Non-PR runs use the default branch.
+- Provided inputs override config: `provider`, `model`, `model_params`,
+  `base_url`, `user_agent`, `language`, `fail_on`, and `experimental`.
+- Head configuration outside those routing fields is untrusted. Base-revision
+  routing prevents it from redirecting requests that contain the API key.
+- Presets are YAML-only. `provider-default` follows the effective provider.
+- `openai-compatible` requires `base_url`. `anthropic` uses the native
+  Messages API, defaults to `https://api.anthropic.com/v1`, and sends keys in
+  `x-api-key`.
 
 ### Token telemetry
 
-Set `telemetry: true` to emit structured lines prefixed with
-`[fiscalcr-telemetry]` in the GitHub Actions log. Events contain token counts,
-pipeline stage, timing, output limits, and finding counts. They never contain
-prompts, source code, secrets, repository or pull request identifiers, or file
-paths. Telemetry is disabled by default and is not sent to an external service.
-When enabled, published review accounting also includes per-stage token and cost
-breakdowns for intent analysis, group reviews, synthesis, fast-path reviews, and
-change visualizations. Aggregate review and model accounting is always shown.
-`calls` counts pipeline-level LLM invocations; transparent provider retries are
-not counted separately.
+Set `telemetry: true` to emit `[fiscalcr-telemetry]` metrics in Action logs.
+Events include token counts, stage, timing, output limits, and finding counts;
+they exclude prompts, source, secrets, repository/PR IDs, and paths. Telemetry
+is disabled by default and uses no external service. Published accounting
+includes per-stage token and cost totals; `calls` excludes provider retries.
 
 ### Experimental features
 
-Set `experimental: true` in `.fiscalcr-review.yml`, or pass the explicit Action
-input, to enable experimental prompt optimizations. These optimizations may
-change between releases. The default is `false`, preserving stable prompts.
+Set `experimental: true` in YAML or as an Action input to enable prompt
+optimizations that may change between releases. The default is `false`.
 
 ### Endpoints that whitelist clients
 
@@ -150,7 +135,7 @@ override).
 
 ## Self-Hosted GitHub App
 
-Use the app when you want comment-driven reviews such as `@fiscalcr review` on pull requests.
+Use App mode for comment-driven reviews such as `@fiscalcr review`.
 
 ### Setup
 
@@ -169,22 +154,14 @@ pnpm dev
 | `API_KEY`               | Yes      | Provider API key                            |
 | `FISCALCR_API_KEY`      | Optional | Alternate API key env name                  |
 | `MODEL_PROVIDER`        | Optional | Provider name (`openai-compatible`, `kimi`, `openai`, or `anthropic`) |
-| `MODEL`                 | Optional | Model name; global override for every stage |
-| `BASE_URL`              | Optional | Operator-controlled base URL                |
+| `MODEL`                 | Optional | Model name; `FISCALCR_MODEL` is an alias    |
+| `BASE_URL`              | Optional | Operator-controlled URL; `FISCALCR_BASE_URL` is an alias |
 | `LLM_USER_AGENT`        | Optional | Custom User-Agent for whitelisted endpoints |
 | `GITHUB_APP_ID`         | Yes      | GitHub App ID                               |
 | `GITHUB_PRIVATE_KEY`    | Yes      | GitHub App private key                      |
 | `GITHUB_WEBHOOK_SECRET` | Yes      | Webhook secret                              |
 | `PORT`                  | No       | Server port, default `3000`                 |
 | `LOG_LEVEL`             | No       | Log level, default `info`                   |
-
-Model presets (`modelPreset` selector, `modelPresets` custom maps) are
-configured per repo in `.fiscalcr-review.yml`; there is no App-level env var
-for preset selection. `MODEL` (alias `FISCALCR_MODEL`) remains a global
-override that wins over every pipeline stage, including preset-derived
-models. `MODEL_PROVIDER` overrides the effective provider and therefore changes
-which preset `provider-default` selects; stage models match the provider used
-for API calls.
 
 ### Comment commands
 
@@ -227,6 +204,8 @@ models:
   # visualize: gpt-5.6-terra # optional; defaults to fastPath's model
 baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
+# modelParams:
+#   reasoning_effort: medium # provider-native fields; pipeline fields are stripped
 experimental: false # opt in to prompt optimizations that may change between releases
 
 review:
@@ -255,14 +234,12 @@ review:
     minChangedLines: 20 # minimum additions plus deletions before generation
   incremental:
     enabled: true # re-review only files changed since the last reviewed commit
-    maxDeltaFiles: 150 # larger deltas fall back to a full review
   comments:
-    mode:
-      sticky # one updated summary comment + small incremental reviews
-      # 'legacy' → stack a full review on every run (pre-v2 behavior)
-    dedupe: true # never re-post a finding that was already posted
-    resolveOutdated: true # auto-resolve threads whose finding no longer occurs
-    maxOpenComments: 100 # cumulative inline cap; overflow goes to check-run annotations
+    mode: sticky # one updated summary comment + incremental reviews
+    # legacy → stack a full review on every run
+    dedupe: true # do not repost an existing finding
+    resolveOutdated: true # resolve threads for fixed findings
+    maxOpenComments: 100 # overflow goes to check-run annotations
 
 files:
   include:
@@ -309,210 +286,113 @@ model: claude-sonnet-5
 # baseUrl: https://api.anthropic.com/v1  # optional; this is the default
 ```
 
-
 If the configured file is not found, FiscalCR falls back to built-in defaults. Invalid configs fail fast instead of being silently ignored.
 
-### Model stages
+### Model routing
 
-FiscalCR configures a model per pipeline stage under `models`:
+Configure one model per review stage under `models`:
 
-| Key                    | Stage                                                                 |
-| ---------------------- | --------------------------------------------------------------------- |
-| `models.intent`        | Pass 1 intent/walkthrough/grouping call                               |
-| `models.fastPath`      | Fast-path combined call (PRs under `pipeline.fastPathThreshold`)      |
-| `models.groupReview`   | Pass 2 per-group file reviews                                         |
-| `models.synthesis`     | Pass 3 final synthesis merging group summaries into one review        |
-| `models.visualize`     | Optional visualization call                                      |
+| Key | Stage |
+| --- | --- |
+| `models.intent` | Pass 1 intent, walkthrough, and grouping |
+| `models.fastPath` | Combined call for small PRs |
+| `models.groupReview` | Pass 2 per-group reviews |
+| `models.synthesis` | Pass 3 final synthesis |
+| `models.visualize` | Optional visualization |
 
-An unset stage falls back to the selected `modelPreset` stage model (see
-[Model presets](#model-presets)), then to the top-level `model`, so configs
-that only set `model` keep their single-model behavior — including configs
-with no `models` block at all. `models.visualize` is the exception: when it is
-unset, it falls back to the selected `fastPath` model before the top-level
-fallback. Built-in Kimi defaults are `k3-256k` for `intent`, `fastPath`, and
-`visualize`, and `k3` for `groupReview` and `synthesis`. With no config file all
-stages use these defaults. Unknown keys under `models` (such as the legacy
-`big`/`small` roles) are rejected, so a stale config fails fast instead of
-silently ignoring a stage.
-Repo `models.*` values override the selected preset's stage models and the
-built-in defaults; an unset stage falls back to the preset stage model, then
-to the top-level repo `model` (or `fastPath` for an unset `visualize`). An
-explicit `model` input on the GitHub Action or `MODEL`/`FISCALCR_MODEL` in App
-mode overrides all stages globally.
+Resolution order is `models.<stage>` → selected preset → top-level `model`.
+`visualize` instead falls back to the resolved `fastPath` model. Missing config
+selects `provider-default` for the default `kimi` provider. An Action `model`
+input or App `MODEL`/`FISCALCR_MODEL` override pins the four core stages;
+visualization keeps its explicit or preset model before that fallback.
+Unknown stage keys fail validation.
 
 ### Model presets
 
-Instead of listing every stage under `models`, select an opinionated preset
-with `modelPreset`. Presets are YAML-only and optional for explicit repo
-configs: omitting `modelPreset` keeps legacy behavior (`models.*` stage, then
-the top-level `model`; `models.visualize` otherwise falls back to `fastPath`),
-while missing config uses the provider-aware fallback.
+Presets are YAML-only. Omit `modelPreset` to keep legacy single-model routing.
+`provider-default` selects `kimi`, `openai`, or `anthropic` from the effective
+provider; `openai-compatible` has no preset and uses `model`.
 
-Built-in presets and their exact stage models:
+| Preset | intent | fastPath | groupReview | synthesis | visualize |
+| --- | --- | --- | --- | --- | --- |
+| `kimi` | `k3-256k` | `k3-256k` | `k3` | `k3` | `k3-256k` |
+| `openai` | `gpt-5.6-terra` | `gpt-5.6-terra` | `gpt-5.6-sol` | `gpt-5.6-sol` | `gpt-5.6-terra` |
+| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-opus-5` | `claude-opus-5` | `claude-sonnet-5` |
 
-| Preset             | Stage         | Model                         |
-| ------------------ | ------------- | ----------------------------- |
-| `kimi`             | `intent`      | `k3-256k`                    |
-|                    | `fastPath`    | `k3-256k`                    |
-|                    | `groupReview` | `k3`                         |
-|                    | `synthesis`   | `k3`                         |
-|                    | `visualize`   | `k3-256k`                    |
-| `openai`           | `intent`      | `gpt-5.6-terra`              |
-|                    | `fastPath`    | `gpt-5.6-terra`              |
-|                    | `groupReview` | `gpt-5.6-sol`                |
-|                    | `synthesis`   | `gpt-5.6-sol`                |
-|                    | `visualize`   | `gpt-5.6-terra`              |
-| `anthropic`        | `intent`      | `claude-sonnet-5`            |
-|                    | `fastPath`    | `claude-sonnet-5`            |
-|                    | `groupReview` | `claude-opus-5`              |
-|                    | `synthesis`   | `claude-opus-5`              |
-|                    | `visualize`   | `claude-sonnet-5`            |
-| `provider-default` | —             | Resolves to the `kimi`, `openai`, or `anthropic` preset from `provider`; `openai-compatible` has no preset and falls back to the top-level `model`. |
+Custom presets are partial. Same-name entries merge over built-ins; unset core
+stages use `model`, while `visualize` uses the resolved `fastPath` model.
 
 ```yaml
-provider: anthropic
-modelPreset: anthropic
-```
-
-You can also define your own presets under `modelPresets` (preset name →
-partial per-stage object) and select them by name with `modelPreset`. An entry
-under a built-in name merges over that preset; a new name defines a fresh
-preset whose unset stages fall back to the top-level `model` (except `visualize`,
-which falls back to that preset's `fastPath` when available):
-```yaml
-model: gpt-5.6-terra # fallback for stages a preset does not set
+model: gpt-5.6-terra
 modelPreset: team
 modelPresets:
   team:
     intent: gpt-5.6-terra
     groupReview: gpt-5.6-sol
-    fastPath: gpt-5.6-terra
-    visualize: gpt-5.6-terra
   kimi:
-    intent: k3-256k # overrides the built-in kimi intent
+    intent: k3-256k # overrides the built-in kimi preset
 ```
 
-Unknown preset names and unknown stage keys inside `modelPresets` fail config
-validation.
-
-Precedence: explicit `models.<stage>` > the selected preset's stage model >
-the top-level `model`. An explicit `model` input on the GitHub Action or
-`MODEL`/`FISCALCR_MODEL` in App mode still overrides every stage globally.
+Unknown preset names and stage keys fail config validation.
 
 ## How it works
 
 ```text
-PR Event -> Extract Context -> Filter Files
-  ├── Fast path (small PR): one combined LLM call (intent + walkthrough + findings)
-  └── Full pipeline (large PR):
-        Pass 1: PR intent, walkthrough, grouping hints   (1 intent call)
-        Pass 2: parallel per-group file reviews          (N calls)
-        Pass 3: validate/dedupe/rank + synthesis         (1 call, skipped for 1 group)
-  -> Publish Check Run + PR review
+PR event → load config → extract and filter files
+  ├─ small PR / pipeline disabled → one combined fast-path call
+  └─ large PR → intent → groups → parallel reviews → synthesis
+      └─ eligible full review → optional visualization
+→ publish the Check Run and PR review
 ```
 
-### Review pipeline
-
-1. Create a GitHub Check Run
-2. Extract PR metadata, diff, and changed files (local checkout in Action mode, parallel API otherwise)
-3. Filter files by include/exclude rules
-4. PRs under `pipeline.fastPathThreshold` tokens take the fast path: a single combined call on the `fastPath` stage model
-5. Larger PRs run the multi-pass pipeline:
-   - **Pass 1 — intent**: an `intent` stage call summarizes the PR's intent, produces a file walkthrough, and suggests file groupings. Failure here is non-fatal.
-   - **Pass 2 — group reviews**: files are deterministically grouped (hints → directory clustering → bin-packing to `groupTokenBudget`) and reviewed in parallel with the `groupReview` stage model. In Action mode each group also sees unchanged files it imports (`relatedContextBudget`). One failed group does not fail the review.
-   - **Pass 3 — synthesis**: code-side validation drops findings on lines outside the diff, filters by confidence, dedupes, and ranks; a final `synthesis` stage call merges group summaries into one review (skipped when there is only one group).
-6. Every LLM call goes through retry/backoff/timeout handling with `max_tokens` enforced
-7. Update the Check Run and PR review summary (intent, walkthrough table, findings, token usage)
+- Fast-path and multi-pass findings use the same validation.
+- Failed intent or individual groups degrade the review; all groups failing is fatal.
+- Every LLM call uses configured retry, timeout, and output limits.
+- Sticky mode updates one lifecycle comment; legacy mode posts a full review per run.
 
 ### Incremental reviews & comment lifecycle
 
-FiscalCR keeps a bounded findings lifecycle in a hidden `v2` marker inside one
-sticky summary comment per PR — no external storage, and the same state model
-is used in Action and App mode.
+Sticky mode stores bounded state in a hidden `v2` marker inside one summary
+comment per PR. Legacy mode stores no lifecycle state.
 
-- Each record is keyed by the existing stable fingerprint and has status
-  `open`, `fixed`, or `dismissed`. Re-observation reopens fixed/dismissed
-  records and updates severity in place.
-- A successful review reconciles only its explicit reviewed-path manifest.
-  Findings absent from that manifest remain unchanged; failed detector groups
-  therefore never fix findings. When `review.comments.resolveOutdated` is
-  enabled, FiscalCR acknowledges fixed inline findings on their original
-  comments and resolves their threads automatically on a best-effort basis.
-- Human resolution of a current FiscalCR thread marks an open, thread-backed
-  finding `dismissed`. Threadless and demoted findings cannot be dismissed.
-- An `unresolved` event reopens a matching dismissed finding after validating
-  the current FiscalCR thread identity. Action mode has no manual-resolution
-  webhook path.
-- The summary renders active findings only. Transition history, terminal
-  records, recent event identities, and run display history are bounded.
-  Terminal records are evicted oldest-first when needed; active state is never
-  silently truncated, and an oversized marker leaves the prior valid comment
-  unchanged. Evicted fingerprints can return as new records.
-- v1 migration is lazy, forces an explicitly lossy full review, and does not
-  invent old fixed/dismissed statuses. If migration persistence fails, the v1
-  marker remains intact.
-- App check identity and head SHA are persisted. Missing, inaccessible, or
-  wrong-head checks get replacements; old check annotations are not rewritten.
-- State writes happen last. Retries use idempotent rereads and bounded event
-  identities. The latest completed review is the eventual authority; FiscalCR
-  does not claim strict linearizable review ordering.
-- `@fiscalcr review` always forces a full re-review. Base branch changes,
-  force-pushes, and oversized deltas automatically fall back to a full review.
+- Stable fingerprints identify `open`, `fixed`, and `dismissed` findings.
+- Only a successful reviewed scope can mark an absent finding fixed. Delta
+  scopes use reviewed line ranges, so unrelated findings stay open.
+- With `resolveOutdated`, fixed findings receive replies on their original
+  comments and their threads are resolved when supported.
+- Resolving a current FiscalCR thread dismisses its matching open finding.
+  An `unresolved` event reopens a matching dismissed finding. Action mode has
+  no manual-resolution webhook.
+- Active findings remain visible; terminal history and event data are bounded.
+  Active state is never silently truncated. v1 migration forces a lossy full
+  review and preserves the old marker if saving fails.
+- App check identity and head SHA are retained; stale checks are replaced.
+  State is saved last, after publication succeeds.
+- `@fiscalcr review` forces a full review. Base changes, force-pushes, and large
+  deltas also fall back to full review.
 
-**Limitations**: fork PRs run with a read-only token, so reviews cannot be posted
-(pre-existing GitHub Actions restriction). Thread auto-resolution needs the
-default `pull-requests: write` permission; manual resolution additionally
-requires the App's `pull_request_review_thread` webhook subscription (read
-access to Pull requests). When unavailable, lifecycle cleanup degrades to a
-log line. Webhook transient failures return non-2xx for observability, but
-GitHub redelivery durability is not guaranteed by FiscalCR. Use the
-`concurrency` group shown in the Quick Start so concurrent runs on the same PR
-do not race state.
+Fork PRs use read-only tokens and cannot post reviews. Thread cleanup needs
+`pull-requests: write`; manual resolution also needs the App thread webhook.
+Cleanup failures log and do not fail the review. Keep the Quick Start
+`concurrency` group to serialize runs for one PR.
 
 ### Visualizations
 
-Set `review.visualize.enabled: true` in `.fiscalcr-review.yml` to publish an
-optional visualization alongside the review. Select `review.visualize.mode` as:
+Set `review.visualize.enabled: true` to add a visualization to eligible full
+reviews. `mode` can be `auto`, `concept`, or `implementation`; `auto` classifies
+changed files before generation.
 
-- `auto` (default): classify changed-file metadata into concept or
-  implementation context, omit unsupported UI-only, test-only, docs-only, or
-  config-only changes before the model call, then let the model choose the
-  clearest representation from the bounded evidence.
-- `concept`: explain runtime behavior and user-visible flow.
-- `implementation`: explain architecture, boundaries, dependencies, and
-  contracts.
+The model returns one validated representation: a flowchart for relationships,
+a sequence diagram for ordered interactions, or a Markdown table for finite
+rules and transitions. It can omit the visualization when no useful cross-file
+relationship exists. Code renders it with conservative syntax; raw Mermaid,
+Markdown, HTML, styles, links, and directives are not accepted.
 
-The model chooses the clearest representation:
-
-- `flowchart` for relationships and dependency or responsibility flow;
-- `sequence` for ordered runtime interactions;
-- `table` for finite rules, state transitions, outcomes, or comparisons;
-- omission when no meaningful cross-file relationship is supported.
-
-FiscalCR validates the structured representation and formats it in code. PR
-surfaces render flowcharts and sequence visualizations with conservative GitHub
-Mermaid syntax; table representations render as Markdown tables. The model
-never emits raw Mermaid, Markdown, HTML, styles, links, or directives.
-
-The auxiliary visualization uses `models.visualize` when configured. Otherwise
-it uses the selected preset's visualize model, then that preset's `fastPath`
-model, and finally the top-level `model`.
-The visualization output cap is independent from `pipeline.maxOutputTokens` and
-is configured with `review.visualize.maxOutputTokens` (default: `2000`).
-
-- To avoid noisy artifacts and unnecessary model spend, generation is skipped
-  before the model call unless the configured file and line thresholds are met.
-
-- Visualizations are generated from bounded evidence of the reviewed patch only
-  (the diff and changed files). Generation introduces no new analysis and
-  never changes any finding, severity, or review state.
-- App check runs and GitHub Action check-run summaries use readable text
-  fallbacks instead of Mermaid.
-- Generation is auxiliary and nonfatal. If it fails, the review is still
-  published without the visualization; findings and state are unaffected.
-- Incremental reviews do not generate a new visualization; the sticky summary
-  preserves the previous full-review visualization unchanged. Full reviews may
-  replace it.
+Check Runs and Action summaries use text rendering; PR comments use Mermaid.
+The visualization call uses `review.visualize.maxOutputTokens` as its
+independent cap. Generation requires the configured file and line thresholds,
+uses bounded patch evidence, and is nonfatal. Delta reviews keep the prior
+full-review visual.
 
 ## Cost model
 
@@ -555,10 +435,11 @@ the fallback.
 
 ```text
 fiscal-cr/
+├── action.yml              # published Action metadata
 ├── action/
-│   ├── action.yml
 │   ├── index.ts
-│   └── dist/
+│   ├── config.ts
+│   └── dist/               # generated release bundle
 ├── src/
 │   ├── index.ts
 │   ├── app.ts
@@ -569,6 +450,8 @@ fiscal-cr/
 │   ├── review/
 │   ├── types/
 │   └── utils/
+├── docs/
+│   └── llm-evaluation.md
 ├── test/
 │   └── unit/
 └── .fiscalcr-review.yml
@@ -585,33 +468,21 @@ pnpm build:action
 
 ## Local LLM evaluation
 
-Run the real production routing and review-pipeline code against a
-deterministic 11-case gold benchmark suite — no GitHub API or repository
-needed, and no GitHub publishing side effects (no check runs, reviews,
-comments, or state markers; the GitHub Action workspace-context path is not
-exercised). Each case is a synthetic PR with hand-authored expected issues;
-every case runs once as baseline and once as experimental per round.
-
-Prerequisite: put your provider API key in a root `.env` (never commit it). The
-harness reads `API_KEY` (falling back to `FISCALCR_API_KEY`, then `KIMI_API_KEY`)
-from the environment only and never logs it.
+The harness runs the production review pipeline against 11 synthetic cases.
+It does not call GitHub or publish reviews. Put a provider key in root `.env`;
+the harness reads `API_KEY`, then `FISCALCR_API_KEY`, `ANTHROPIC_API_KEY`, or
+`KIMI_API_KEY`, and never logs it.
 
 ```bash
-make eval-llm-dry        # keyless plan preview and prompt stats
-make eval-llm            # smoke: 3 cases × 1 run × 2 variants = 6 attempts (all fast-path)
-make eval-llm-full       # full: 11 cases × 1 run × 2 variants = 22 attempts (up to 40 provider calls)
-make eval-llm-pipeline-dry  # keyless dry run of the pipeline-01 multi-pass canary
-EVAL_CASES=clean-01,local-01 make eval-llm   # focused: 2 cases × 2 variants = 4 attempts
+make eval-llm-dry             # keyless plan
+make eval-llm                 # smoke suite
+make eval-llm-full            # full suite
+make eval-llm-pipeline-dry    # multi-pass canary
+EVAL_CASES=clean-01,local-01 make eval-llm
 ```
 
-Provider calls are billable and an attempt is not a call: fast-path attempts
-cost at most 1 provider call, multi-pass attempts (like `pipeline-01`) up to
-10 (intent + up to 8 group reviews + synthesis). `EVAL_MAX_CALLS` guards the
-provider-call upper bound before any provider is created; the full 11-case ×
-4-round decision run upper bound is `EVAL_MAX_CALLS=160`. See
-[docs/llm-evaluation.md](docs/llm-evaluation.md) for suite taxonomy, metrics,
-blind review workflow, artifact schema (`fiscalcr-eval-v3`), and configuration
-reference.
+See [docs/llm-evaluation.md](docs/llm-evaluation.md) for metrics, blind review,
+artifacts, budgets, and the full configuration reference.
 
 ## Severity levels
 
