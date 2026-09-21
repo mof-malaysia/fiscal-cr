@@ -1,78 +1,103 @@
 # Subsystem: Review Pipeline
 
-The orchestration core shared by both entry points. Files: `src/review/orchestrator.ts`, `src/review/delta.ts`, `src/pipeline/*`, plus supporting `src/review/{diff-analyzer,file-filter,file-source}.ts` and `src/utils/tokens.ts`.
+Shared review execution for the GitHub Action and self-hosted App.
 
-Start here: [`../index.md`](../index.md) for context, [`../AGENTS.md`](../AGENTS.md) for non-negotiables. Related: [model presets](model-presets.md), [GitHub integration](github-integration.md), [config & providers](config-and-providers.md).
+Sources: `src/review/orchestrator.ts`, `src/review/{delta,diff-analyzer,
+file-filter,file-source}.ts`, `src/pipeline/*`, and `src/utils/tokens.ts`.
+
+See [model presets](model-presets.md) for stage routing and [GitHub
+integration](github-integration.md) for API and lifecycle details.
 
 ## Responsibilities
 
-`ReviewOrchestrator.reviewPullRequest({ owner, repo, pullNumber, headSha, forceFull? })` runs one review end-to-end:
+`ReviewOrchestrator.reviewPullRequest({ owner, repo, pullNumber, headSha,
+forceFull? })`:
 
-1. **Create check run** (`src/github/checks.ts`) — always the first GitHub write.
-2. **Load prior state + decide scope** (`src/github/review-state.ts`, `src/review/delta.ts`) → `full | delta | skip`.
-3. **Extract PR context** (`src/github/pulls.ts`) — metadata, paged file list, unified diff, full file contents (path-filtered for delta reviews; `LocalFileSource` reads the checkout in Action mode, `ApiFileSource` fetches in parallel otherwise).
-4. **Filter files** (`src/review/file-filter.ts`) — include/exclude minimatch globs, skip removed/patchless files. Contents are dropped for filtered-out files so prompts never carry lockfiles etc.
-5. **Run the review** — fast path or multi-pass pipeline (below).
-6. **Publish** — legacy stacked review or sticky lifecycle (dedupe → resolve threads → check run → blocking review → incremental review → sticky comment).
+1. Loads sticky state and decides `full`, `delta`, or `skip`.
+2. Ensures the App Check Run; Action mode uses its workflow check.
+3. Extracts PR metadata, files, patches, and content.
+4. Filters files by include/exclude globs, size, status, and patch presence.
+5. Runs the fast path or multi-pass review.
+6. Generates an optional visualization for eligible full reviews.
+7. Publishes the result and saves sticky state last.
 
-## Scope decision (`delta.ts`)
+## Scope decision
 
-`decideScope` decides full / delta / skip from `ReviewState` + GitHub compare API:
+`decideScope` uses state, the GitHub compare API, and incremental settings:
 
-- `skip`: head already reviewed, or compare says `identical`, or no reviewable files changed.
-- `delta`: files changed since `lastReviewedSha` (compare API), under `review.incremental.maxDeltaFiles` and the API's 300-file cap, and `filterFiles` leaves reviewable paths. Returns `paths` (context filter) and `sinceSha` (delta hint + state update).
-- `full` (fallback on any uncertainty): incremental disabled, `forceFull`, no prior state, base sha changed, compare failed (force-push), history diverged/behind, delta too large. Rationale in code: *a wasted full review is cheap, a missed finding is not.*
+- `skip`: the head is already reviewed, the compare is identical, or no
+  reviewable files changed.
+- `delta`: changed paths since `lastReviewedSha` fit the configured limit and
+  still contain reviewable files. It returns paths and `sinceSha`.
+- `full`: incremental is disabled, `forceFull` is set, state is absent, the
+  base changed, compare failed or diverged, or the delta is too large.
 
-## Review execution (`orchestrator.runReview`)
+Uncertainty always chooses a full review.
 
-Token budget: `estimateTokens(patches) + estimateTokens(contents)` over changed files. Every LLM call below is routed to its stage model by `modelForRole(config, <stage>)` — explicit `models.<stage>` > selected `modelPreset` stage > top-level `model` (see [model presets](model-presets.md) for stage routing).
+## Review execution
 
-- **Fast path** (`src/pipeline/fast-path.ts`): when `!pipeline.enabled` (kill-switch) or total < `pipeline.fastPathThreshold` — one combined LLM call on the `fastPath` stage model (intent + summary + score + walkthrough + findings), parsed by `parseFastPathResponse`, passed through the same `validateAndRankFindings` gate as the pipeline. Truncated output (`finishReason === 'length'`) is salvaged via `repairTruncatedJson` and warns.
-- **Multi-pass pipeline**:
-  - **Pass 1 — intent** (`pass1-intent.ts`): one small call (2k max tokens, 60s timeout) on the `intent` stage model for PR intent, walkthrough, grouping hints, risk hotspots. Non-fatal — failure or unparseable output yields `null` and the pipeline proceeds. Output paths are filtered to files actually in the PR.
-  - **Grouping** (`grouper.ts`): deterministic — Pass-1 hints seed clusters, remaining files cluster by top path segments, test files migrate to their subject's cluster, oversized clusters split by first-fit-decreasing bin-packing to `pipeline.groupTokenBudget`, tiny groups merge, overflow past `pipeline.maxGroups` collapses into one diff-only group. Output sorted for stable prefix-cache behavior.
-  - **Pass 2 — group reviews** (`pass2-review.ts`): one LLM call per group on the `groupReview` stage model, bounded by `pLimit(config.pipeline.concurrency)`. In Action mode each group also gets unchanged imported files (`related-context.ts`, budget `pipeline.relatedContextBudget`; needs local checkout). A failed group becomes `failed: true` and is noted in the summary, never aborts the run; all groups failing throws `ReviewError`.
-  - **Pass 3 — deterministic gate + synthesis** (`pass3-synthesis.ts`): `validateAndRankFindings` drops findings whose end lines aren't in the diff (hallucination guard), filters by confidence (`pipeline.minConfidence`; criticals get a 0.4 floor and are flagged), dedupes same-file+category overlapping ranges (keep higher severity/confidence), applies `review.minSeverity` floor and `review.maxAnnotations` cap. Then `synthesize` — when more than one group, one LLM call (4k max tokens, 90s) on the `synthesis` stage model writes the final summary/score/walkthrough and may prune near-duplicates/false positives (never criticals); everything has deterministic fallbacks (score from `deterministicScore`, summary from group summaries).
-- **Usage**: `UsageTracker` aggregates tokens + call count across all calls, surfaced in `ReviewResult.tokensUsed` / `callCount`.
+The token estimate covers changed patches and file contents. Every call uses
+the model resolved for its stage; see [model presets](model-presets.md).
+
+- **Fast path** (`fast-path.ts`): used when the pipeline is disabled or the
+  estimate is below `fastPathThreshold`. One call returns summary, score,
+  walkthrough, and findings. Truncated JSON is salvaged when possible.
+- **Pass 1** (`pass1-intent.ts`): produces intent, walkthrough, risk hotspots,
+  and grouping hints. Failure is non-fatal.
+- **Grouping** (`grouper.ts`): deterministic hints, path clustering,
+  test-file migration, bin-packing, small-group merging, and overflow handling.
+- **Pass 2** (`pass2-review.ts`): reviews groups in parallel under
+  `pipeline.concurrency`. Action mode adds unchanged imported files within
+  `relatedContextBudget`. A failed group degrades the result; all failures
+  fail the run.
+- **Pass 3** (`pass3-synthesis.ts`): validates diff lines, filters confidence,
+  deduplicates, ranks, applies severity and annotation limits, then synthesizes
+  the final review when multiple groups exist. Deterministic fallbacks cover
+  missing synthesis output.
+- **Visualization** (`visualize.ts`): full reviews meeting file and line
+  thresholds get one bounded, structured visual call. Mode selection is
+  deterministic; parse or provider failure leaves the review unchanged.
+
+`UsageTracker` aggregates tokens, costs, and calls across review and
+visualization stages.
 
 ## Publishing
 
-- **Legacy** (`review.comments.mode: 'legacy'`): `publishLegacy` stacks a full
-  review per run. No lifecycle state.
-- **Sticky** (`publishSticky`): the pipeline returns a complete lifecycle
-  finding inventory plus the paths covered by successful detectors. The
-  orchestrator reconciles v2 per-fingerprint records, derives open counts,
-  resolves fixed inline threads, publishes only newly-open annotations, then
-  saves the sticky marker last.
-## Data/control flow
+- **Legacy** (`review.comments.mode: legacy`): posts a complete review each run
+  without lifecycle state.
+- **Sticky** (`review.comments.mode: sticky`): reconciles the complete finding
+  inventory against the successful reviewed scope, resolves fixed threads,
+  posts newly open findings, completes the Check Run, and saves the v2 marker.
+  Delta reviews preserve the previous visualization.
+
+## Data flow
 
 ```text
-reviewPullRequest
-  ├─ createCheckRun
-  ├─ loadReviewState → decideScope
-  │    └─ skip? → completeSkippedRun (conclusion carried from openCounts)
-  ├─ extractPullRequestContext (pathFilter=scope.paths, fileSource)
-  ├─ filterFiles
-  ├─ runReview
-  │    ├─ fast path (1 call)          ─┐
-  │    └─ pass1 → groupFiles → pass2 → │ → validateAndRankFindings → synthesize
-  ├─ publishLegacy | publishSticky
-  └─ catch → completeCheckRun(failure) → throw ReviewError
+load state → decide scope → extract → filter
+  → fast path
+    or intent → group → parallel reviews → validate → synthesize
+  → optional full-review visualization
+  → publish → save sticky state last
 ```
 
 ## Invariants
 
-- Every uncertain scope case falls back to **full** review.
-- `validateAndRankFindings` is deterministic and applied identically to fast path and pipeline output.
-- Synthesis never drops criticals (dedupe/prune keeps them).
-- A single failed group degrades the review; all failed groups fail the run.
-- Pass 1 failure is always non-fatal.
-- Check run conclusion reflects **cumulative** open counts, not the per-run delta.
-- Sticky state is persisted **last**, only after posting succeeded.
+- Uncertain scope falls back to full review.
+- The deterministic finding gate applies to both routes.
+- Synthesis never removes critical findings.
+- One failed group degrades; all failed groups fail.
+- Pass 1 and visualization failures are non-fatal.
+- Check conclusions use cumulative open findings.
+- Sticky state is saved only after publication succeeds.
 
 ## Relevant tests
 
-- `test/unit/orchestrator-lifecycle.test.ts` — sticky lifecycle end-to-end (first run, delta dedupe, fix push, skip, forceFull, legacy).
-- `test/unit/orchestrator-pipeline.test.ts` — fast path vs pipeline routing, failed-group tolerance, kill-switch, failure propagation.
-- `test/unit/delta.test.ts` — scope decision cases.
-- `test/unit/grouper.test.ts`, `test/unit/pass3-synthesis.test.ts`, `test/unit/fast-path.test.ts`, `test/unit/pipeline-schemas.test.ts`, `test/unit/diff-analyzer.test.ts`, `test/unit/file-filter.test.ts`, `test/unit/file-source.test.ts`, `test/unit/related-context.test.ts`, `test/unit/json.test.ts`, `test/unit/tokens.test.ts`, `test/unit/max-output.test.ts`, `test/unit/temperature.test.ts`.
+- Lifecycle and routing: `orchestrator-lifecycle.test.ts`,
+  `orchestrator-pipeline.test.ts`, `run-review.test.ts`, `delta.test.ts`
+- Stages and parsing: `fast-path.test.ts`, `grouper.test.ts`,
+  `pass3-synthesis.test.ts`, `pipeline-schemas.test.ts`, `json.test.ts`
+- Context and accounting: `diff-analyzer.test.ts`, `file-filter.test.ts`,
+  `file-source.test.ts`, `related-context.test.ts`, `tokens.test.ts`,
+  `temperature.test.ts`, `max-output.test.ts`
+- Visual output: `change-diagram.test.ts`, `diagram-renderer.test.ts`,
+  `summary-builder.test.ts`
