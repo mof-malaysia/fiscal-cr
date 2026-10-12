@@ -69,7 +69,12 @@ The Action uses the built-in `GITHUB_TOKEN`; `pull-requests: write` is enough.
 
 | Input          | Required | Default behavior                | Description                                                       |
 | -------------- | -------- | ------------------------------- | ----------------------------------------------------------------- |
-| `api_key`      | Yes      | —                               | LLM API key                                                       |
+| `api_key`      | Yes*     | —                               | LLM API key. *Omit when using the federation inputs below        |
+| `anthropic_federation_rule_id` | No | — | Federation rule (`fdrl_...`); enables [keyless Anthropic auth](#keyless-anthropic-auth-github-oidc) |
+| `anthropic_organization_id` | No | — | Anthropic organization ID (UUID), required with federation |
+| `anthropic_service_account_id` | No | — | Service account (`svac_...`), required with federation |
+| `anthropic_workspace_id` | No | Rule's sole workspace | Workspace (`wrkspc_...`); needed only if the rule spans several |
+| `oidc_audience` | No | Provider default (`https://api.anthropic.com`) | Audience of the GitHub OIDC token |
 | `github_token` | No       | `${{ github.token }}`           | GitHub token for API access                                       |
 | `provider`     | No       | Repo config or built-in default | `openai-compatible`, `kimi`, `openai`, or `anthropic`             |
 | `model`        | No       | Repo config or built-in default | Model name; overrides the four core review stages                 |
@@ -108,6 +113,64 @@ For example, these settings can be supplied without a repository config file:
 | `tokens_used`       | Total input + output tokens          |
 | `cost_estimate`     | Estimated API cost in USD            |
 
+### Keyless Anthropic auth (GitHub OIDC)
+
+With `provider: anthropic`, the Action can authenticate through Anthropic
+[Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions)
+instead of an `api_key` secret. Each run exchanges a GitHub OIDC token for a
+short-lived Anthropic token and refreshes it as needed; no Claude secret is
+stored in GitHub.
+
+One-time setup in the Claude Console (**Settings → Workload identity →
+Connect workload → GitHub Actions**):
+
+1. Service account (role `developer`) that is a member of the workspace that
+   should own FiscalCR usage.
+2. Issuer `https://token.actions.githubusercontent.com` with JWKS discovery.
+3. Federation rule targeting that service account. Allowlist repositories in
+   the rule's `condition`:
+
+   ```json
+   {
+     "match": {
+       "subject_prefix": "repo:your-org/*",
+       "audience": "https://api.anthropic.com",
+       "claims": { "repository_owner": "your-org", "event_name": "pull_request" },
+       "condition": "claims.repository in [\"your-org/repo-a\", \"your-org/repo-b\"]"
+     },
+     "oauth_scope": "workspace:inference"
+   }
+   ```
+
+Store the rule, organization, service account, and workspace IDs as
+organization or repository Actions **variables** (they are not secrets), then:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  id-token: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mof-malaysia/fiscal-cr@main
+        with:
+          provider: anthropic
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+```
+
+Set either `api_key` or the federation inputs, not both. Pull requests from
+forks receive no OIDC token and cannot use federation. A denied exchange
+returns an opaque `401`; the reason is listed in the Console under
+**Workload identity → Authentication history**.
+
 ### Configuration precedence
 
 - Action policy comes from the PR head SHA; `provider` and `base_url` come from
@@ -119,7 +182,7 @@ For example, these settings can be supplied without a repository config file:
 - Presets are YAML-only. `provider-default` follows the effective provider.
 - `openai-compatible` requires `base_url`. `anthropic` uses the native
   Messages API, defaults to `https://api.anthropic.com/v1`, and sends keys in
-  `x-api-key`.
+  `x-api-key` (or a federated `Authorization: Bearer` token).
 
 ### Token telemetry
 

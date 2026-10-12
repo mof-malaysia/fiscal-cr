@@ -11,6 +11,7 @@ import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
 import { modelParamsFromActionInput } from "./model-params.js";
+import { federationFromActionInput } from "./federation.js";
 import { renderVisualSection } from "../src/review/visual-renderer.js";
 import {
   applyActionReviewConfig,
@@ -27,10 +28,8 @@ const JOB_SUMMARY_BUDGET_BYTES = 1024 * 1024;
 async function run(): Promise<void> {
   try {
     // Get inputs
-    const apiKey = core.getInput("api_key");
-    if (!apiKey) {
-      throw new Error("Missing required input: api_key");
-    }
+    const apiKey = core.getInput("api_key") || undefined;
+    const federation = federationFromActionInput(core);
 
     const githubToken = core.getInput("github_token");
     const providerInput = core.getInput("provider") || undefined;
@@ -125,6 +124,7 @@ async function run(): Promise<void> {
     // Create model provider
     const llm = createLLMProvider({
       apiKey,
+      federation,
       provider: providerInput || config.provider,
       model: modelForRole(config, "groupReview"),
       baseUrl: config.baseUrl,

@@ -1,13 +1,21 @@
-import { ConfigError, LLMApiError } from '../utils/errors.js';
+import { ConfigError, errorSnippet, LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type {
-  ChatCompletionParams,
-  LLMCompletionResponse,
-  LLMProvider,
+import { fetchWithAuth, staticAuth, type RequestAuth } from './auth.js';
+import {
+  DEFAULT_USER_AGENT,
+  type ChatCompletionParams,
+  type LLMCompletionResponse,
+  type LLMProvider,
 } from './interface.js';
 
+/** Anthropic's static API key scheme. */
+export function anthropicApiKeyAuth(apiKey: string): RequestAuth {
+  return staticAuth({ 'X-Api-Key': apiKey });
+}
+
 export interface AnthropicProviderConfig {
-  apiKey: string;
+  /** Request auth: a static API key or workload identity federation. */
+  auth: RequestAuth;
   model: string;
   baseUrl?: string;
   /** Custom User-Agent header for provider allowlists and observability. */
@@ -75,14 +83,14 @@ function textFromResponse(data: AnthropicResponse): string {
 
 /** Native adapter for Anthropic's Messages API. */
 export class AnthropicProvider implements LLMProvider {
-  private readonly apiKey: string;
+  private readonly auth: RequestAuth;
   private readonly model: string;
   private readonly baseUrl: string;
   private readonly userAgent?: string;
   private readonly modelParams: Record<string, unknown>;
 
   constructor(config: AnthropicProviderConfig) {
-    this.apiKey = config.apiKey;
+    this.auth = config.auth;
     this.model = config.model;
     if (!config.baseUrl) {
       throw new ConfigError('Anthropic provider requires a baseUrl');
@@ -132,21 +140,24 @@ export class AnthropicProvider implements LLMProvider {
       ...(params.temperature !== undefined && { temperature: params.temperature }),
     };
 
-    const res = await fetch(`${this.baseUrl}/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key': this.apiKey,
-        'anthropic-version': '2023-06-01',
-        'User-Agent': this.userAgent ?? 'fiscalcr/1.0',
-      },
-      body: JSON.stringify(body),
-      signal,
-    });
+    const payload = JSON.stringify(body);
+    const res = await fetchWithAuth(this.auth, (authHeaders) =>
+      fetch(`${this.baseUrl}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+          'anthropic-version': '2023-06-01',
+          'User-Agent': this.userAgent ?? DEFAULT_USER_AGENT,
+        },
+        body: payload,
+        signal,
+      }),
+    );
 
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '');
-      const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+      const snippet = errorSnippet(errorBody);
       logger.warn(
         { status: res.status, model, baseUrl: this.baseUrl, body: snippet },
         'LLM API request rejected',

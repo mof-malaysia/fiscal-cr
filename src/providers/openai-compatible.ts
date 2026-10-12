@@ -1,13 +1,16 @@
-import { ConfigError, LLMApiError } from '../utils/errors.js';
+import { ConfigError, errorSnippet, LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type {
-  ChatCompletionParams,
-  LLMCompletionResponse,
-  LLMProvider,
+import { fetchWithAuth, type RequestAuth } from './auth.js';
+import {
+  DEFAULT_USER_AGENT,
+  type ChatCompletionParams,
+  type LLMCompletionResponse,
+  type LLMProvider,
 } from './interface.js';
 
 export interface OpenAICompatibleProviderConfig {
-  apiKey: string;
+  /** Request auth: a bearer API key or workload identity federation. */
+  auth: RequestAuth;
   model: string;
   baseUrl?: string;
   temperature?: number;
@@ -97,7 +100,7 @@ function parseRetryAfter(header: string | null): number | undefined {
  * Works with any OpenAI-compatible endpoint (FiscalCR, OpenAI, Groq, self-hosted, etc.).
  */
 export class OpenAICompatibleProvider implements LLMProvider {
-  private readonly apiKey: string;
+  private readonly auth: RequestAuth;
   private readonly model: string;
   private readonly baseUrl: string;
   private readonly temperature?: number;
@@ -107,7 +110,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly modelParams: Record<string, unknown>;
 
   constructor(config: OpenAICompatibleProviderConfig) {
-    this.apiKey = config.apiKey;
+    this.auth = config.auth;
     this.model = config.model;
     if (!config.baseUrl) {
       throw new ConfigError('OpenAI-compatible provider requires an explicit baseUrl');
@@ -149,22 +152,25 @@ export class OpenAICompatibleProvider implements LLMProvider {
       ...(params.responseFormat && { response_format: params.responseFormat }),
     };
 
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-        'User-Agent': this.userAgent ?? 'fiscalcr/1.0',
-        ...(this.userAgent ? {} : { 'X-Client-Name': 'fiscalcr' }),
-      },
-      body: JSON.stringify(body),
-      signal,
-    });
+    const payload = JSON.stringify(body);
+    const res = await fetchWithAuth(this.auth, (authHeaders) =>
+      fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+          'User-Agent': this.userAgent ?? DEFAULT_USER_AGENT,
+          ...(this.userAgent ? {} : { 'X-Client-Name': 'fiscalcr' }),
+        },
+        body: payload,
+        signal,
+      }),
+    );
 
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '');
       // Surface the endpoint's own message — a bare "400 Bad Request" is undiagnosable.
-      const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+      const snippet = errorSnippet(errorBody);
       logger.warn(
         { status: res.status, model, baseUrl: this.baseUrl, body: snippet },
         'LLM API request rejected',

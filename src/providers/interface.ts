@@ -35,3 +35,6 @@ export interface ChatCompletionParams {
 export interface LLMProvider {
   chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse>;
 }
+
+/** User-Agent sent when no custom one is configured. */
+export const DEFAULT_USER_AGENT = 'fiscalcr/1.0';

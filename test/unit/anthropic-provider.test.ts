@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AnthropicProvider } from '../../src/providers/anthropic.js';
+import { AnthropicProvider, anthropicApiKeyAuth as apiKeyAuth } from '../../src/providers/anthropic.js';
+import { bearerAuth } from '../../src/providers/auth.js';
 
 const response = (body: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(body), {
@@ -31,7 +32,7 @@ describe('AnthropicProvider', () => {
     );
 
     const provider = new AnthropicProvider({
-      apiKey: 'test-key',
+      auth: apiKeyAuth('test-key'),
       model: 'claude-sonnet-4.5',
       baseUrl: 'https://api.anthropic.com/v1/',
       userAgent: 'FiscalCR-Test/1.0',
@@ -84,7 +85,7 @@ describe('AnthropicProvider', () => {
     );
 
     const provider = new AnthropicProvider({
-      apiKey: 'test-key',
+      auth: apiKeyAuth('test-key'),
       model: 'claude-sonnet-4.5',
       baseUrl: 'https://api.anthropic.com/v1',
     });
@@ -106,7 +107,7 @@ describe('AnthropicProvider', () => {
     );
 
     const provider = new AnthropicProvider({
-      apiKey: 'test-key',
+      auth: apiKeyAuth('test-key'),
       model: 'claude-sonnet-4.5',
       baseUrl: 'https://api.anthropic.com/v1',
     });
@@ -126,12 +127,28 @@ describe('AnthropicProvider', () => {
     );
 
     const provider = new AnthropicProvider({
-      apiKey: 'test-key',
+      auth: apiKeyAuth('test-key'),
       model: 'claude-sonnet-4.5',
       baseUrl: 'https://api.anthropic.com/v1',
     });
 
     await expect(provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] }))
       .rejects.toMatchObject({ statusCode: 429, retryAfterMs: 3_000 });
+  });
+  it('sends the auth source headers instead of an API key', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(response({ content: [{ type: 'text', text: 'ok' }] }));
+    const provider = new AnthropicProvider({
+      auth: bearerAuth('sk-ant-oat01-x'),
+      model: 'claude-opus-5-5',
+      baseUrl: 'https://api.anthropic.com/v1',
+    });
+
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers).toMatchObject({ Authorization: 'Bearer sk-ant-oat01-x' });
+    expect(headers).not.toHaveProperty('X-Api-Key');
   });
 });

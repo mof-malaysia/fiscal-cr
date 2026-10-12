@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { bearerAuth } from '../../src/providers/auth.js';
 import { OpenAICompatibleProvider } from '../../src/providers/openai-compatible.js';
 
 describe('OpenAICompatibleProvider', () => {
@@ -20,7 +21,7 @@ describe('OpenAICompatibleProvider', () => {
       );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'test-key',
+      auth: bearerAuth('test-key'),
       model: 'Qwen/Qwen2.5-3B-Instruct',
       baseUrl: 'https://chat.alifaiman.cloud/v1',
     });
@@ -60,7 +61,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'test-key',
+      auth: bearerAuth('test-key'),
       model: 'meta/muse-spark-1.3-contributor',
       baseUrl: 'https://openrouter.ai/api/v1',
     });
@@ -80,7 +81,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'gpt-5',
       baseUrl: 'https://api.openai.com/v1',
       completionTokenParam: 'max_completion_tokens',
@@ -103,7 +104,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'm',
       baseUrl: 'https://api.example.com/v1',
     });
@@ -125,7 +126,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'gpt-5',
       baseUrl: 'https://api.openai.com/v1',
       modelParams: { reasoning_effort: 'high', top_p: 0.9, seed: 42 },
@@ -146,7 +147,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'gpt-5',
       baseUrl: 'https://api.openai.com/v1',
       completionTokenParam: 'max_completion_tokens',
@@ -187,7 +188,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'm',
       baseUrl: 'https://api.example.com/v1',
     });
@@ -206,7 +207,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'constructor-model',
       baseUrl: 'https://api.example.com/v1',
     });
@@ -227,7 +228,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'constructor-model',
       baseUrl: 'https://api.example.com/v1',
     });
@@ -245,7 +246,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'm',
       baseUrl: 'https://api.example.com/v1',
     });
@@ -264,7 +265,7 @@ describe('OpenAICompatibleProvider', () => {
     );
 
     const provider = new OpenAICompatibleProvider({
-      apiKey: 'k',
+      auth: bearerAuth('k'),
       model: 'gated-model',
       baseUrl: 'https://api.example.com/v1',
       userAgent: 'MyCodingAgent/2.1.0',
