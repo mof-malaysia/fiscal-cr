@@ -51,6 +51,14 @@ describe('ResilientProvider', () => {
     expect(inner.calls).toBe(1);
   });
 
+  it('retries a timeout only once', async () => {
+    const timeout = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+    const inner = providerFailing([timeout(), timeout(), timeout()]);
+    const provider = new ResilientProvider(inner, { maxRetries: 3, maxBackoffMs: 1 });
+    await expect(provider.chatCompletion(PARAMS)).rejects.toThrow('aborted');
+    expect(inner.calls).toBe(2);
+  });
+
   it('gives up after maxRetries and throws the last error', async () => {
     const errors = Array.from({ length: 5 }, (_, i) => new LLMApiError(`fail ${i}`, 500));
     const inner = providerFailing(errors);

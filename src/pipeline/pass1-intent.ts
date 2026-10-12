@@ -5,6 +5,7 @@ import type { LLMProvider } from '../providers/interface.js';
 import { buildIntentSystemPrompt, buildIntentUserPrompt } from './prompts.js';
 import { parseIntentResponse, type IntentResult } from './schemas.js';
 import { reviewTemperature } from './temperature.js';
+import { reviewCallTimeoutMs, shortCallMaxTokens } from './max-output.js';
 import type { UsageTracker } from './usage.js';
 import { logger } from '../utils/logger.js';
 
@@ -24,21 +25,22 @@ export async function runIntentPass(
       { role: 'system' as const, content: buildIntentSystemPrompt(config) },
       { role: 'user' as const, content: buildIntentUserPrompt(ctx) },
     ];
+    const maxOutputTokens = shortCallMaxTokens(config, model, 2_048);
     const startedAt = Date.now();
     usage.startCall();
     const response = await llm.chatCompletion({
       messages,
       model,
       responseFormat: { type: 'json_object' },
-      maxTokens: 2_048,
+      maxTokens: maxOutputTokens,
       temperature: reviewTemperature(config, 0.3, model),
-      timeoutMs: 60_000,
+      timeoutMs: reviewCallTimeoutMs(config, model, 60_000),
     });
     usage.add(response.usage, {
       model,
       stage: 'intent',
       messages,
-      maxOutputTokens: 2_048,
+      maxOutputTokens,
       durationMs: Date.now() - startedAt,
       finishReason: response.finishReason,
     });

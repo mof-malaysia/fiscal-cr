@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { reviewMaxOutputTokens } from '../../src/pipeline/max-output.js';
+import {
+  reviewCallTimeoutMs,
+  reviewMaxOutputTokens,
+  shortCallMaxTokens,
+} from '../../src/pipeline/max-output.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import type { ReviewConfig } from '../../src/config/schema.js';
 
@@ -45,5 +49,17 @@ describe('reviewMaxOutputTokens', () => {
       pipeline: { ...DEFAULT_CONFIG.pipeline, maxOutputTokens: 8_192 },
     });
     expect(reviewMaxOutputTokens(cfg)).toBe(8_192);
+  });
+});
+
+describe('reasoning-model call limits', () => {
+  it('gives reasoning models the full output cap and a longer timeout', () => {
+    const cfg = withConfig({ provider: 'anthropic' });
+    expect(shortCallMaxTokens(cfg, 'claude-sonnet-5', 2_048)).toBe(32_768);
+    expect(shortCallMaxTokens(cfg, 'gpt-4.1', 2_048)).toBe(2_048);
+    expect(reviewCallTimeoutMs(cfg, 'claude-opus-5')).toBe(300_000);
+    expect(reviewCallTimeoutMs(cfg, 'gpt-4.1', 60_000)).toBe(60_000);
+    const pinned = withConfig({ pipeline: { ...DEFAULT_CONFIG.pipeline, callTimeoutMs: 45_000 } });
+    expect(reviewCallTimeoutMs(pinned, 'claude-opus-5')).toBe(45_000);
   });
 });

@@ -8,7 +8,7 @@ import { parseGroupResponse, type IntentResult } from './schemas.js';
 import { collectRelatedContext } from './related-context.js';
 import type { FileGroup } from './grouper.js';
 import { reviewTemperature } from './temperature.js';
-import { reviewMaxOutputTokens } from './max-output.js';
+import { reviewCallTimeoutMs, reviewMaxOutputTokens } from './max-output.js';
 import type { UsageTracker } from './usage.js';
 import { logger } from '../utils/logger.js';
 
@@ -73,7 +73,7 @@ export async function runReviewPass(
             responseFormat: { type: 'json_object' },
             maxTokens: maxOutputTokens,
             temperature: reviewTemperature(config, 0.3, model),
-            timeoutMs: config.pipeline.callTimeoutMs,
+            timeoutMs: reviewCallTimeoutMs(config, model),
           });
           usage.add(response.usage, {
             model,

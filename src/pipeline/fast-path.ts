@@ -12,7 +12,7 @@ import {
   validateAndRankFindings,
 } from './pass3-synthesis.js';
 import { reviewTemperature } from './temperature.js';
-import { reviewMaxOutputTokens } from './max-output.js';
+import { reviewCallTimeoutMs, reviewMaxOutputTokens } from './max-output.js';
 import { commentableRanges } from '../review/diff-analyzer.js';
 import { ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -44,7 +44,7 @@ export async function runFastPath(
       responseFormat: { type: 'json_object' },
       maxTokens: maxOutputTokens,
       temperature: reviewTemperature(config, 0.3, model),
-      timeoutMs: config.pipeline.callTimeoutMs,
+      timeoutMs: reviewCallTimeoutMs(config, model),
     })
     .catch((err: unknown) => {
       usage.emit({ type: 'stage_result', stage: 'fast-path', status: 'failed' });
