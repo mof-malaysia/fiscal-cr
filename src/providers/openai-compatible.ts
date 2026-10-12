@@ -1,4 +1,4 @@
-import { ConfigError, LLMApiError } from '../utils/errors.js';
+import { ConfigError, errorSnippet, LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import type {
   ChatCompletionParams,
@@ -164,7 +164,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '');
       // Surface the endpoint's own message — a bare "400 Bad Request" is undiagnosable.
-      const snippet = errorBody.replace(/\s+/g, ' ').trim().slice(0, 300);
+      const snippet = errorSnippet(errorBody);
       logger.warn(
         { status: res.status, model, baseUrl: this.baseUrl, body: snippet },
         'LLM API request rejected',

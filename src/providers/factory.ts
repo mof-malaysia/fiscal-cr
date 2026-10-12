@@ -1,5 +1,10 @@
 import type { ReviewConfig } from "../config/schema.js";
 import { AnthropicProvider } from "./anthropic.js";
+import {
+  apiKeyAuth,
+  federationAuth,
+  type AnthropicFederationConfig,
+} from "./anthropic-auth.js";
 import { OpenAICompatibleProvider } from "./openai-compatible.js";
 import {
   ResilientProvider,
@@ -41,7 +46,10 @@ function parseProvider(provider: string): ReviewConfig["provider"] {
 }
 
 export function createLLMProvider(config: {
-  apiKey: string;
+  /** Static provider API key. Exactly one of `apiKey` or `anthropicFederation`. */
+  apiKey?: string;
+  /** Keyless Anthropic auth via workload identity federation (Anthropic only). */
+  anthropicFederation?: AnthropicFederationConfig;
   model: string;
   baseUrl?: string;
   provider: string;
@@ -54,6 +62,23 @@ export function createLLMProvider(config: {
   const provider = parseProvider(config.provider);
   const defaults = PROVIDER_DEFAULTS[provider];
 
+  const { apiKey, anthropicFederation } = config;
+  if (apiKey && anthropicFederation) {
+    throw new ConfigError(
+      "Configure either an API key or Anthropic federation, not both.",
+    );
+  }
+  if (anthropicFederation && provider !== "anthropic") {
+    throw new ConfigError(
+      `Anthropic federation requires provider "anthropic" (got "${provider}").`,
+    );
+  }
+  if (!apiKey && !anthropicFederation) {
+    throw new ConfigError(
+      "Missing LLM credentials: set an API key, or Anthropic federation (provider anthropic).",
+    );
+  }
+
   const baseUrl = config.baseUrl ?? defaults.baseUrl;
   if (!baseUrl) {
     throw new ConfigError(
@@ -64,7 +89,13 @@ export function createLLMProvider(config: {
   if (provider === "anthropic") {
     return new ResilientProvider(
       new AnthropicProvider({
-        apiKey: config.apiKey,
+        auth: anthropicFederation
+          ? federationAuth({
+              ...anthropicFederation,
+              baseUrl,
+              userAgent: config.userAgent,
+            })
+          : apiKeyAuth(apiKey!),
         model: config.model,
         baseUrl,
         userAgent: config.userAgent,
@@ -75,7 +106,7 @@ export function createLLMProvider(config: {
   }
 
   const inner = new OpenAICompatibleProvider({
-    apiKey: config.apiKey,
+    apiKey: config.apiKey!,
     model: config.model,
     baseUrl,
     userAgent: config.userAgent,

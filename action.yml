@@ -8,8 +8,24 @@ branding:
 
 inputs:
   api_key:
-    description: 'LLM API key'
-    required: true
+    description: 'LLM API key (omit when using the anthropic_federation_* inputs)'
+    required: false
+  anthropic_federation_rule_id:
+    description: 'Anthropic workload identity federation rule ID (fdrl_...); enables keyless auth via GitHub OIDC. Requires provider anthropic and id-token: write'
+    required: false
+  anthropic_organization_id:
+    description: 'Anthropic organization ID (UUID) for workload identity federation'
+    required: false
+  anthropic_service_account_id:
+    description: 'Anthropic service account ID (svac_...) for workload identity federation'
+    required: false
+  anthropic_workspace_id:
+    description: 'Anthropic workspace ID (wrkspc_...); required only when the federation rule spans multiple workspaces'
+    required: false
+  oidc_audience:
+    description: 'Audience for the GitHub OIDC token used in federation'
+    required: false
+    default: 'https://api.anthropic.com'
   github_token:
     description: 'GitHub token for API access'
     required: false

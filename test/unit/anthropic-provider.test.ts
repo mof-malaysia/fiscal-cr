@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AnthropicProvider } from '../../src/providers/anthropic.js';
+import { apiKeyAuth, type AnthropicAuth } from '../../src/providers/anthropic-auth.js';
 
 const response = (body: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(body), {
@@ -31,7 +32,7 @@ describe('AnthropicProvider', () => {
     );
 
     const provider = new AnthropicProvider({
-      apiKey: 'test-key',
+      auth: apiKeyAuth('test-key'),
       model: 'claude-sonnet-4.5',
       baseUrl: 'https://api.anthropic.com/v1/',
       userAgent: 'FiscalCR-Test/1.0',
@@ -84,7 +85,7 @@ describe('AnthropicProvider', () => {
     );
 
     const provider = new AnthropicProvider({
-      apiKey: 'test-key',
+      auth: apiKeyAuth('test-key'),
       model: 'claude-sonnet-4.5',
       baseUrl: 'https://api.anthropic.com/v1',
     });
@@ -106,7 +107,7 @@ describe('AnthropicProvider', () => {
     );
 
     const provider = new AnthropicProvider({
-      apiKey: 'test-key',
+      auth: apiKeyAuth('test-key'),
       model: 'claude-sonnet-4.5',
       baseUrl: 'https://api.anthropic.com/v1',
     });
@@ -126,12 +127,52 @@ describe('AnthropicProvider', () => {
     );
 
     const provider = new AnthropicProvider({
-      apiKey: 'test-key',
+      auth: apiKeyAuth('test-key'),
       model: 'claude-sonnet-4.5',
       baseUrl: 'https://api.anthropic.com/v1',
     });
 
     await expect(provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] }))
       .rejects.toMatchObject({ statusCode: 429, retryAfterMs: 3_000 });
+  });
+  it('sends federated auth headers and re-authenticates once on 401', async () => {
+    let n = 0;
+    const auth: AnthropicAuth = {
+      headers: vi.fn(async () => ({ Authorization: `Bearer tok-${++n}` })),
+      invalidate: vi.fn(),
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+      .mockResolvedValueOnce(response({ content: [{ type: 'text', text: 'ok' }] }));
+    const provider = new AnthropicProvider({
+      auth,
+      model: 'claude-opus-5-5',
+      baseUrl: 'https://api.anthropic.com/v1',
+    });
+
+    const result = await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(result.content).toBe('ok');
+    expect(auth.invalidate).toHaveBeenCalledTimes(1);
+    const headers = fetchMock.mock.calls.map((call) => call[1]?.headers as Record<string, string>);
+    expect(headers[0]).toMatchObject({ Authorization: 'Bearer tok-1' });
+    expect(headers[1]).toMatchObject({ Authorization: 'Bearer tok-2' });
+    expect(headers[1]).not.toHaveProperty('X-Api-Key');
+  });
+
+  it('does not retry a 401 for a static API key', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }));
+    const provider = new AnthropicProvider({
+      auth: apiKeyAuth('bad-key'),
+      model: 'claude-opus-5-5',
+      baseUrl: 'https://api.anthropic.com/v1',
+    });
+
+    await expect(provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] }))
+      .rejects.toMatchObject({ statusCode: 401 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

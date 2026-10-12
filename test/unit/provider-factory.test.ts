@@ -111,4 +111,54 @@ describe('provider factory', () => {
       }),
     ).toThrow(/Invalid provider/);
   });
+  const federation = {
+    federationRuleId: 'fdrl_1',
+    organizationId: 'org-uuid',
+    serviceAccountId: 'svac_1',
+    getIdentityToken: async () => 'jwt',
+  };
+
+  it('exchanges a federated token for the Anthropic provider', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: 'sk-ant-oat01-x', expires_in: 600 }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), { status: 200 }),
+      );
+    const provider = createLLMProvider({
+      anthropicFederation: federation,
+      provider: 'anthropic',
+      model: 'claude-opus-5-5',
+    });
+
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/v1/oauth/token');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://api.anthropic.com/v1/messages');
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer sk-ant-oat01-x',
+    });
+  });
+
+  it('rejects federation for non-Anthropic providers', () => {
+    expect(() =>
+      createLLMProvider({ anthropicFederation: federation, provider: 'openai', model: 'gpt-5' }),
+    ).toThrow(/requires provider "anthropic"/);
+  });
+
+  it('requires exactly one credential', () => {
+    expect(() =>
+      createLLMProvider({ provider: 'anthropic', model: 'claude-opus-5-5' }),
+    ).toThrowError(ConfigError);
+    expect(() =>
+      createLLMProvider({
+        apiKey: 'k',
+        anthropicFederation: federation,
+        provider: 'anthropic',
+        model: 'claude-opus-5-5',
+      }),
+    ).toThrow(/not both/);
+  });
 });

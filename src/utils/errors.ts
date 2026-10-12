@@ -1,3 +1,8 @@
+/** Single-line, length-capped excerpt of an HTTP error body for messages and logs. */
+export function errorSnippet(body: string): string {
+  return body.replace(/\s+/g, ' ').trim().slice(0, 300);
+}
+
 export class LLMApiError extends Error {
   constructor(
     message: string,
