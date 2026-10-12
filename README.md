@@ -356,7 +356,7 @@ pipeline:
   fastPathThreshold: 25000 # PRs under this total use a single combined call
   minConfidence: 0.6 # findings below this are dropped (criticals kept to 0.4)
   maxRetries: 3
-  callTimeoutMs: 120000
+  # callTimeoutMs: 120000 # unset → 300000 for reasoning models (Claude 5, GPT-5+), 120000 otherwise
   maxOutputTokens: 8192
 ```
 
