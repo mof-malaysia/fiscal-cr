@@ -1,4 +1,4 @@
-import type { ReviewConfig } from "../config/schema.js";
+import { modelForRole, type ReviewConfig } from "../config/schema.js";
 
 /** Cap for models known to sustain large structured output (Kimi coding models). */
 const KIMI_MAX_OUTPUT_TOKENS = 65_536;
@@ -20,12 +20,11 @@ function isKimiModel(config: ReviewConfig, model: string): boolean {
  * everything else uses a conservative default that unknown endpoints accept.
  *
  * `model` is the model actually used for this call (a stage model when the
- * caller resolved one); it defaults to the legacy single `config.model` so
- * callers that predate stage routing keep their behavior.
+ * caller resolved one); it defaults to the resolved `groupReview` model.
  */
 export function reviewMaxOutputTokens(
   config: ReviewConfig,
-  model: string = config.model,
+  model: string = modelForRole(config, 'groupReview'),
 ): number {
   if (config.pipeline.maxOutputTokens !== undefined)
     return config.pipeline.maxOutputTokens;

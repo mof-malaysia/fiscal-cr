@@ -1,7 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PROVIDER_DEFAULT_MODELS } from '../../src/config/provider-models.js';
 import { loadConfig } from '../../src/config/loader.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import { modelForRole } from '../../src/config/schema.js';
+import { ConfigError } from '../../src/utils/errors.js';
+import { logger } from '../../src/utils/logger.js';
+
+function yamlOctokit(yaml: string): any {
+  return {
+    repos: {
+      getContent: vi.fn().mockResolvedValue({
+        data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
+      }),
+    },
+  };
+}
 
 describe('loadConfig', () => {
   it('loads a config from a custom path', async () => {
@@ -100,7 +113,7 @@ describe('loadConfig', () => {
     await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).resolves.toEqual(DEFAULT_CONFIG);
   });
 
-  it('uses the provider-default preset for all stages when the config file is missing', async () => {
+  it('uses the release-pinned kimi models for all stages when the config file is missing', async () => {
     const octokit = {
       repos: {
         getContent: vi.fn().mockRejectedValue({ status: 404 }),
@@ -108,13 +121,13 @@ describe('loadConfig', () => {
     } as any;
 
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(config.modelPreset).toBe('provider-default');
+    expect(config.model).toBeUndefined();
     expect(config.models).toEqual({});
-    expect(modelForRole(config, 'intent')).toBe('k3-256k');
-    expect(modelForRole(config, 'fastPath')).toBe('k3-256k');
-    expect(modelForRole(config, 'groupReview')).toBe('k3');
-    expect(modelForRole(config, 'synthesis')).toBe('k3');
-    expect(modelForRole(config, 'visualize')).toBe('k3-256k');
+    expect(modelForRole(config, 'intent')).toBe(PROVIDER_DEFAULT_MODELS.kimi.intent);
+    expect(modelForRole(config, 'fastPath')).toBe(PROVIDER_DEFAULT_MODELS.kimi.fastPath);
+    expect(modelForRole(config, 'groupReview')).toBe(PROVIDER_DEFAULT_MODELS.kimi.groupReview);
+    expect(modelForRole(config, 'synthesis')).toBe(PROVIDER_DEFAULT_MODELS.kimi.synthesis);
+    expect(modelForRole(config, 'visualize')).toBe(PROVIDER_DEFAULT_MODELS.kimi.visualize);
   });
 
   it('keeps old configs without a models block valid, defaulting it to {}', async () => {
@@ -130,8 +143,6 @@ describe('loadConfig', () => {
     const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
     expect(config.model).toBe('gpt-4.1-mini');
     expect(config.models).toEqual({});
-    expect(config.modelPreset).toBeUndefined();
-    expect(config.modelPresets).toBeUndefined();
   });
 
   it('accepts a partial models block and falls each unset stage back to the top-level model', async () => {
@@ -247,159 +258,61 @@ describe('loadConfig', () => {
     await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
   });
 
-  it('rejects an unknown model preset name', async () => {
-    const yaml = 'modelPreset: bogus\n';
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
-
-    await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
+  it('uses the release-pinned models for the configured provider when model is unset', async () => {
+    const config = await loadConfig(yamlOctokit('provider: anthropic\n'), 'mof-malaysia', 'fiscal-cr');
+    expect(modelForRole(config, 'intent')).toBe(PROVIDER_DEFAULT_MODELS.anthropic.intent);
+    expect(modelForRole(config, 'fastPath')).toBe(PROVIDER_DEFAULT_MODELS.anthropic.fastPath);
+    expect(modelForRole(config, 'groupReview')).toBe(PROVIDER_DEFAULT_MODELS.anthropic.groupReview);
+    expect(modelForRole(config, 'synthesis')).toBe(PROVIDER_DEFAULT_MODELS.anthropic.synthesis);
+    expect(modelForRole(config, 'visualize')).toBe(PROVIDER_DEFAULT_MODELS.anthropic.visualize);
   });
 
-  it('rejects an empty model preset name', async () => {
-    const yaml = 'modelPreset: ""\n';
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
-
-    await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
+  it('lets an explicit top-level model override every release-pinned stage', async () => {
+    const config = await loadConfig(
+      yamlOctokit('provider: anthropic\nmodel: claude-opus-5-5\n'),
+      'mof-malaysia',
+      'fiscal-cr',
+    );
+    for (const role of ['intent', 'fastPath', 'groupReview', 'synthesis', 'visualize'] as const) {
+      expect(modelForRole(config, role)).toBe('claude-opus-5-5');
+    }
   });
 
-  it('resolves stages from a selected built-in preset', async () => {
-    const yaml = 'modelPreset: anthropic\n';
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
-
-    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(modelForRole(config, 'intent')).toBe('claude-sonnet-5');
-    expect(modelForRole(config, 'fastPath')).toBe('claude-sonnet-5');
-    expect(modelForRole(config, 'groupReview')).toBe('claude-opus-5');
-    expect(modelForRole(config, 'synthesis')).toBe('claude-opus-5');
-  });
-
-  it('resolves provider-default to the preset matching the provider', async () => {
-    const yaml = 'provider: openai\nmodelPreset: provider-default\n';
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
-
-    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(modelForRole(config, 'intent')).toBe('gpt-5.6-terra');
-    expect(modelForRole(config, 'fastPath')).toBe('gpt-5.6-terra');
-    expect(modelForRole(config, 'groupReview')).toBe('gpt-5.6-sol');
-    expect(modelForRole(config, 'synthesis')).toBe('gpt-5.6-sol');
-  });
-
-  it('falls back to the top-level model when provider-default has no preset for openai-compatible', async () => {
-    const yaml = 'provider: openai-compatible\nmodel: gpt-4.1-mini\nmodelPreset: provider-default\n';
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
-
-    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(modelForRole(config, 'intent')).toBe('gpt-4.1-mini');
-    expect(modelForRole(config, 'fastPath')).toBe('gpt-4.1-mini');
-    expect(modelForRole(config, 'groupReview')).toBe('gpt-4.1-mini');
-    expect(modelForRole(config, 'synthesis')).toBe('gpt-4.1-mini');
-  });
-
-  it('prefers an explicit models stage over the selected preset', async () => {
-    const yaml = 'modelPreset: kimi\nmodels:\n  intent: custom-intent-model\n';
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
-
-    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
+  it('prefers an explicit models stage over the top-level model and release defaults', async () => {
+    const config = await loadConfig(
+      yamlOctokit('models:\n  intent: custom-intent-model\n'),
+      'mof-malaysia',
+      'fiscal-cr',
+    );
     expect(modelForRole(config, 'intent')).toBe('custom-intent-model');
-    expect(modelForRole(config, 'fastPath')).toBe('k3-256k');
-    expect(modelForRole(config, 'groupReview')).toBe('k3');
-    expect(modelForRole(config, 'synthesis')).toBe('k3');
+    expect(modelForRole(config, 'fastPath')).toBe(PROVIDER_DEFAULT_MODELS.kimi.fastPath);
+    expect(modelForRole(config, 'groupReview')).toBe(PROVIDER_DEFAULT_MODELS.kimi.groupReview);
+    expect(modelForRole(config, 'synthesis')).toBe(PROVIDER_DEFAULT_MODELS.kimi.synthesis);
   });
 
-  it('accepts a user-defined preset and falls unset stages back to the top-level model', async () => {
-    const yaml = [
-      'model: fallback-model',
-      'modelPreset: my-custom',
-      'modelPresets:',
-      '  my-custom:',
-      '    intent: custom-intent',
-      '    fastPath: custom-fast',
-      '',
-    ].join('\n');
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
-
-    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(modelForRole(config, 'intent')).toBe('custom-intent');
-    expect(modelForRole(config, 'fastPath')).toBe('custom-fast');
-    expect(modelForRole(config, 'groupReview')).toBe('fallback-model');
-    expect(modelForRole(config, 'synthesis')).toBe('fallback-model');
+  it('fails model resolution for openai-compatible without a model', async () => {
+    const config = await loadConfig(
+      yamlOctokit('provider: openai-compatible\n'),
+      'mof-malaysia',
+      'fiscal-cr',
+    );
+    expect(() => modelForRole(config, 'groupReview')).toThrow(ConfigError);
+    expect(() => modelForRole(config, 'visualize')).toThrow(ConfigError);
   });
 
-  it('merges user preset entries over the built-in preset of the same name', async () => {
-    const yaml = [
-      'modelPreset: kimi',
-      'modelPresets:',
-      '  kimi:',
-      '    intent: team-kimi-intent',
-      '',
-    ].join('\n');
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
+  it('ignores removed modelPreset/modelPresets keys with a warning', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined as never);
+    const yaml = 'provider: openai\nmodelPreset: kimi\nmodelPresets:\n  team:\n    intent: x\n';
+    const config = await loadConfig(yamlOctokit(yaml), 'mof-malaysia', 'fiscal-cr');
 
-    const config = await loadConfig(octokit, 'mof-malaysia', 'fiscal-cr');
-    expect(modelForRole(config, 'intent')).toBe('team-kimi-intent');
-    expect(modelForRole(config, 'fastPath')).toBe('k3-256k');
-    expect(modelForRole(config, 'groupReview')).toBe('k3');
-    expect(modelForRole(config, 'synthesis')).toBe('k3');
-  });
-
-  it('rejects an unknown stage key inside a user preset', async () => {
-    const yaml = 'modelPresets:\n  my-custom:\n    big: kimi-for-coding\n';
-    const octokit = {
-      repos: {
-        getContent: vi.fn().mockResolvedValue({
-          data: { content: Buffer.from(yaml, 'utf8').toString('base64'), encoding: 'base64' },
-        }),
-      },
-    } as any;
-
-    await expect(loadConfig(octokit, 'mof-malaysia', 'fiscal-cr')).rejects.toThrow();
+    expect(config).not.toHaveProperty('modelPreset');
+    expect(config).not.toHaveProperty('modelPresets');
+    expect(modelForRole(config, 'groupReview')).toBe(PROVIDER_DEFAULT_MODELS.openai.groupReview);
+    expect(warn).toHaveBeenCalledWith(
+      { keys: ['modelPreset', 'modelPresets'] },
+      expect.stringContaining('Model presets were removed'),
+    );
+    warn.mockRestore();
   });
 
   it('rethrows non-404 errors instead of silently defaulting', async () => {

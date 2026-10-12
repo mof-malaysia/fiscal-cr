@@ -288,7 +288,7 @@ describe('resolveEvalEnv', () => {
   it('falls back to DEFAULT_CONFIG provider and model', () => {
     const cfg = resolveEvalEnv(emptyEnv);
     expect(cfg.provider).toBe(DEFAULT_CONFIG.provider);
-    expect(cfg.model).toBe(DEFAULT_CONFIG.model);
+    expect(cfg.model).toBeUndefined();
     expect(cfg.apiKey).toBeUndefined();
     expect(cfg.baseUrl).toBeUndefined();
   });
@@ -301,14 +301,14 @@ describe('resolveEvalEnv', () => {
     expect(resolveEvalEnv({ KIMI_API_KEY: 'k' }).apiKey).toBe('k');
     const cfg = resolveEvalEnv({ API_KEY: '', MODEL: '', BASE_URL: '' });
     expect(cfg.apiKey).toBeUndefined();
-    expect(cfg.model).toBe(DEFAULT_CONFIG.model);
+    expect(cfg.model).toBeUndefined();
     expect(cfg.baseUrl).toBeUndefined();
   });
   it('resolves MODEL/MODEL_PROVIDER/BASE_URL with fallbacks and validation', () => {
     expect(resolveEvalEnv({ MODEL: 'm1', KIMI_MODEL: 'm2' }).model).toBe('m1');
     expect(resolveEvalEnv({ KIMI_MODEL: 'm2' }).model).toBe('m2');
     expect(resolveEvalEnv({ MODEL: '', KIMI_MODEL: 'm2' }).model).toBe('m2');
-    expect(resolveEvalEnv({ KIMI_MODEL: '' }).model).toBe(DEFAULT_CONFIG.model);
+    expect(resolveEvalEnv({ KIMI_MODEL: '' }).model).toBeUndefined();
     expect(resolveEvalEnv({ MODEL_PROVIDER: 'openai-compatible' }).provider).toBe(
       'openai-compatible',
     );

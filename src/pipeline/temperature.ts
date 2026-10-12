@@ -1,4 +1,4 @@
-import type { ReviewConfig } from "../config/schema.js";
+import { modelForRole, type ReviewConfig } from "../config/schema.js";
 
 /** Models that reject any temperature other than their server-side default. */
 const FIXED_TEMPERATURE_MODELS = new Set([
@@ -40,13 +40,12 @@ function rejectsSamplingParams(model: string): boolean {
  * applies); everything else uses the pipeline's preferred low temperature.
  *
  * `model` is the model actually used for this call (a stage model when the
- * caller resolved one); it defaults to the legacy single `config.model` so
- * callers that predate stage routing keep their behavior.
+ * caller resolved one); it defaults to the resolved `groupReview` model.
  */
 export function reviewTemperature(
   config: ReviewConfig,
   preferred = 0.3,
-  model: string = config.model,
+  model: string = modelForRole(config, 'groupReview'),
 ): number | undefined {
   if (config.temperature !== undefined) return config.temperature;
   if (FIXED_TEMPERATURE_MODELS.has(model)) return undefined;

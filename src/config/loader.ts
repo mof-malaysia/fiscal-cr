@@ -7,6 +7,9 @@ import { logger } from '../utils/logger.js';
 
 const CONFIG_FILENAME = '.fiscalcr-review.yml';
 
+/** Keys removed when model choice was coupled to the release; ignored with a warning. */
+const REMOVED_MODEL_KEYS = ['modelPreset', 'modelPresets'] as const;
+
 function isNotFoundError(err: unknown): err is { status: number } {
   return (
     typeof err === 'object' &&
@@ -46,7 +49,18 @@ export async function loadConfig(
       throw new ConfigError(`Invalid config: ${result.error.message}`);
     }
 
-    logger.info({ language: result.data.language, model: result.data.model }, 'Config loaded');
+    const removed = REMOVED_MODEL_KEYS.filter((key) => key in parsed);
+    if (removed.length > 0) {
+      logger.warn(
+        { keys: removed },
+        'Model presets were removed; models now follow the provider and FiscalCR release. Use `model` or `models.<stage>` to override. Ignoring these keys.',
+      );
+    }
+
+    logger.info(
+      { language: result.data.language, provider: result.data.provider, model: result.data.model },
+      'Config loaded',
+    );
     return result.data;
   } catch (err) {
     if (err instanceof ConfigError) throw err;
