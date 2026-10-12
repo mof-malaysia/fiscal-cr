@@ -1,0 +1,26 @@
+import { type RequestAuth } from './auth.js';
+import { type ChatCompletionParams, type LLMCompletionResponse, type LLMProvider } from './interface.js';
+/** Anthropic's static API key scheme. */
+export declare function anthropicApiKeyAuth(apiKey: string): RequestAuth;
+export interface AnthropicProviderConfig {
+    /** Request auth: a static API key or workload identity federation. */
+    auth: RequestAuth;
+    model: string;
+    baseUrl?: string;
+    /** Custom User-Agent header for provider allowlists and observability. */
+    userAgent?: string;
+    /** Provider-native request fields merged into each Messages request. */
+    modelParams?: Record<string, unknown>;
+}
+/** Native adapter for Anthropic's Messages API. */
+export declare class AnthropicProvider implements LLMProvider {
+    private readonly auth;
+    private readonly model;
+    private readonly baseUrl;
+    private readonly userAgent?;
+    private readonly modelParams;
+    constructor(config: AnthropicProviderConfig);
+    chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse>;
+    private performCompletionRequest;
+}
+//# sourceMappingURL=anthropic.d.ts.map
