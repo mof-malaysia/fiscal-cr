@@ -19,7 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mof-malaysia/fiscal-cr@v1
+      - uses: mof-malaysia/fiscal-cr@v1.1.0-beta.1
         with:
-          api_key: ${{ secrets.LLM_API_KEY }}
-          provider: openai
+          provider: anthropic
+          model: claude-opus-5-5
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
