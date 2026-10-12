@@ -373,8 +373,8 @@ Models in this release:
 | Provider | intent | fastPath | groupReview | synthesis | visualize |
 | --- | --- | --- | --- | --- | --- |
 | `kimi` | `k3-256k` | `k3-256k` | `k3` | `k3` | `k3-256k` |
-| `openai` | `gpt-5.6-terra` | `gpt-5.6-terra` | `gpt-5.6-sol` | `gpt-5.6-sol` | `gpt-5.6-terra` |
-| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-opus-5` | `claude-opus-5` | `claude-sonnet-5` |
+| `openai` | `gpt-6-luna` | `gpt-6-luna` | `gpt-6.1-sol` | `gpt-6.1-sol` | `gpt-6-luna` |
+| `anthropic` | `claude-sonnet-5-5` | `claude-sonnet-5-5` | `claude-opus-5-5` | `claude-opus-5-5` | `claude-sonnet-5-5` |
 <!-- provider-models:end -->
 
 `openai-compatible` has no release models and requires `model`.

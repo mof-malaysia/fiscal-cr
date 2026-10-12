@@ -25,18 +25,18 @@ export const PROVIDER_DEFAULT_MODELS: Record<ProviderWithDefaults, ModelStageMap
     visualize: "k3-256k",
   },
   openai: {
-    intent: "gpt-5.6-terra",
-    fastPath: "gpt-5.6-terra",
-    groupReview: "gpt-5.6-sol",
-    synthesis: "gpt-5.6-sol",
-    visualize: "gpt-5.6-terra",
+    intent: "gpt-6-luna",
+    fastPath: "gpt-6-luna",
+    groupReview: "gpt-6.1-sol",
+    synthesis: "gpt-6.1-sol",
+    visualize: "gpt-6-luna",
   },
   anthropic: {
-    intent: "claude-sonnet-5",
-    fastPath: "claude-sonnet-5",
-    groupReview: "claude-opus-5",
-    synthesis: "claude-opus-5",
-    visualize: "claude-sonnet-5",
+    intent: "claude-sonnet-5-5",
+    fastPath: "claude-sonnet-5-5",
+    groupReview: "claude-opus-5-5",
+    synthesis: "claude-opus-5-5",
+    visualize: "claude-sonnet-5-5",
   },
 };
 
