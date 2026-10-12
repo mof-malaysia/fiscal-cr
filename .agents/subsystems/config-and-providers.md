@@ -129,7 +129,8 @@ provider default.
 
 ## Per-model controls
 
-- `temperature.ts`: explicit config wins; Kimi and OpenAI reasoning models omit
+- `temperature.ts`: explicit config wins; Kimi, OpenAI reasoning models, and
+  Claude models that reject sampling params (5.x+, Opus 4.7+) omit
   temperature; other models use the preferred value (`0.3`).
 - `max-output.ts`: explicit `pipeline.maxOutputTokens` wins; Kimi defaults to
   65,536 completion tokens and other models to 32,768.

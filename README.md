@@ -210,7 +210,8 @@ the request carries one identity.
 > violation. Configure this at your own risk.
 
 A few models reject any sampling temperature other than their server-side
-default. FiscalCR omits the `temperature` parameter for those models (all
+default (Kimi coding models, OpenAI reasoning models, and Claude 5.x / Opus
+4.7+). FiscalCR omits the `temperature` parameter for those models (all
 others use `0.3`; set a top-level `temperature:` in `.fiscalcr-review.yml` to
 override).
 

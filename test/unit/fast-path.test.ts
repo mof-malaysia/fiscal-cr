@@ -175,7 +175,7 @@ describe('runFastPath', () => {
     expect(params.maxTokens).toBe(65_536);
   });
 
-  it('routes to the anthropic preset fastPath model with preferred temperature and conservative cap', async () => {
+  it('routes to the anthropic preset fastPath model, omitting temperature (rejected by Claude 5.x)', async () => {
     const chatCompletion = vi.fn(async () => ({
       content: '{"summary":"looks good","score":95,"findings":[]}',
       usage: { input: 100, output: 50, cached: 0 },
@@ -194,7 +194,7 @@ describe('runFastPath', () => {
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
     expect(params.model).toBe('claude-sonnet-5');
-    expect(params.temperature).toBe(0.3);
+    expect(params.temperature).toBeUndefined();
     expect(params.maxTokens).toBe(32_768);
   });
 

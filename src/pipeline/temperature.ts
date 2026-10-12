@@ -19,6 +19,22 @@ function isReasoningModel(model: string): boolean {
 }
 
 /**
+ * Claude models that reject sampling parameters (`temperature` returns a 400):
+ * every 5.x+ model (Opus, Sonnet, Fable, Mythos) and Opus 4.7+. Older models
+ * (Opus/Sonnet 4.6, Haiku 4.5, …) still accept them. Matches first-party,
+ * dotted (`claude-sonnet-4.5`), and `anthropic.`-prefixed IDs.
+ */
+function rejectsSamplingParams(model: string): boolean {
+  const match = /^(?:anthropic\.)?claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d+))?/i.exec(
+    model,
+  );
+  if (!match) return false;
+  const [, family, major, minor = "0"] = match;
+  if (Number(major) >= 5) return true;
+  return family.toLowerCase() === "opus" && Number(major) === 4 && Number(minor) >= 7;
+}
+
+/**
  * Resolve the temperature for a review call: an explicit config value wins;
  * models that pin their own temperature get none at all (the server default
  * applies); everything else uses the pipeline's preferred low temperature.
@@ -35,5 +51,6 @@ export function reviewTemperature(
   if (config.temperature !== undefined) return config.temperature;
   if (FIXED_TEMPERATURE_MODELS.has(model)) return undefined;
   if (isReasoningModel(model)) return undefined;
+  if (rejectsSamplingParams(model)) return undefined;
   return preferred;
 }

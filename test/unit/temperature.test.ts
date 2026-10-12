@@ -22,6 +22,27 @@ describe('reviewTemperature', () => {
     }
   });
 
+  it('omits temperature for Claude models that reject sampling parameters', () => {
+    for (const model of [
+      'claude-opus-5-5',
+      'claude-opus-5',
+      'claude-sonnet-5-5',
+      'claude-sonnet-5',
+      'claude-fable-5-1',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'anthropic.claude-opus-5-5',
+    ]) {
+      expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBeUndefined();
+    }
+  });
+
+  it('keeps the preferred temperature for older Claude models', () => {
+    for (const model of ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-3-5-sonnet']) {
+      expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBe(0.3);
+    }
+  });
+
   it('omits temperature for OpenAI preset models (o-series, gpt-5)', () => {
     for (const model of ['o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-5-mini']) {
       expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBeUndefined();
