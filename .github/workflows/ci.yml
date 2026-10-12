@@ -8,6 +8,7 @@ permissions:
   contents: read
   pull-requests: write
   checks: write
+  id-token: write
 
 # Prevent two reviews of the same PR from racing each other's state
 concurrency:
