@@ -15,6 +15,16 @@ export interface ResilientProviderOptions {
 
 const BASE_BACKOFF_MS = 1_000;
 
+/**
+ * A call that hit our own timeout usually times out again at the same limit,
+ * and the aborted work is still billed, so timeouts get one retry at most.
+ */
+const MAX_TIMEOUT_RETRIES = 1;
+
+function isTimeout(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
+}
+
 function isRetryable(err: unknown): boolean {
   if (err instanceof LLMApiError) {
     return err.statusCode === 429 || err.statusCode >= 500;
@@ -28,7 +38,7 @@ function isRetryable(err: unknown): boolean {
 
 /**
  * Decorator that adds retry-with-backoff to any LLMProvider.
- * Retries 429/5xx/timeout/network errors with exponential backoff and full
+ * Retries 429/5xx/timeout/network errors (timeouts once) with exponential backoff and full
  * jitter, honoring Retry-After when the API supplies it. Other 4xx errors
  * (auth, bad request) are never retried.
  */
@@ -45,11 +55,13 @@ export class ResilientProvider implements LLMProvider {
   }
 
   async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
+    let timeouts = 0;
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.inner.chatCompletion(params);
       } catch (err) {
-        if (attempt >= this.maxRetries || !isRetryable(err)) {
+        if (isTimeout(err)) timeouts++;
+        if (attempt >= this.maxRetries || !isRetryable(err) || timeouts > MAX_TIMEOUT_RETRIES) {
           throw err;
         }
         const delay = this.backoffDelay(attempt, err);
