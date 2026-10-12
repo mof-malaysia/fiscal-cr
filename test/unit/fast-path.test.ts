@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PROVIDER_DEFAULT_MODELS } from '../../src/config/provider-models.js';
 import { runFastPath } from '../../src/pipeline/fast-path.js';
 import { UsageTracker, type TelemetryEvent } from '../../src/pipeline/usage.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
@@ -165,8 +166,8 @@ describe('runFastPath', () => {
     }));
     const llm: LLMProvider = { chatCompletion };
 
-    // Legacy config: no stage overrides → top-level model pins its temperature and gets the Kimi cap.
-    const config = { ...DEFAULT_CONFIG, modelPreset: undefined, models: {}, model: 'kimi-for-coding' };
+    // Top-level model override: pins its temperature and gets the Kimi cap.
+    const config = { ...DEFAULT_CONFIG, models: {}, model: 'kimi-for-coding' };
     await runFastPath(llm, context(), config, new UsageTracker());
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
@@ -175,7 +176,7 @@ describe('runFastPath', () => {
     expect(params.maxTokens).toBe(65_536);
   });
 
-  it('routes to the anthropic preset fastPath model, omitting temperature (rejected by Claude 5.x)', async () => {
+  it('routes to the anthropic release fastPath model, omitting temperature (rejected by Claude 5.x)', async () => {
     const chatCompletion = vi.fn(async () => ({
       content: '{"summary":"looks good","score":95,"findings":[]}',
       usage: { input: 100, output: 50, cached: 0 },
@@ -186,19 +187,17 @@ describe('runFastPath', () => {
     const config = {
       ...DEFAULT_CONFIG,
       provider: 'anthropic' as const,
-      modelPreset: 'anthropic',
       models: {},
-      model: 'legacy-model',
     };
     await runFastPath(llm, context(), config, new UsageTracker());
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
-    expect(params.model).toBe('claude-sonnet-5');
+    expect(params.model).toBe(PROVIDER_DEFAULT_MODELS.anthropic.fastPath);
     expect(params.temperature).toBeUndefined();
     expect(params.maxTokens).toBe(32_768);
   });
 
-  it('routes to the openai preset fastPath model, omitting temperature for the reasoning model', async () => {
+  it('routes to the openai release fastPath model, omitting temperature for the reasoning model', async () => {
     const chatCompletion = vi.fn(async () => ({
       content: '{"summary":"looks good","score":95,"findings":[]}',
       usage: { input: 100, output: 50, cached: 0 },
@@ -209,19 +208,17 @@ describe('runFastPath', () => {
     const config = {
       ...DEFAULT_CONFIG,
       provider: 'openai' as const,
-      modelPreset: 'openai',
       models: {},
-      model: 'legacy-model',
     };
     await runFastPath(llm, context(), config, new UsageTracker());
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
-    expect(params.model).toBe('gpt-5.6-terra');
+    expect(params.model).toBe(PROVIDER_DEFAULT_MODELS.openai.fastPath);
     expect(params.temperature).toBeUndefined();
     expect(params.maxTokens).toBe(32_768);
   });
 
-  it('provider-default selects the kimi preset fastPath model for the kimi provider', async () => {
+  it('selects the kimi release fastPath model for the kimi provider', async () => {
     const chatCompletion = vi.fn(async () => ({
       content: '{"summary":"looks good","score":95,"findings":[]}',
       usage: { input: 100, output: 50, cached: 0 },
@@ -232,19 +229,17 @@ describe('runFastPath', () => {
     const config = {
       ...DEFAULT_CONFIG,
       provider: 'kimi' as const,
-      modelPreset: 'provider-default',
       models: {},
-      model: 'legacy-model',
     };
     await runFastPath(llm, context(), config, new UsageTracker());
 
     const params = chatCompletion.mock.calls[0][0] as ChatCompletionParams;
-    expect(params.model).toBe('k3-256k');
+    expect(params.model).toBe(PROVIDER_DEFAULT_MODELS.kimi.fastPath);
     expect(params.temperature).toBeUndefined();
     expect(params.maxTokens).toBe(65_536);
   });
 
-  it('routes to a custom preset fastPath model and falls back for unset stages', async () => {
+  it('routes to an explicit models.fastPath override ahead of the top-level model', async () => {
     const chatCompletion = vi.fn(async () => ({
       content: '{"summary":"looks good","score":95,"findings":[]}',
       usage: { input: 100, output: 50, cached: 0 },
@@ -252,15 +247,12 @@ describe('runFastPath', () => {
     }));
     const llm: LLMProvider = { chatCompletion };
 
-    // Custom presets may be partial: only fastPath is pinned, so the fast path call
-    // resolves to the custom value while everything else stays on the top-level model.
+    // A stage override wins; every other stage stays on the top-level model.
     const config = {
       ...DEFAULT_CONFIG,
       provider: 'openai-compatible' as const,
       baseUrl: 'https://api.example.com/v1',
-      modelPreset: 'team',
-      modelPresets: { team: { fastPath: 'team-fast-path' } },
-      models: {},
+      models: { fastPath: 'team-fast-path' },
       model: 'legacy-model',
     };
     await runFastPath(llm, context(), config, new UsageTracker());

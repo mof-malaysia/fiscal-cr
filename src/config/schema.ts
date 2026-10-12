@@ -1,9 +1,6 @@
 import { z } from "zod";
-import {
-  BUILTIN_MODEL_PRESET_NAMES,
-  resolvePresetName,
-  resolveStageMapFor,
-} from "./model-presets.js";
+import { defaultModelsForProvider } from "./provider-models.js";
+import { ConfigError } from "../utils/errors.js";
 
 /**
  * Files excluded from review by default: dependency dirs, build output, and
@@ -42,36 +39,26 @@ export const modelStageSchema = z
 
 export type ModelRole = keyof z.infer<typeof modelStageSchema>;
 
+export const MODEL_ROLES = Object.keys(modelStageSchema.shape) as ModelRole[];
+
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
   provider: z.enum(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
-  model: z.string().default("k3"),
+  /**
+   * Advanced override. Unset → the release-pinned models for `provider` (see
+   * `src/config/provider-models.ts`), so upgrading FiscalCR upgrades models
+   * together with the prompts tuned for them. When set, pins every stage
+   * without an explicit `models.<stage>`. Required for `openai-compatible`.
+   */
+  model: z.string().min(1).optional(),
   /**
    * Per-stage model overrides. `intent` drives the Pass 1 intent call,
    * `fastPath` the fast-path combined call, `groupReview` the per-group file
    * reviews, `synthesis` the final synthesis call, and `visualize` the optional
-   * visualization call. An unset stage falls back to the selected `modelPreset` stage
-   * model, then to the legacy top-level `model`.
+   * visualization call. An unset stage falls back to `model`, then to the
+   * provider's release-pinned model.
    */
   models: modelStageSchema.default({}),
-
-  /**
-   * Selected model preset (see `src/config/model-presets.ts`). Accepts the
-   * built-in names `provider-default`, `kimi`, `openai`, `anthropic`, or any
-   * name defined under `modelPresets`. `provider-default` resolves the preset
-   * from `provider` (`kimi`/`openai`/`anthropic`); `openai-compatible` has no
-   * preset and falls through to the top-level `model`. Omitted → no preset
-   * (legacy behavior). Explicit `models.*` stages always win. Unknown preset
-   * names fail validation.
-   */
-  modelPreset: z.string().min(1).optional(),
-  /**
-   * User-defined model presets: preset name → partial per-stage model object.
-   * Entries merge over the built-in preset of the same name (user stages win);
-   * new names are selectable via `modelPreset`. Unknown stage keys are
-   * rejected (`.strict()`); unset stages fall back to the top-level `model`.
-   */
-  modelPresets: z.record(z.string().min(1), modelStageSchema).optional(),
 
   baseUrl: z.string().url().optional(),
   /** Custom User-Agent for endpoints that whitelist clients. */
@@ -85,7 +72,7 @@ export const reviewConfigSchema = z.object({
    */
   modelParams: z
     .object({
-      reasoning_effort: z.enum(["minimal", "low", "medium", "high"]).optional(),
+      reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
       verbosity: z.enum(["low", "medium", "high"]).optional(),
     })
     .passthrough()
@@ -203,43 +190,38 @@ export const reviewConfigSchema = z.object({
       maxOutputTokens: z.number().optional(),
     })
     .default({}),
-})
-  // A selected preset must be a built-in name or defined under `modelPresets`;
-  // anything else is a stale/typo'd selector and fails fast like other
-  // invalid config.
-  .superRefine((config, ctx) => {
-    if (config.modelPreset === undefined) return;
-    const knownPresets = [
-      ...BUILTIN_MODEL_PRESET_NAMES,
-      ...Object.keys(config.modelPresets ?? {}),
-    ];
-    if (!knownPresets.includes(config.modelPreset)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["modelPreset"],
-        message: `Unknown model preset "${config.modelPreset}"; use a built-in (${BUILTIN_MODEL_PRESET_NAMES.join(", ")}) or define it under modelPresets`,
-      });
-    }
-  });
+});
 
 export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
 
 /**
- * Resolve the model for a pipeline stage. Explicit per-stage overrides win,
- * then the selected preset stage model, then the top-level model. Visualization
- * intentionally falls back to the fast-path model when no explicit visualize
- * assignment exists, keeping the auxiliary call on the fast path by
- * default.
+ * Resolve the model for a pipeline stage: explicit `models.<role>`, then the
+ * top-level `model` override, then the provider's release-pinned stage model.
+ * With a `model` override, visualization resolves like the fast path (so an
+ * explicit `models.fastPath` still wins); otherwise it falls back to the
+ * resolved fast-path model when nothing else resolves. Throws
+ * `ConfigError` when nothing resolves (`openai-compatible` without `model`).
  */
 export function modelForRole(config: ReviewConfig, role: ModelRole): string {
-  const explicit = config.models[role];
-  if (explicit !== undefined) return explicit;
-  const presetName = resolvePresetName(config);
-  const presetStage =
-    presetName === undefined
-      ? undefined
-      : resolveStageMapFor(presetName, config.modelPresets)?.[role];
-  if (presetStage !== undefined) return presetStage;
+  const resolved =
+    config.models[role] ??
+    (role === 'visualize' && config.model !== undefined
+      ? modelForRole(config, 'fastPath')
+      : undefined) ??
+    config.model ??
+    defaultModelsForProvider(config.provider)?.[role];
+  if (resolved !== undefined) return resolved;
   if (role === 'visualize') return modelForRole(config, 'fastPath');
-  return config.model;
+  throw new ConfigError(
+    `No model for provider "${config.provider}"; set \`model\` (required for openai-compatible)`,
+  );
+}
+
+/**
+ * True when `model` or any `models.<stage>` replaces the release-pinned
+ * defaults. Providers without defaults (`openai-compatible`) never override.
+ */
+export function hasModelOverride(config: ReviewConfig): boolean {
+  if (defaultModelsForProvider(config.provider) === undefined) return false;
+  return config.model !== undefined || Object.keys(config.models).length > 0;
 }

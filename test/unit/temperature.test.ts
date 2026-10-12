@@ -43,14 +43,14 @@ describe('reviewTemperature', () => {
     }
   });
 
-  it('omits temperature for OpenAI preset models (o-series, gpt-5)', () => {
-    for (const model of ['o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-5-mini']) {
+  it('omits temperature for OpenAI reasoning models (o-series, gpt-5+)', () => {
+    for (const model of ['o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini', 'gpt-5', 'gpt-5-mini', 'gpt-6-luna', 'gpt-6.1-sol']) {
       expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBeUndefined();
     }
   });
 
   it('keeps the preferred temperature for non-reasoning OpenAI models', () => {
-    for (const model of ['gpt-4o', 'gpt-4.1', 'gpt-4-turbo']) {
+    for (const model of ['gpt-4o', 'gpt-4.1', 'gpt-4-turbo', 'gpt-35-turbo']) {
       expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBe(0.3);
     }
   });

@@ -1,22 +1,22 @@
 import { describe, expect, it } from 'vitest';
+import { PROVIDER_DEFAULT_MODELS } from '../../src/config/provider-models.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import { applyModelOverride, applyProviderOverride } from '../../src/config/overrides.js';
 import { modelForRole } from '../../src/config/schema.js';
 
 describe('runtime config overrides', () => {
-  it('routes provider-default through an explicit provider override', () => {
+  it('resolves release-pinned models from an explicit provider override', () => {
     const config = {
       ...DEFAULT_CONFIG,
       provider: 'kimi' as const,
-      modelPreset: 'provider-default',
       models: {},
     };
 
     applyProviderOverride(config, 'openai');
 
     expect(config.provider).toBe('openai');
-    expect(modelForRole(config, 'intent')).toBe('gpt-5.6-terra');
-    expect(modelForRole(config, 'groupReview')).toBe('gpt-5.6-sol');
+    expect(modelForRole(config, 'intent')).toBe(PROVIDER_DEFAULT_MODELS.openai.intent);
+    expect(modelForRole(config, 'groupReview')).toBe(PROVIDER_DEFAULT_MODELS.openai.groupReview);
   });
 
   it('pins every stage for an explicit global model override', () => {

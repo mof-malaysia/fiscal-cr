@@ -139,6 +139,32 @@ describe('OpenAICompatibleProvider', () => {
     expect(body.seed).toBe(42);
   });
 
+  it('sends release-tuned params for the model, with operator modelParams winning', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }),
+    );
+    const messages = [{ role: 'user' as const, content: 'hi' }];
+
+    const releaseOnly = new OpenAICompatibleProvider({
+      auth: bearerAuth('k'),
+      model: 'gpt-6.1-sol',
+      baseUrl: 'https://api.openai.com/v1',
+    });
+    await releaseOnly.chatCompletion({ messages, model: 'gpt-6-luna' });
+
+    const overridden = new OpenAICompatibleProvider({
+      auth: bearerAuth('k'),
+      model: 'gpt-6.1-sol',
+      baseUrl: 'https://api.openai.com/v1',
+      modelParams: { reasoning_effort: 'high' },
+    });
+    await overridden.chatCompletion({ messages, model: 'gpt-6-luna' });
+
+    const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[0].reasoning_effort).toBe('max');
+    expect(bodies[1].reasoning_effort).toBe('high');
+  });
+
   it('strips pipeline-managed keys from modelParams (no re-triggering the max_tokens 400)', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PROVIDER_DEFAULT_MODELS } from '../../src/config/provider-models.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 import { createLLMProvider } from '../../src/providers/factory.js';
 import { ReviewOrchestrator } from '../../src/review/orchestrator.js';
@@ -55,7 +56,7 @@ describe('App review-request webhook', () => {
     expect(vi.mocked(createLLMProvider)).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'anthropic',
-        model: 'claude-opus-5',
+        model: PROVIDER_DEFAULT_MODELS.anthropic.groupReview,
       }),
     );
     expect(vi.mocked(ReviewOrchestrator)).toHaveBeenCalledWith(
@@ -65,7 +66,7 @@ describe('App review-request webhook', () => {
       expect.objectContaining({
         pricingContext: expect.objectContaining({
           provider: 'anthropic',
-          model: 'claude-opus-5',
+          model: PROVIDER_DEFAULT_MODELS.anthropic.groupReview,
         }),
       }),
     );

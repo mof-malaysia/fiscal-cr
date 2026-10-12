@@ -16,6 +16,6 @@
     "sourceMap": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*", "action/**/*", "eval/**/*"],
+  "include": ["src/**/*", "action/**/*", "eval/**/*", "scripts/**/*"],
   "exclude": ["node_modules", "dist", "test", "action/dist", "eval/__tests__"]
 }

@@ -26,6 +26,7 @@ import {
 import { compareVariants, type VariantWinner } from './quality.js';
 import {
   buildSuitePromptMetadata,
+  evalModelLabel,
   executePlan,
   formatDuration,
   gitRepoMetadata,
@@ -137,8 +138,9 @@ function sourceOf(env: NodeJS.ProcessEnv, key: string): string {
 
 function modelSource(env: NodeJS.ProcessEnv): string {
   if (env.MODEL) return 'env MODEL';
+  if (env.ANTHROPIC_MODEL) return 'env ANTHROPIC_MODEL';
   if (env.KIMI_MODEL) return 'env KIMI_MODEL';
-  return 'default';
+  return 'release default';
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +159,7 @@ function header(env: NodeJS.ProcessEnv, cfg: EvalEnvConfig, selection: EvalSelec
   return [
     'FiscalCR LLM eval harness (local) — fiscalcr-eval-v3',
     `  provider: ${cfg.provider} (${sourceOf(env, 'MODEL_PROVIDER')})`,
-    `  model:    ${cfg.model} (${modelSource(env)})`,
+    `  model:    ${evalModelLabel(cfg)} (${modelSource(env)})`,
     `  suite:    ${suiteLabel}`,
     `  cases:    ${selection.caseIds.join(', ')}`,
     `  seed:     ${selection.seed}`,
@@ -657,7 +659,7 @@ export async function main(argv: string[]): Promise<void> {
     benchmark: { suiteId: SUITE_ID, suiteVersion: SUITE_VERSION },
     repository: gitRepoMetadata(),
     provider: cfg.provider,
-    model: cfg.model,
+    model: evalModelLabel(cfg),
     prompt: {
       baseline: baselinePrompt.metadata,
       experimental: experimentalPrompt.metadata,

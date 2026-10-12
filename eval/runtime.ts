@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import type { LLMProvider } from '../src/providers/interface.js';
-import type { ReviewConfig } from '../src/config/schema.js';
+import { modelForRole, type ReviewConfig } from '../src/config/schema.js';
 import type { PullRequestContext, ReviewResult } from '../src/types/review.js';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 import { createLLMProvider, SUPPORTED_PROVIDERS } from '../src/providers/factory.js';
@@ -77,7 +77,8 @@ export interface EvalEnvConfig {
   /** Resolved from env but never printed or logged. */
   apiKey?: string;
   provider: string;
-  model: string;
+  /** Unset → the provider's release-pinned stage models. */
+  model?: string;
   baseUrl?: string;
   userAgent?: string;
 }
@@ -87,7 +88,8 @@ export interface EvalEnvConfig {
  *
  * - API_KEY, falling back to FISCALCR_API_KEY, ANTHROPIC_API_KEY, then KIMI_API_KEY
  * - MODEL_PROVIDER, falling back to DEFAULT_CONFIG.provider
- * - MODEL, falling back to ANTHROPIC_MODEL, KIMI_MODEL, then DEFAULT_CONFIG.model
+ * - MODEL, falling back to ANTHROPIC_MODEL, KIMI_MODEL, then the provider's
+ *   release-pinned models (unset)
  * - BASE_URL, falling back to FISCALCR_BASE_URL (optional)
  * - LLM_USER_AGENT (optional)
  *
@@ -105,10 +107,21 @@ export function resolveEvalEnv(env: NodeJS.ProcessEnv): EvalEnvConfig {
   return {
     apiKey: env.API_KEY || env.FISCALCR_API_KEY || env.ANTHROPIC_API_KEY || env.KIMI_API_KEY,
     provider,
-    model: env.MODEL || env.ANTHROPIC_MODEL || env.KIMI_MODEL || DEFAULT_CONFIG.model,
+    model: env.MODEL || env.ANTHROPIC_MODEL || env.KIMI_MODEL || undefined,
     baseUrl: env.BASE_URL || env.FISCALCR_BASE_URL || undefined,
     userAgent: env.LLM_USER_AGENT || undefined,
   };
+}
+
+/** Model shown in headers and artifacts: the override, else the resolved groupReview model. */
+export function evalModelLabel(cfg: EvalEnvConfig): string {
+  if (cfg.model) return cfg.model;
+  try {
+    return modelForRole(evalReviewConfig(cfg, false), 'groupReview');
+  } catch {
+    // Dry runs never call a model; live runs fail later with the ConfigError.
+    return '(unset)';
+  }
 }
 
 /** Live mode requires a key; dry-run never calls this. */
@@ -128,7 +141,7 @@ export function evalReviewConfig(cfg: EvalEnvConfig, experimental: boolean): Rev
   return {
     ...DEFAULT_CONFIG,
     provider: cfg.provider as ReviewConfig['provider'],
-    model: cfg.model,
+    ...(cfg.model ? { model: cfg.model } : {}),
     ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
     ...(cfg.userAgent ? { userAgent: cfg.userAgent } : {}),
     experimental,
@@ -378,7 +391,7 @@ function defaultProviderFactory(apiKey: string): (config: ReviewConfig) => LLMPr
   return (config) =>
     createLLMProvider({
       apiKey,
-      model: config.model,
+      model: modelForRole(config, 'groupReview'),
       baseUrl: config.baseUrl,
       provider: config.provider,
       userAgent: config.userAgent,

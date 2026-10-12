@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PROVIDER_DEFAULT_MODELS } from '../../src/config/provider-models.js';
 import {
   countBySeverity,
   deterministicScore,
@@ -280,13 +281,13 @@ describe('synthesize', () => {
     await synthesize(
       { chatCompletion },
       input,
-      { ...cfg(), modelPreset: undefined, models: {}, model: 'legacy-model' },
+      { ...cfg(), models: {}, model: 'legacy-model' },
       new UsageTracker(),
     );
     expect(chatCompletion.mock.calls[1][0].model).toBe('legacy-model');
   });
 
-  it('routes the synthesis call to preset and provider-default models, honoring explicit overrides', async () => {
+  it('routes the synthesis call to release-pinned provider models, honoring explicit overrides', async () => {
     const chatCompletion = vi.fn(async (params: ChatCompletionParams) => ({
       content: JSON.stringify({ summary: 'S', score: 70, walkthrough: [], nearDuplicates: [], likelyFalsePositives: [] }),
       usage: { input: 1, output: 1, cached: 0 },
@@ -301,54 +302,28 @@ describe('synthesize', () => {
     await synthesize(
       { chatCompletion },
       input,
-      { ...cfg(), modelPreset: 'anthropic', models: {}, model: 'legacy-model' },
+      { ...cfg(), provider: 'anthropic', models: {}, model: undefined },
       new UsageTracker(),
     );
-    expect(chatCompletion.mock.calls[0][0].model).toBe('claude-opus-5');
+    expect(chatCompletion.mock.calls[0][0].model).toBe(PROVIDER_DEFAULT_MODELS.anthropic.synthesis);
 
-    // provider-default picks the openai preset when the provider is openai.
+    // The openai provider resolves its own release-pinned synthesis model.
     await synthesize(
       { chatCompletion },
       input,
-      { ...cfg(), provider: 'openai', modelPreset: 'provider-default', models: {}, model: 'legacy-model' },
+      { ...cfg(), provider: 'openai', models: {}, model: undefined },
       new UsageTracker(),
     );
-    expect(chatCompletion.mock.calls[1][0].model).toBe('gpt-5.6-sol');
+    expect(chatCompletion.mock.calls[1][0].model).toBe(PROVIDER_DEFAULT_MODELS.openai.synthesis);
 
-    // Explicit models.synthesis still wins over the selected preset.
+    // Explicit models.synthesis wins over both the top-level model and release defaults.
     await synthesize(
       { chatCompletion },
       input,
-      { ...cfg(), modelPreset: 'anthropic', models: { synthesis: 'custom-synthesis' }, model: 'legacy-model' },
+      { ...cfg(), provider: 'anthropic', models: { synthesis: 'custom-synthesis' }, model: 'legacy-model' },
       new UsageTracker(),
     );
     expect(chatCompletion.mock.calls[2][0].model).toBe('custom-synthesis');
   });
 
-  it('routes the synthesis call to a custom modelPresets entry', async () => {
-    const chatCompletion = vi.fn(async (params: ChatCompletionParams) => ({
-      content: JSON.stringify({ summary: 'S', score: 70, walkthrough: [], nearDuplicates: [], likelyFalsePositives: [] }),
-      usage: { input: 1, output: 1, cached: 0 },
-    }));
-    const input = {
-      ctx: ctx([changedFile('src/a.ts')]),
-      intent: null,
-      outcomes: [outcome('a', []), outcome('b', [])],
-      findings: [],
-    };
-
-    await synthesize(
-      { chatCompletion },
-      input,
-      {
-        ...cfg(),
-        modelPreset: 'team',
-        modelPresets: { team: { synthesis: 'team-synthesis' } },
-        models: {},
-        model: 'legacy-model',
-      },
-      new UsageTracker(),
-    );
-    expect(chatCompletion.mock.calls[0][0].model).toBe('team-synthesis');
-  });
 });

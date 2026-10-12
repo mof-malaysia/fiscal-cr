@@ -5,7 +5,7 @@ import { createActionOctokit } from "./github-client.js";
 import { mergeActionConfig } from "./config.js";
 import { createLLMProvider } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
-import { modelForRole } from "../src/config/schema.js";
+import { MODEL_ROLES, hasModelOverride, modelForRole } from "../src/config/schema.js";
 import { applyModelOverride, applyProviderOverride } from "../src/config/overrides.js";
 import { calculateCostForModel } from "../src/utils/tokens.js";
 import { telemetryFromActionInput } from "./telemetry.js";
@@ -119,6 +119,14 @@ async function run(): Promise<void> {
     ) {
       core.info(`Skipping ${eventAction} event (review.auto.onOpen is false).`);
       return;
+    }
+
+    const stageModels = MODEL_ROLES.map((role) => `${role}=${modelForRole(config, role)}`);
+    core.info(`Models (${config.provider}): ${stageModels.join(", ")}`);
+    if (hasModelOverride(config)) {
+      core.warning(
+        "Model override active: some stages are not using this FiscalCR release's tuned models.",
+      );
     }
 
     // Create model provider

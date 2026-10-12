@@ -15,10 +15,10 @@ inputs:
     required: false
     default: ${{ github.token }}
   provider:
-    description: 'Model provider: openai-compatible'
+    description: 'Model provider: kimi, openai, anthropic, or openai-compatible (overrides trusted repo config). Native providers use this release''s tuned models'
     required: false
   model:
-    description: 'Model to use (overrides repo config when provided)'
+    description: 'Advanced: pin one model for every core stage instead of this release''s tuned models. Required for openai-compatible unless set in repo config'
     required: false
   base_url:
     description: 'Base URL for the OpenAI-compatible provider API'

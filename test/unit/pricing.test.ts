@@ -47,6 +47,13 @@ describe('resolvePricing', () => {
     });
   });
 
+  it('prices Claude Opus 5.5 at its own rate, not the claude-opus-5 family', () => {
+    expect(resolvePricing({ provider: 'anthropic', model: 'claude-opus-5-5' })).toMatchObject({
+      matchedModel: 'claude-opus-5-5',
+      pricing: { inputPerMillion: 4, outputPerMillion: 20, cachedInputPerMillion: 0.2 },
+    });
+  });
+
   it('resolves current Kimi Open Platform models without collapsing their rates', () => {
     expect(resolvePricing({ provider: 'kimi', model: 'kimi-k3' })).toMatchObject({
       source: 'exact',

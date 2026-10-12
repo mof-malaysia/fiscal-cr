@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PROVIDER_DEFAULT_MODELS } from '../../src/config/provider-models.js';
 import { ReviewOrchestrator } from '../../src/review/orchestrator.js';
 import { handleFiscalcrThreadEvent } from '../../src/github/webhooks.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
@@ -816,7 +817,7 @@ describe('change diagram (opt-in) in sticky lifecycle', () => {
     const allCalls = llm.chatCompletion.mock.calls.map(([p]) => p);
     const diagramCalls = allCalls.filter((p) => p.messages[0].content === VISUALIZE_PROMPT);
     expect(diagramCalls).toHaveLength(1);
-    expect(diagramCalls[0].model).toBe('k3-256k');
+    expect(diagramCalls[0].model).toBe(PROVIDER_DEFAULT_MODELS.kimi.visualize);
     expect(result.callCount).toBe(allCalls.length);
     // Shared usage totals fold in the diagram call (its 10 cached tokens; pipeline calls carry 0).
     expect(result.tokensUsed).toEqual({
