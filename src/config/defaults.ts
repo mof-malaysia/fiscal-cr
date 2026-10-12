@@ -61,7 +61,6 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     fastPathThreshold: 25_000,
     minConfidence: 0.6,
     maxRetries: 3,
-    callTimeoutMs: 120_000,
     // maxOutputTokens omitted → resolved per model (see reviewMaxOutputTokens).
   },
 };

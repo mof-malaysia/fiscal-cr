@@ -197,7 +197,8 @@ export const reviewConfigSchema = z.object({
       fastPathThreshold: z.number().default(25_000),
       minConfidence: z.number().min(0).max(1).default(0.6),
       maxRetries: z.number().min(0).max(5).default(3),
-      callTimeoutMs: z.number().default(120_000),
+      // Unset → resolved per model (reasoning models get longer). See reviewCallTimeoutMs.
+      callTimeoutMs: z.number().optional(),
       // Unset → resolved per model (Kimi gets a larger cap). See reviewMaxOutputTokens.
       maxOutputTokens: z.number().optional(),
     })
