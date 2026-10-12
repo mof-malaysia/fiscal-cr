@@ -112,9 +112,12 @@ describe('provider factory', () => {
     ).toThrow(/Invalid provider/);
   });
   const federation = {
-    federationRuleId: 'fdrl_1',
-    organizationId: 'org-uuid',
-    serviceAccountId: 'svac_1',
+    exchange: {
+      type: 'anthropic' as const,
+      federationRuleId: 'fdrl_1',
+      organizationId: 'org-uuid',
+      serviceAccountId: 'svac_1',
+    },
     getIdentityToken: async () => 'jwt',
   };
 
@@ -128,7 +131,7 @@ describe('provider factory', () => {
         new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), { status: 200 }),
       );
     const provider = createLLMProvider({
-      anthropicFederation: federation,
+      federation,
       provider: 'anthropic',
       model: 'claude-opus-5-5',
     });
@@ -142,11 +145,6 @@ describe('provider factory', () => {
     });
   });
 
-  it('rejects federation for non-Anthropic providers', () => {
-    expect(() =>
-      createLLMProvider({ anthropicFederation: federation, provider: 'openai', model: 'gpt-5' }),
-    ).toThrow(/requires provider "anthropic"/);
-  });
 
   it('requires exactly one credential', () => {
     expect(() =>
@@ -155,7 +153,7 @@ describe('provider factory', () => {
     expect(() =>
       createLLMProvider({
         apiKey: 'k',
-        anthropicFederation: federation,
+        federation,
         provider: 'anthropic',
         model: 'claude-opus-5-5',
       }),

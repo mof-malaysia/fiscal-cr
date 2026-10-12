@@ -74,7 +74,7 @@ The Action uses the built-in `GITHUB_TOKEN`; `pull-requests: write` is enough.
 | `anthropic_organization_id` | No | — | Anthropic organization ID (UUID), required with federation |
 | `anthropic_service_account_id` | No | — | Service account (`svac_...`), required with federation |
 | `anthropic_workspace_id` | No | Rule's sole workspace | Workspace (`wrkspc_...`); needed only if the rule spans several |
-| `oidc_audience` | No | `https://api.anthropic.com` | Audience of the GitHub OIDC token |
+| `oidc_audience` | No | Provider default (`https://api.anthropic.com`) | Audience of the GitHub OIDC token |
 | `github_token` | No       | `${{ github.token }}`           | GitHub token for API access                                       |
 | `provider`     | No       | Repo config or built-in default | `openai-compatible`, `kimi`, `openai`, or `anthropic`             |
 | `model`        | No       | Repo config or built-in default | Model name; overrides the four core review stages                 |

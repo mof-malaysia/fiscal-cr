@@ -1,15 +1,21 @@
 import { ConfigError, errorSnippet, LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type { AnthropicAuth } from './anthropic-auth.js';
-import type {
-  ChatCompletionParams,
-  LLMCompletionResponse,
-  LLMProvider,
+import { fetchWithAuth, staticAuth, type RequestAuth } from './auth.js';
+import {
+  DEFAULT_USER_AGENT,
+  type ChatCompletionParams,
+  type LLMCompletionResponse,
+  type LLMProvider,
 } from './interface.js';
+
+/** Anthropic's static API key scheme. */
+export function anthropicApiKeyAuth(apiKey: string): RequestAuth {
+  return staticAuth({ 'X-Api-Key': apiKey });
+}
 
 export interface AnthropicProviderConfig {
   /** Request auth: a static API key or workload identity federation. */
-  auth: AnthropicAuth;
+  auth: RequestAuth;
   model: string;
   baseUrl?: string;
   /** Custom User-Agent header for provider allowlists and observability. */
@@ -77,7 +83,7 @@ function textFromResponse(data: AnthropicResponse): string {
 
 /** Native adapter for Anthropic's Messages API. */
 export class AnthropicProvider implements LLMProvider {
-  private readonly auth: AnthropicAuth;
+  private readonly auth: RequestAuth;
   private readonly model: string;
   private readonly baseUrl: string;
   private readonly userAgent?: string;
@@ -135,27 +141,19 @@ export class AnthropicProvider implements LLMProvider {
     };
 
     const payload = JSON.stringify(body);
-    const send = async () =>
+    const res = await fetchWithAuth(this.auth, (authHeaders) =>
       fetch(`${this.baseUrl}/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(await this.auth.headers()),
+          ...authHeaders,
           'anthropic-version': '2023-06-01',
-          'User-Agent': this.userAgent ?? 'fiscalcr/1.0',
+          'User-Agent': this.userAgent ?? DEFAULT_USER_AGENT,
         },
         body: payload,
         signal,
-      });
-
-    let res = await send();
-    // A federated token can be rejected early (clock skew, revocation);
-    // re-exchange once before surfacing the 401.
-    if (res.status === 401 && this.auth.invalidate) {
-      await res.body?.cancel();
-      this.auth.invalidate();
-      res = await send();
-    }
+      }),
+    );
 
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '');

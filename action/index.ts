@@ -29,7 +29,7 @@ async function run(): Promise<void> {
   try {
     // Get inputs
     const apiKey = core.getInput("api_key") || undefined;
-    const anthropicFederation = federationFromActionInput(core);
+    const federation = federationFromActionInput(core);
 
     const githubToken = core.getInput("github_token");
     const providerInput = core.getInput("provider") || undefined;
@@ -124,7 +124,7 @@ async function run(): Promise<void> {
     // Create model provider
     const llm = createLLMProvider({
       apiKey,
-      anthropicFederation,
+      federation,
       provider: providerInput || config.provider,
       model: modelForRole(config, "groupReview"),
       baseUrl: config.baseUrl,

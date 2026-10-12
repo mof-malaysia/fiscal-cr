@@ -23,9 +23,8 @@ inputs:
     description: 'Anthropic workspace ID (wrkspc_...); required only when the federation rule spans multiple workspaces'
     required: false
   oidc_audience:
-    description: 'Audience for the GitHub OIDC token used in federation'
+    description: "Audience for the GitHub OIDC token used in federation (defaults to the provider's API audience)"
     required: false
-    default: 'https://api.anthropic.com'
   github_token:
     description: 'GitHub token for API access'
     required: false

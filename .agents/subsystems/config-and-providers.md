@@ -5,7 +5,7 @@ Configuration loading, precedence, provider construction, and request policy.
 Sources:
 
 - Config: `src/config/{schema,defaults,loader,model-presets,overrides}.ts`
-- Providers: `src/providers/{interface,factory,openai-compatible,anthropic,resilient}.ts`
+- Providers: `src/providers/{interface,factory,openai-compatible,anthropic,resilient,auth,federation}.ts`
 - Entrypoints: `action/{index,config,review-config}.ts`, `src/github/webhooks.ts`
 
 See [model presets](model-presets.md) for stage resolution and [review
@@ -66,7 +66,7 @@ finish reason (`length` signals truncation).
 
 ### Factory
 
-`createLLMProvider({ apiKey, model, baseUrl?, provider, userAgent?, modelParams?, retry? })`:
+`createLLMProvider({ apiKey? | federation?, model, baseUrl?, provider, userAgent?, modelParams?, retry? })`:
 
 - validates `openai-compatible`, `kimi`, `openai`, or `anthropic`
 - requires `baseUrl` for `openai-compatible`
@@ -74,7 +74,25 @@ finish reason (`length` signals truncation).
 - defaults OpenAI to `https://api.openai.com/v1` and uses
   `max_completion_tokens`
 - defaults Anthropic to `https://api.anthropic.com/v1` and uses its Messages API
+- requires exactly one of `apiKey` or `federation`, and builds the adapter's
+  `RequestAuth` (API keys use the provider's `apiKeyAuth`, default bearer)
 - wraps each adapter in `ResilientProvider`
+
+### Auth and workload identity federation
+
+- `auth.ts` is provider-agnostic: `RequestAuth` (headers + optional
+  `invalidate`), `staticAuth`/`bearerAuth`, `federatedAuth` (fresh identity
+  token per exchange, cached access token, refresh 120s before expiry,
+  single-flight), and `fetchWithAuth` (one re-auth on 401 for refreshable auth).
+  Both adapters send requests through `fetchWithAuth`.
+- `federation.ts` holds per-provider token exchanges: `FEDERATION_EXCHANGES`
+  (accepted providers, default OIDC audience) plus `tokenExchangeFor()`. Only
+  `anthropic` exists (RFC 7523 jwt-bearer at `{baseUrl}/oauth/token`). To add
+  one: extend `FederationExchangeConfig`, add a registry entry and a
+  `tokenExchangeFor()` case, and add an input parser to `EXCHANGE_PARSERS` in
+  `action/federation.ts`.
+- The Action's identity token source is GitHub OIDC (`core.getIDToken`);
+  federation inputs come only from the workflow, never repo config.
 
 `modelParams` merges into every request. Adapters remove pipeline-owned fields
 such as model identity, messages, token caps, temperature, response format, and
@@ -82,7 +100,7 @@ streaming.
 
 ### OpenAI-compatible adapter
 
-- Posts to `{baseUrl}/chat/completions` with bearer auth.
+- Posts to `{baseUrl}/chat/completions` with its `RequestAuth` headers.
 - Sends `User-Agent: fiscalcr/1.0`, or the configured user agent.
 - Omits temperature when the resolved model requires the server default.
 - Aborts after the configured timeout (default 300s).
@@ -92,8 +110,8 @@ streaming.
 
 ### Anthropic adapter
 
-- Posts to `{baseUrl}/messages` with `x-api-key` and
-  `anthropic-version: 2023-06-01`.
+- Posts to `{baseUrl}/messages` with its `RequestAuth` headers (`x-api-key` or a
+  federated bearer token) and `anthropic-version: 2023-06-01`.
 - Moves system messages into the top-level `system` field.
 - Normalizes input, cache, and output token usage.
 - Uses an explicit JSON-only instruction because Messages has no shared
@@ -130,7 +148,7 @@ provider default.
 ## Relevant tests
 
 - Config and overrides: `config-loader`, `config-overrides`, `action-config`,
-  `action-model-params`, `action-experimental`
+  `action-model-params`, `action-experimental`, `action-federation`
 - Provider mapping: `provider-factory`, `openai-compatible-provider`,
-  `anthropic-provider`, `resilient-provider`
+  `anthropic-provider`, `resilient-provider`, `auth`, `federation`
 - Per-model controls: `temperature`, `max-output`, `tokens`

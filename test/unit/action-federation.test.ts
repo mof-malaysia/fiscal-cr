@@ -32,27 +32,27 @@ describe('Action anthropic federation inputs', () => {
     ).toThrowError(ConfigError);
   });
 
-  it('builds the config and mints a GitHub OIDC token for the default audience', async () => {
+  it('builds an Anthropic exchange backed by GitHub OIDC tokens', async () => {
     const core = actionCore({ ...FULL, anthropic_workspace_id: 'wrkspc_1' });
     const config = federationFromActionInput(core)!;
 
-    expect(config).toMatchObject({
+    expect(config.exchange).toEqual({
+      type: 'anthropic',
       federationRuleId: 'fdrl_1',
       organizationId: 'org-uuid',
       serviceAccountId: 'svac_1',
       workspaceId: 'wrkspc_1',
     });
-    expect(await config.getIdentityToken()).toBe('gh-jwt');
-    expect(core.getIDToken).toHaveBeenCalledWith('https://api.anthropic.com');
+    expect(config.audience).toBeUndefined();
+    expect(await config.getIdentityToken('aud')).toBe('gh-jwt');
+    expect(core.getIDToken).toHaveBeenCalledWith('aud');
   });
 
-  it('honors a custom audience and leaves workspace unset when omitted', async () => {
-    const core = actionCore({ ...FULL, oidc_audience: 'custom-aud' });
-    const config = federationFromActionInput(core)!;
+  it('passes a custom audience through and leaves workspace unset when omitted', () => {
+    const config = federationFromActionInput(actionCore({ ...FULL, oidc_audience: 'custom-aud' }))!;
 
-    expect(config.workspaceId).toBeUndefined();
-    await config.getIdentityToken();
-    expect(core.getIDToken).toHaveBeenCalledWith('custom-aud');
+    expect(config.audience).toBe('custom-aud');
+    expect(config.exchange.workspaceId).toBeUndefined();
   });
 
   it('explains missing id-token permission when the OIDC request fails', async () => {
@@ -64,6 +64,6 @@ describe('Action anthropic federation inputs', () => {
     );
     const config = federationFromActionInput(core)!;
 
-    await expect(config.getIdentityToken()).rejects.toThrow(/id-token: write/);
+    await expect(config.getIdentityToken('aud')).rejects.toThrow(/id-token: write/);
   });
 });

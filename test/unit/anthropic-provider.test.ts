@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AnthropicProvider } from '../../src/providers/anthropic.js';
-import { apiKeyAuth, type AnthropicAuth } from '../../src/providers/anthropic-auth.js';
+import { AnthropicProvider, anthropicApiKeyAuth as apiKeyAuth } from '../../src/providers/anthropic.js';
+import { bearerAuth } from '../../src/providers/auth.js';
 
 const response = (body: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(body), {
@@ -135,44 +135,20 @@ describe('AnthropicProvider', () => {
     await expect(provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] }))
       .rejects.toMatchObject({ statusCode: 429, retryAfterMs: 3_000 });
   });
-  it('sends federated auth headers and re-authenticates once on 401', async () => {
-    let n = 0;
-    const auth: AnthropicAuth = {
-      headers: vi.fn(async () => ({ Authorization: `Bearer tok-${++n}` })),
-      invalidate: vi.fn(),
-    };
+  it('sends the auth source headers instead of an API key', async () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response('{}', { status: 401 }))
       .mockResolvedValueOnce(response({ content: [{ type: 'text', text: 'ok' }] }));
     const provider = new AnthropicProvider({
-      auth,
+      auth: bearerAuth('sk-ant-oat01-x'),
       model: 'claude-opus-5-5',
       baseUrl: 'https://api.anthropic.com/v1',
     });
 
-    const result = await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
 
-    expect(result.content).toBe('ok');
-    expect(auth.invalidate).toHaveBeenCalledTimes(1);
-    const headers = fetchMock.mock.calls.map((call) => call[1]?.headers as Record<string, string>);
-    expect(headers[0]).toMatchObject({ Authorization: 'Bearer tok-1' });
-    expect(headers[1]).toMatchObject({ Authorization: 'Bearer tok-2' });
-    expect(headers[1]).not.toHaveProperty('X-Api-Key');
-  });
-
-  it('does not retry a 401 for a static API key', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response('{}', { status: 401 }));
-    const provider = new AnthropicProvider({
-      auth: apiKeyAuth('bad-key'),
-      model: 'claude-opus-5-5',
-      baseUrl: 'https://api.anthropic.com/v1',
-    });
-
-    await expect(provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] }))
-      .rejects.toMatchObject({ statusCode: 401 });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers).toMatchObject({ Authorization: 'Bearer sk-ant-oat01-x' });
+    expect(headers).not.toHaveProperty('X-Api-Key');
   });
 });

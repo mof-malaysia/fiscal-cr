@@ -1,10 +1,7 @@
 import type { ReviewConfig } from "../config/schema.js";
-import { AnthropicProvider } from "./anthropic.js";
-import {
-  apiKeyAuth,
-  federationAuth,
-  type AnthropicFederationConfig,
-} from "./anthropic-auth.js";
+import { AnthropicProvider, anthropicApiKeyAuth } from "./anthropic.js";
+import { bearerAuth, type RequestAuth } from "./auth.js";
+import { createFederatedAuth, type FederationConfig } from "./federation.js";
 import { OpenAICompatibleProvider } from "./openai-compatible.js";
 import {
   ResilientProvider,
@@ -24,7 +21,12 @@ const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com/v1";
  */
 const PROVIDER_DEFAULTS: Record<
   ReviewConfig["provider"],
-  { baseUrl?: string; completionTokenParam?: "max_completion_tokens" }
+  {
+    baseUrl?: string;
+    completionTokenParam?: "max_completion_tokens";
+    /** How a static API key is sent; defaults to `Authorization: Bearer`. */
+    apiKeyAuth?: (apiKey: string) => RequestAuth;
+  }
 > = {
   "openai-compatible": {},
   openai: {
@@ -32,7 +34,10 @@ const PROVIDER_DEFAULTS: Record<
     completionTokenParam: "max_completion_tokens",
   },
   kimi: { baseUrl: KIMI_API_BASE_URL },
-  anthropic: { baseUrl: ANTHROPIC_API_BASE_URL },
+  anthropic: {
+    baseUrl: ANTHROPIC_API_BASE_URL,
+    apiKeyAuth: anthropicApiKeyAuth,
+  },
 };
 
 function parseProvider(provider: string): ReviewConfig["provider"] {
@@ -45,11 +50,29 @@ function parseProvider(provider: string): ReviewConfig["provider"] {
   );
 }
 
+/** Exactly one of a static API key or workload identity federation. */
+function resolveAuth(
+  { apiKey, federation, userAgent }: { apiKey?: string; federation?: FederationConfig; userAgent?: string },
+  provider: ReviewConfig["provider"],
+  baseUrl: string,
+): RequestAuth {
+  if (apiKey && federation) {
+    throw new ConfigError(
+      "Configure either an API key or workload identity federation, not both.",
+    );
+  }
+  if (federation) return createFederatedAuth(provider, federation, { baseUrl, userAgent });
+  if (apiKey) return (PROVIDER_DEFAULTS[provider].apiKeyAuth ?? bearerAuth)(apiKey);
+  throw new ConfigError(
+    "Missing LLM credentials: set an API key or workload identity federation.",
+  );
+}
+
 export function createLLMProvider(config: {
-  /** Static provider API key. Exactly one of `apiKey` or `anthropicFederation`. */
+  /** Static provider API key. Exactly one of `apiKey` or `federation`. */
   apiKey?: string;
-  /** Keyless Anthropic auth via workload identity federation (Anthropic only). */
-  anthropicFederation?: AnthropicFederationConfig;
+  /** Keyless auth via workload identity federation. */
+  federation?: FederationConfig;
   model: string;
   baseUrl?: string;
   provider: string;
@@ -62,23 +85,6 @@ export function createLLMProvider(config: {
   const provider = parseProvider(config.provider);
   const defaults = PROVIDER_DEFAULTS[provider];
 
-  const { apiKey, anthropicFederation } = config;
-  if (apiKey && anthropicFederation) {
-    throw new ConfigError(
-      "Configure either an API key or Anthropic federation, not both.",
-    );
-  }
-  if (anthropicFederation && provider !== "anthropic") {
-    throw new ConfigError(
-      `Anthropic federation requires provider "anthropic" (got "${provider}").`,
-    );
-  }
-  if (!apiKey && !anthropicFederation) {
-    throw new ConfigError(
-      "Missing LLM credentials: set an API key, or Anthropic federation (provider anthropic).",
-    );
-  }
-
   const baseUrl = config.baseUrl ?? defaults.baseUrl;
   if (!baseUrl) {
     throw new ConfigError(
@@ -86,16 +92,12 @@ export function createLLMProvider(config: {
     );
   }
 
+  const auth = resolveAuth(config, provider, baseUrl);
+
   if (provider === "anthropic") {
     return new ResilientProvider(
       new AnthropicProvider({
-        auth: anthropicFederation
-          ? federationAuth({
-              ...anthropicFederation,
-              baseUrl,
-              userAgent: config.userAgent,
-            })
-          : apiKeyAuth(apiKey!),
+        auth,
         model: config.model,
         baseUrl,
         userAgent: config.userAgent,
@@ -106,7 +108,7 @@ export function createLLMProvider(config: {
   }
 
   const inner = new OpenAICompatibleProvider({
-    apiKey: config.apiKey!,
+    auth,
     model: config.model,
     baseUrl,
     userAgent: config.userAgent,
