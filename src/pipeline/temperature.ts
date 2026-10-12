@@ -11,11 +11,11 @@ const FIXED_TEMPERATURE_MODELS = new Set([
 
 /**
  * OpenAI reasoning models reject any temperature other than the server default.
- * Matched by name (o1/o3/o4-mini…, gpt-5 family) so the guard also protects an
+ * Matched by name (o1/o3/o4-mini…, gpt-5 and later families) so the guard also protects an
  * `openai-compatible` endpoint that happens to serve a reasoning model.
  */
 function isReasoningModel(model: string): boolean {
-  return /^(o[1-9]|gpt-5)/i.test(model);
+  return /^(o[1-9]|gpt-[5-9](?!\d))/i.test(model);
 }
 
 /**
