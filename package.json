@@ -13,6 +13,7 @@
     "test": "pnpm generate:prompts && vitest run",
     "test:watch": "pnpm generate:prompts && vitest",
     "lint": "pnpm generate:prompts && tsc --noEmit",
+    "models:sync": "tsx scripts/sync-provider-models.ts",
     "clean": "rm -rf dist action/dist"
   },
   "keywords": [
