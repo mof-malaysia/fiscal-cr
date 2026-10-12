@@ -5,7 +5,7 @@ Shared review execution for the GitHub Action and self-hosted App.
 Sources: `src/review/orchestrator.ts`, `src/review/{delta,diff-analyzer,
 file-filter,file-source}.ts`, `src/pipeline/*`, and `src/utils/tokens.ts`.
 
-See [model presets](model-presets.md) for stage routing and [GitHub
+See [provider models](provider-models.md) for stage routing and [GitHub
 integration](github-integration.md) for API and lifecycle details.
 
 ## Responsibilities
@@ -37,7 +37,7 @@ Uncertainty always chooses a full review.
 ## Review execution
 
 The token estimate covers changed patches and file contents. Every call uses
-the model resolved for its stage; see [model presets](model-presets.md).
+the model resolved for its stage; see [provider models](provider-models.md).
 
 - **Fast path** (`fast-path.ts`): used when the pipeline is disabled or the
   estimate is below `fastPathThreshold`. One call returns summary, score,

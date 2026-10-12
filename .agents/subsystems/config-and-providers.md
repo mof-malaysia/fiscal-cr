@@ -4,11 +4,11 @@ Configuration loading, precedence, provider construction, and request policy.
 
 Sources:
 
-- Config: `src/config/{schema,defaults,loader,model-presets,overrides}.ts`
+- Config: `src/config/{schema,defaults,loader,provider-models,overrides}.ts`
 - Providers: `src/providers/{interface,factory,openai-compatible,anthropic,resilient,auth,federation}.ts`
 - Entrypoints: `action/{index,config,review-config}.ts`, `src/github/webhooks.ts`
 
-See [model presets](model-presets.md) for stage resolution and [review
+See [provider models](provider-models.md) for stage resolution and [review
 pipeline](review-pipeline.md) for call behavior.
 
 ## Config precedence
@@ -28,7 +28,7 @@ base SHA. App and Action model overrides pin the four core stages; provider
 overrides apply before `provider-default` resolution. App base URL and user
 agent values override repo values only when set.
 
-`src/config/schema.ts` is canonical. It validates providers, models, presets,
+`src/config/schema.ts` is canonical. It validates providers, models, stage overrides,
 review policy, visualization, files, rules, prompts, and pipeline limits.
 `defaults.ts` mirrors it. `DEFAULT_EXCLUDE_PATTERNS` is shared by both files.
 `modelParams` validates known fields and passes other provider-native fields
@@ -47,8 +47,8 @@ through.
 ## Model routing
 
 `modelForRole` resolves `intent`, `fastPath`, `groupReview`, `synthesis`, and
-`visualize`. It is the only stage-model resolver. See [model
-presets](model-presets.md) for precedence, built-ins, validation, and overrides.
+`visualize`. It is the only stage-model resolver. See [provider
+models](provider-models.md) for precedence, release defaults, and overrides.
 
 ## Provider layer
 

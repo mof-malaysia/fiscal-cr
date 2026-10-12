@@ -4,7 +4,7 @@ Grep-friendly orientation. User setup lives in [README.md](../README.md);
 detailed behavior lives in the subsystem guides:
 
 - [Review pipeline](subsystems/review-pipeline.md)
-- [Model presets](subsystems/model-presets.md)
+- [Provider models](subsystems/provider-models.md)
 - [GitHub integration](subsystems/github-integration.md)
 - [Config & providers](subsystems/config-and-providers.md)
 
@@ -46,7 +46,7 @@ App variables are read in `src/index.ts`: `API_KEY` or `FISCALCR_API_KEY`,
 | `src/review/` | Orchestration, scope, diff analysis, file sources, filtering, summaries, visual rendering |
 | `src/pipeline/` | Fast path, multi-pass stages, visualization, prompts, schemas, grouping, usage |
 | `src/github/` | Webhooks, checks, PR context, comments, state, fingerprints, threads |
-| `src/config/` | Schema, defaults, loader, presets, overrides |
+| `src/config/` | Schema, defaults, loader, provider models, overrides |
 | `src/providers/` | Provider interface, adapters, factory, retries |
 | `src/types/` | Shared review and visualization types |
 | `src/utils/` | Logging, errors, tokens, pricing, JSON repair, concurrency |
@@ -69,7 +69,7 @@ App variables are read in `src/index.ts`: `API_KEY` or `FISCALCR_API_KEY`,
 | Checks, comments, threads | `src/github/{checks,comments,threads}.ts` |
 | Sticky state and fingerprints | `src/github/{review-state,fingerprint}.ts` |
 | Webhook commands and triggers | `src/github/webhooks.ts` |
-| Config and model routing | `src/config/{schema,defaults,loader,model-presets,overrides}.ts` |
+| Config and model routing | `src/config/{schema,defaults,loader,provider-models,overrides}.ts` |
 | Providers and retries | `src/providers/` |
 
 ## Runtime flows
@@ -122,8 +122,8 @@ grouping, failure behavior, and publication order.
 ## Shared contracts
 
 - `src/config/schema.ts` is canonical; `defaults.ts` mirrors it.
-- Stage routing and preset semantics are defined in
-  [model presets](subsystems/model-presets.md).
+- Stage routing and release-model semantics are defined in
+  [provider models](subsystems/provider-models.md).
 - Sticky mode stores bounded v2 state in one hidden summary-comment marker.
 - Successful reviewed scopes alone can mark findings fixed.
 - Check conclusions use cumulative open findings; cleanup failures log.
@@ -161,8 +161,8 @@ All paths above refer to `test/unit/*.test.ts`.
 ## Common change recipes
 
 - **Config option**: update schema and defaults, consume it, then add focused tests.
-- **Model preset**: update `model-presets.ts` and routing/validation tests; keep
-  [model preset](subsystems/model-presets.md) semantics current.
+- **Release models**: edit `provider-models.ts`, run `pnpm models:sync`; see
+  [provider models](subsystems/provider-models.md#upgrading-release-models).
 - **Pipeline stage**: add the stage, prompt, parser, orchestrator wiring, and
   `UsageTracker` accounting.
 - **Severity/category**: update shared types, parser, prompts, publication

@@ -179,7 +179,8 @@ returns an opaque `401`; the reason is listed in the Console under
   `base_url`, `user_agent`, `language`, `fail_on`, and `experimental`.
 - Head configuration outside those routing fields is untrusted. Base-revision
   routing prevents it from redirecting requests that contain the API key.
-- Presets are YAML-only. `provider-default` follows the effective provider.
+- Without a `model` override, stage models follow the effective provider and
+  the FiscalCR release (see [Models](#models)).
 - `openai-compatible` requires `base_url`. `anthropic` uses the native
   Messages API, defaults to `https://api.anthropic.com/v1`, and sends keys in
   `x-api-key` (or a federated `Authorization: Bearer` token).
@@ -272,18 +273,9 @@ Create `.fiscalcr-review.yml` in your repository root:
 ```yaml
 language: en
 provider: openai-compatible
-model: gpt-5.6-terra
-modelPreset: openai # optional; built-in or custom preset — explicit models.* stages win (see "Model presets")
-# modelPresets: # optional; custom named presets, selectable via modelPreset
-#   fast:
-#     intent: gpt-5.6-terra
-#     groupReview: gpt-5.6-sol
-models:
-  intent: gpt-5.6-terra
-  fastPath: gpt-5.6-terra
-  groupReview: gpt-5.6-sol
-  synthesis: gpt-5.6-sol
-  # visualize: gpt-5.6-terra # optional; defaults to fastPath's model
+model: gpt-5.6-terra # required for openai-compatible; for native providers omit it to use the release's models (see "Models")
+# models: # optional advanced per-stage overrides; win over `model`
+#   groupReview: gpt-5.6-sol
 baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
 # modelParams:
@@ -363,59 +355,50 @@ pipeline:
 For native Anthropic Messages API support:
 
 ```yaml
-provider: anthropic
-model: claude-sonnet-5
+provider: anthropic # models follow the FiscalCR release; see "Models"
 # baseUrl: https://api.anthropic.com/v1  # optional; this is the default
 ```
 
 If the configured file is not found, FiscalCR falls back to built-in defaults. Invalid configs fail fast instead of being silently ignored.
 
-### Model routing
+### Models
 
-Configure one model per review stage under `models`:
+Pick a `provider`; each FiscalCR release pins the models its prompts and
+review harness were tuned against. Upgrading FiscalCR is how you get newer
+models, so reviews stay consistent with the version you run.
+
+Models in this release:
+
+<!-- provider-models:start -->
+| Provider | intent | fastPath | groupReview | synthesis | visualize |
+| --- | --- | --- | --- | --- | --- |
+| `kimi` | `k3-256k` | `k3-256k` | `k3` | `k3` | `k3-256k` |
+| `openai` | `gpt-5.6-terra` | `gpt-5.6-terra` | `gpt-5.6-sol` | `gpt-5.6-sol` | `gpt-5.6-terra` |
+| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-opus-5` | `claude-opus-5` | `claude-sonnet-5` |
+<!-- provider-models:end -->
+
+`openai-compatible` has no release models and requires `model`.
+
+#### Overriding models (advanced)
+
+Overrides opt out of the tuned defaults, for example to beta-test a model from
+a PR branch. Resolution order is `models.<stage>` → top-level `model` →
+release model. With `model` set, `visualize` resolves like `fastPath`.
 
 | Key | Stage |
 | --- | --- |
+| `model` | Every stage without an explicit `models.<stage>` |
 | `models.intent` | Pass 1 intent, walkthrough, and grouping |
 | `models.fastPath` | Combined call for small PRs |
 | `models.groupReview` | Pass 2 per-group reviews |
 | `models.synthesis` | Pass 3 final synthesis |
 | `models.visualize` | Optional visualization |
 
-Resolution order is `models.<stage>` → selected preset → top-level `model`.
-`visualize` instead falls back to the resolved `fastPath` model. Missing config
-selects `provider-default` for the default `kimi` provider. An Action `model`
-input or App `MODEL`/`FISCALCR_MODEL` override pins the four core stages;
-visualization keeps its explicit or preset model before that fallback.
-Unknown stage keys fail validation.
-
-### Model presets
-
-Presets are YAML-only. Omit `modelPreset` to keep legacy single-model routing.
-`provider-default` selects `kimi`, `openai`, or `anthropic` from the effective
-provider; `openai-compatible` has no preset and uses `model`.
-
-| Preset | intent | fastPath | groupReview | synthesis | visualize |
-| --- | --- | --- | --- | --- | --- |
-| `kimi` | `k3-256k` | `k3-256k` | `k3` | `k3` | `k3-256k` |
-| `openai` | `gpt-5.6-terra` | `gpt-5.6-terra` | `gpt-5.6-sol` | `gpt-5.6-sol` | `gpt-5.6-terra` |
-| `anthropic` | `claude-sonnet-5` | `claude-sonnet-5` | `claude-opus-5` | `claude-opus-5` | `claude-sonnet-5` |
-
-Custom presets are partial. Same-name entries merge over built-ins; unset core
-stages use `model`, while `visualize` uses the resolved `fastPath` model.
-
-```yaml
-model: gpt-5.6-terra
-modelPreset: team
-modelPresets:
-  team:
-    intent: gpt-5.6-terra
-    groupReview: gpt-5.6-sol
-  kimi:
-    intent: k3-256k # overrides the built-in kimi preset
-```
-
-Unknown preset names and stage keys fail config validation.
+An Action `model` input or App `MODEL`/`FISCALCR_MODEL` override pins `model`
+and the four core stages over repo config. The Action logs the resolved stage
+models and warns when any override is active. Unknown stage keys fail
+validation. The former `modelPreset` / `modelPresets` keys are ignored with a
+warning.
 
 ## How it works
 
