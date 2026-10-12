@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MODEL_ROLES } from '../src/config/schema.js';
-import { PROVIDER_DEFAULT_MODELS } from '../src/config/provider-models.js';
+import { PROVIDER_DEFAULT_MODELS, RELEASE_MODEL_PARAMS } from '../src/config/provider-models.js';
 
 export const README_PATH = fileURLToPath(new URL('../README.md', import.meta.url));
 const START = '<!-- provider-models:start -->';
@@ -19,7 +19,12 @@ export function renderProviderModelsTable(): string {
     ([provider, stages]) =>
       `| \`${provider}\` | ${MODEL_ROLES.map((role) => `\`${stages[role]}\``).join(' | ')} |`,
   );
-  return [header, divider, ...rows].join('\n');
+  const params = Object.entries(RELEASE_MODEL_PARAMS).map(
+    ([model, fields]) =>
+      `\`${model}\`: ${Object.entries(fields).map(([k, v]) => `\`${k}: ${v}\``).join(', ')}`,
+  );
+  const paramsLine = params.length > 0 ? ['', `Release-tuned request params: ${params.join('; ')}.`] : [];
+  return [header, divider, ...rows, ...paramsLine].join('\n');
 }
 
 /** Replace the marked README section with the rendered table. */

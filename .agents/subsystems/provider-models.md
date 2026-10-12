@@ -58,7 +58,9 @@ uses `model`. Both entry points construct the provider from the resolved
 
 ## Upgrading release models
 
-1. Edit `PROVIDER_DEFAULT_MODELS` in `src/config/provider-models.ts`.
+1. Edit `PROVIDER_DEFAULT_MODELS` in `src/config/provider-models.ts`, and
+   `RELEASE_MODEL_PARAMS` for per-model request params (e.g. `reasoning_effort`).
+   The OpenAI adapter sends them under operator `modelParams`, which win.
 2. Run `pnpm models:sync` to regenerate the README model table.
 3. Run `pnpm test`. Guards catch the rest:
    - every default model needs a pricing entry in `src/utils/pricing.ts`

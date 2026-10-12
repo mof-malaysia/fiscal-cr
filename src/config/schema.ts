@@ -72,7 +72,7 @@ export const reviewConfigSchema = z.object({
    */
   modelParams: z
     .object({
-      reasoning_effort: z.enum(["minimal", "low", "medium", "high"]).optional(),
+      reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
       verbosity: z.enum(["low", "medium", "high"]).optional(),
     })
     .passthrough()

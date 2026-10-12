@@ -375,6 +375,8 @@ Models in this release:
 | `kimi` | `k3-256k` | `k3-256k` | `k3` | `k3` | `k3-256k` |
 | `openai` | `gpt-6-luna` | `gpt-6-luna` | `gpt-6.1-sol` | `gpt-6.1-sol` | `gpt-6-luna` |
 | `anthropic` | `claude-sonnet-5-5` | `claude-sonnet-5-5` | `claude-opus-5-5` | `claude-opus-5-5` | `claude-sonnet-5-5` |
+
+Release-tuned request params: `gpt-6-luna`: `reasoning_effort: max`; `gpt-6.1-sol`: `reasoning_effort: medium`.
 <!-- provider-models:end -->
 
 `openai-compatible` has no release models and requires `model`.

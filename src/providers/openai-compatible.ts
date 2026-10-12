@@ -1,4 +1,5 @@
 import { ConfigError, errorSnippet, LLMApiError } from '../utils/errors.js';
+import { releaseParamsForModel } from '../config/provider-models.js';
 import { logger } from '../utils/logger.js';
 import { fetchWithAuth, type RequestAuth } from './auth.js';
 import {
@@ -141,7 +142,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const temperature = params.temperature ?? this.temperature;
     const model = params.model ?? this.model;
     const body = {
-      // Operator passthrough is the base layer; managed fields below always win.
+      // Release-tuned params, then operator passthrough; managed fields below always win.
+      ...releaseParamsForModel(model),
       ...this.modelParams,
       model,
       messages: params.messages,

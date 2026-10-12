@@ -41,6 +41,20 @@ export const PROVIDER_DEFAULT_MODELS: Record<ProviderWithDefaults, ModelStageMap
 };
 
 /**
+ * Release-tuned request params per model, sent with every call to that model.
+ * Operator `modelParams` merge over these, so an explicit config value wins.
+ */
+export const RELEASE_MODEL_PARAMS: Record<string, Record<string, unknown>> = {
+  "gpt-6-luna": { reasoning_effort: "max" },
+  "gpt-6.1-sol": { reasoning_effort: "medium" },
+};
+
+/** Release-tuned request params for a model; empty when it has none. */
+export function releaseParamsForModel(model: string): Record<string, unknown> {
+  return Object.hasOwn(RELEASE_MODEL_PARAMS, model) ? RELEASE_MODEL_PARAMS[model] : {};
+}
+
+/**
  * Release-pinned stage map for a provider. `openai-compatible` and unknown
  * providers return `undefined`.
  */
