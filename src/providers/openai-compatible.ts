@@ -3,6 +3,12 @@ import { releaseParamsForModel } from '../config/provider-models.js';
 import { logger } from '../utils/logger.js';
 import { fetchWithAuth, type RequestAuth } from './auth.js';
 import {
+  chatCacheRequest,
+  chatCacheWrite,
+  type PromptCacheSetting,
+  type PromptCacheStyle,
+} from './prompt-cache.js';
+import {
   DEFAULT_USER_AGENT,
   type ChatCompletionParams,
   type LLMCompletionResponse,
@@ -34,6 +40,13 @@ export interface OpenAICompatibleProviderConfig {
    * (see RESERVED_MODEL_PARAM_KEYS) so they cannot override the pipeline.
    */
   modelParams?: Record<string, unknown>;
+  /**
+   * How this endpoint is told to cache the system prompt. See
+   * `PromptCacheStyle`. Defaults to `cache-control`.
+   */
+  cacheStyle?: PromptCacheStyle;
+  /** System-prompt cache lifetime. Omitted → nothing is sent. */
+  promptCache?: PromptCacheSetting;
 }
 
 /**
@@ -83,6 +96,8 @@ interface OpenAICompatibleResponse {
     cached_tokens?: number;
     prompt_tokens_details?: {
       cached_tokens?: number;
+      /** Reported by OpenRouter, Kimi, and OpenAI GPT-5.6+. */
+      cache_write_tokens?: number;
     };
   };
 }
@@ -109,6 +124,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly userAgent?: string;
   private readonly completionTokenParam: 'max_tokens' | 'max_completion_tokens';
   private readonly modelParams: Record<string, unknown>;
+  private readonly cacheStyle: PromptCacheStyle;
+  private readonly promptCache?: PromptCacheSetting;
 
   constructor(config: OpenAICompatibleProviderConfig) {
     this.auth = config.auth;
@@ -122,6 +139,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.userAgent = config.userAgent;
     this.completionTokenParam = config.completionTokenParam ?? 'max_tokens';
     this.modelParams = sanitizeModelParams(config.modelParams);
+    this.cacheStyle = config.cacheStyle ?? 'cache-control';
+    this.promptCache = config.promptCache;
   }
 
   async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
@@ -141,12 +160,15 @@ export class OpenAICompatibleProvider implements LLMProvider {
   ): Promise<LLMCompletionResponse> {
     const temperature = params.temperature ?? this.temperature;
     const model = params.model ?? this.model;
+    const cache = chatCacheRequest(this.cacheStyle, this.promptCache, model, params.messages);
     const body = {
-      // Release-tuned params, then operator passthrough; managed fields below always win.
+      // Release-tuned params, then the cache hint, then operator passthrough;
+      // managed fields below always win.
       ...releaseParamsForModel(model),
+      ...cache.fields,
       ...this.modelParams,
       model,
-      messages: params.messages,
+      messages: cache.messages,
       ...(temperature !== undefined && { temperature }),
       ...(params.maxTokens !== undefined && {
         [this.completionTokenParam]: params.maxTokens,
@@ -189,10 +211,17 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const content = data.choices?.[0]?.message?.content ?? '';
     const finishReason = data.choices?.[0]?.finish_reason;
 
+    const cacheWrite = chatCacheWrite(
+      this.cacheStyle,
+      this.promptCache,
+      model,
+      data.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
+    );
     const usage = {
       input: data.usage?.prompt_tokens ?? 0,
       output: data.usage?.completion_tokens ?? 0,
       cached: data.usage?.prompt_tokens_details?.cached_tokens ?? data.usage?.cached_tokens ?? 0,
+      ...(cacheWrite && { cacheWrite }),
     };
 
     logger.info(
@@ -202,6 +231,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         promptTokens: usage.input,
         completionTokens: usage.output,
         cachedTokens: usage.cached,
+        cacheWriteTokens: cacheWrite?.tokens ?? 0,
         finishReason,
       },
       'LLM API call completed',

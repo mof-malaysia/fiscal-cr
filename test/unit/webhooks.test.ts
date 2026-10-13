@@ -12,7 +12,8 @@ vi.mock('../../src/config/loader.js', () => ({
   loadConfig: vi.fn(),
 }));
 
-vi.mock('../../src/providers/factory.js', () => ({
+vi.mock('../../src/providers/factory.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/providers/factory.js')>()),
   createLLMProvider: vi.fn(() => ({ chatCompletion: vi.fn() })),
 }));
 

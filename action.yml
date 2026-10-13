@@ -30,7 +30,7 @@ inputs:
     required: false
     default: ${{ github.token }}
   provider:
-    description: 'Model provider: openai-compatible, kimi, openai, or anthropic'
+    description: 'Model provider: openai-compatible, openrouter, kimi, openai, or anthropic'
     required: false
   model:
     description: 'Model to use (overrides repo config when provided)'

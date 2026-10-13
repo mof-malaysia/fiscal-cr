@@ -180,7 +180,7 @@ actionability, and usefulness — which automated metrics do not measure.
 | Variable             | Default            | Notes                                                       |
 | -------------------- | ------------------ | ----------------------------------------------------------- |
 | `API_KEY`            | — (live only)      | `API_KEY` → `FISCALCR_API_KEY` → `ANTHROPIC_API_KEY` → `KIMI_API_KEY` |
-| `MODEL_PROVIDER`     | `kimi`             | `kimi`, `openai-compatible`, `openai`, or `anthropic`       |
+| `MODEL_PROVIDER`     | `kimi`             | `kimi`, `openai-compatible`, `openrouter`, `openai`, or `anthropic` |
 | `MODEL`              | `k3`               | Falls back to `ANTHROPIC_MODEL`, then `KIMI_MODEL`          |
 | `KIMI_MODEL`         | —                  | Kimi model override                                         |
 | `ANTHROPIC_API_KEY`  | —                  | API key fallback                                            |

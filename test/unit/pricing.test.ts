@@ -47,6 +47,20 @@ describe('resolvePricing', () => {
     });
   });
 
+  it('bills cache writes at their price multiplier', () => {
+    const pricing = { inputPerMillion: 4, outputPerMillion: 20, cachedInputPerMillion: 0.2 };
+    const base = calculateCostBreakdownWithPricing({ input: 1_000_000, output: 0, cached: 0 }, pricing);
+    expect(base.inputUsd).toBeCloseTo(4);
+    const written = (priceMultiplier: number) =>
+      calculateCostBreakdownWithPricing(
+        { input: 1_000_000, output: 0, cached: 0, cacheWrite: { tokens: 1_000_000, priceMultiplier } },
+        pricing,
+      ).inputUsd;
+    expect(written(2)).toBeCloseTo(8);
+    expect(written(1.25)).toBeCloseTo(5);
+    expect(written(1)).toBeCloseTo(4);
+  });
+
   it('prices Claude Opus 5.5 at its own rate, not the claude-opus-5 family', () => {
     expect(resolvePricing({ provider: 'anthropic', model: 'claude-opus-5-5' })).toMatchObject({
       matchedModel: 'claude-opus-5-5',
@@ -97,6 +111,21 @@ afterEach(() => {
 });
 
 describe('resolvePricingAsync', () => {
+  it('looks up OpenRouter prices for the openrouter provider without a baseUrl', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: { id: 'vendor/other-model', pricing: { prompt: '0.000001', completion: '0.000002' } },
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolved = await resolvePricingAsync({ provider: 'openrouter', model: 'vendor/other-model' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/model/vendor/other-model',
+      expect.anything(),
+    );
+    expect(resolved).toMatchObject({ source: 'remote', pricing: { inputPerMillion: 1 } });
+  });
+
   it('fetches and caches an unknown OpenRouter model price', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       data: {

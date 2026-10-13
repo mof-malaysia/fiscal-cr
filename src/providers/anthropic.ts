@@ -2,6 +2,11 @@ import { ConfigError, errorSnippet, LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { fetchWithAuth, staticAuth, type RequestAuth } from './auth.js';
 import {
+  anthropicCacheWrite,
+  anthropicSystem,
+  type PromptCacheSetting,
+} from './prompt-cache.js';
+import {
   DEFAULT_USER_AGENT,
   type ChatCompletionParams,
   type LLMCompletionResponse,
@@ -22,6 +27,8 @@ export interface AnthropicProviderConfig {
   userAgent?: string;
   /** Provider-native request fields merged into each Messages request. */
   modelParams?: Record<string, unknown>;
+  /** System-prompt cache lifetime. Omitted → no cache breakpoint. */
+  promptCache?: PromptCacheSetting;
 }
 
 interface AnthropicResponse {
@@ -32,6 +39,10 @@ interface AnthropicResponse {
     output_tokens?: number;
     cache_creation_input_tokens?: number | null;
     cache_read_input_tokens?: number | null;
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    } | null;
   };
 }
 
@@ -88,6 +99,7 @@ export class AnthropicProvider implements LLMProvider {
   private readonly baseUrl: string;
   private readonly userAgent?: string;
   private readonly modelParams: Record<string, unknown>;
+  private readonly promptCache?: PromptCacheSetting;
 
   constructor(config: AnthropicProviderConfig) {
     this.auth = config.auth;
@@ -98,6 +110,7 @@ export class AnthropicProvider implements LLMProvider {
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     this.userAgent = config.userAgent;
     this.modelParams = sanitizeModelParams(config.modelParams);
+    this.promptCache = config.promptCache;
   }
 
   async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
@@ -136,7 +149,7 @@ export class AnthropicProvider implements LLMProvider {
       model,
       messages,
       max_tokens: params.maxTokens ?? 4_096,
-      ...(system.length > 0 && { system: system.join('\n\n') }),
+      ...(system.length > 0 && { system: anthropicSystem(system.join('\n\n'), this.promptCache) }),
       ...(params.temperature !== undefined && { temperature: params.temperature }),
     };
 
@@ -176,6 +189,13 @@ export class AnthropicProvider implements LLMProvider {
       (usage?.cache_read_input_tokens ?? 0) +
       (usage?.cache_creation_input_tokens ?? 0);
     const input = (usage?.input_tokens ?? 0) + cached;
+    // Older responses omit the per-TTL split; their writes count as 5m.
+    const cacheWrite = usage?.cache_creation
+      ? anthropicCacheWrite(
+        usage.cache_creation.ephemeral_5m_input_tokens ?? 0,
+        usage.cache_creation.ephemeral_1h_input_tokens ?? 0,
+      )
+      : anthropicCacheWrite(usage?.cache_creation_input_tokens ?? 0, 0);
     const finishReason = data.stop_reason === 'max_tokens'
       ? 'length'
       : data.stop_reason ?? undefined;
@@ -187,6 +207,7 @@ export class AnthropicProvider implements LLMProvider {
         promptTokens: input,
         completionTokens: usage?.output_tokens ?? 0,
         cachedTokens: usage?.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: cacheWrite?.tokens ?? 0,
         finishReason,
       },
       'LLM API call completed',
@@ -198,6 +219,7 @@ export class AnthropicProvider implements LLMProvider {
         input,
         output: usage?.output_tokens ?? 0,
         cached: usage?.cache_read_input_tokens ?? 0,
+        ...(cacheWrite && { cacheWrite }),
       },
       finishReason,
     };

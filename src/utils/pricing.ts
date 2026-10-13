@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { OPENROUTER_API_BASE_URL } from '../providers/endpoints.js';
+import type { LLMTokenUsage } from '../providers/interface.js';
 
 /**
  * Published token prices in USD per million tokens.
@@ -260,13 +262,18 @@ export async function resolvePricingAsync(
   context: PricingContext = {},
 ): Promise<PricingResolution> {
   const local = resolvePricing(context);
+  // The openrouter provider may leave baseUrl unset and use the default.
+  let routerBaseUrl = context.baseUrl;
+  if (!isOpenRouter(routerBaseUrl)) {
+    routerBaseUrl = context.provider === 'openrouter' ? OPENROUTER_API_BASE_URL : undefined;
+  }
   if (
     local.source !== 'fallback'
     || !context.model
-    || !isOpenRouter(context.baseUrl)
+    || !routerBaseUrl
   ) return local;
 
-  const endpoint = openRouterModelUrl(context.baseUrl, context.model);
+  const endpoint = openRouterModelUrl(routerBaseUrl, context.model);
   if (!endpoint) return local;
 
   const cached = openRouterPricingCache.get(endpoint);
@@ -313,12 +320,16 @@ export interface TokenCostBreakdown {
 }
 
 export function calculateCostBreakdownWithPricing(
-  usage: { input: number; output: number; cached: number },
+  usage: Pick<LLMTokenUsage, 'input' | 'output' | 'cached' | 'cacheWrite'>,
   pricing: TokenPricing,
 ): TokenCostBreakdown {
   const rates = pricingForUsage(usage, pricing);
   const uncachedInput = Math.max(0, usage.input - usage.cached);
-  const inputUsd = (uncachedInput / 1_000_000) * rates.inputPerMillion;
+  // Cache writes are already in `input` at the base price; add what they cost on top.
+  const writeSurchargeTokens = usage.cacheWrite
+    ? usage.cacheWrite.tokens * (usage.cacheWrite.priceMultiplier - 1)
+    : 0;
+  const inputUsd = ((uncachedInput + writeSurchargeTokens) / 1_000_000) * rates.inputPerMillion;
   const cachedUsd = (usage.cached / 1_000_000) * rates.cachedInputPerMillion;
   const outputUsd = (usage.output / 1_000_000) * rates.outputPerMillion;
   return {
@@ -331,7 +342,7 @@ export function calculateCostBreakdownWithPricing(
 
 
 export function calculateCostWithPricing(
-  usage: { input: number; output: number; cached: number },
+  usage: Pick<LLMTokenUsage, 'input' | 'output' | 'cached' | 'cacheWrite'>,
   pricing: TokenPricing,
 ): number {
   return calculateCostBreakdownWithPricing(usage, pricing).totalUsd;

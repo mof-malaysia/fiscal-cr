@@ -1,4 +1,9 @@
 import { modelForRole, type ReviewConfig } from "../config/schema.js";
+import {
+  bareModelId,
+  claudeRejectsSamplingParams,
+  isOpenAIReasoningModel,
+} from "../utils/model-ids.js";
 
 /** Models that reject any temperature other than their server-side default. */
 const FIXED_TEMPERATURE_MODELS = new Set([
@@ -10,37 +15,12 @@ const FIXED_TEMPERATURE_MODELS = new Set([
 ]);
 
 /**
- * OpenAI reasoning models reject any temperature other than the server default.
- * Matched by name (o1/o3/o4-mini…, gpt-5 and later families) so the guard also protects an
- * `openai-compatible` endpoint that happens to serve a reasoning model.
- */
-function isReasoningModel(model: string): boolean {
-  return /^(o[1-9]|gpt-[5-9](?!\d))/i.test(model);
-}
-
-/**
- * Claude models that reject sampling parameters (`temperature` returns a 400):
- * every 5.x+ model (Opus, Sonnet, Fable, Mythos) and Opus 4.7+. Older models
- * (Opus/Sonnet 4.6, Haiku 4.5, …) still accept them. Matches first-party,
- * dotted (`claude-sonnet-4.5`), and `anthropic.`-prefixed IDs.
- */
-function rejectsSamplingParams(model: string): boolean {
-  const match = /^(?:anthropic\.)?claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d+))?/i.exec(
-    model,
-  );
-  if (!match) return false;
-  const [, family, major, minor = "0"] = match;
-  if (Number(major) >= 5) return true;
-  return family.toLowerCase() === "opus" && Number(major) === 4 && Number(minor) >= 7;
-}
-
-/**
  * Models that spend output tokens on hidden reasoning before answering
  * (OpenAI reasoning models, Claude 4.7+/5.x), so calls run longer and short
  * output caps truncate the answer.
  */
 export function usesHiddenReasoning(model: string): boolean {
-  return isReasoningModel(model) || rejectsSamplingParams(model);
+  return isOpenAIReasoningModel(model) || claudeRejectsSamplingParams(model);
 }
 
 /**
@@ -57,8 +37,8 @@ export function reviewTemperature(
   model: string = modelForRole(config, 'groupReview'),
 ): number | undefined {
   if (config.temperature !== undefined) return config.temperature;
-  if (FIXED_TEMPERATURE_MODELS.has(model)) return undefined;
-  if (isReasoningModel(model)) return undefined;
-  if (rejectsSamplingParams(model)) return undefined;
+  if (FIXED_TEMPERATURE_MODELS.has(bareModelId(model))) return undefined;
+  if (isOpenAIReasoningModel(model)) return undefined;
+  if (claudeRejectsSamplingParams(model)) return undefined;
   return preferred;
 }

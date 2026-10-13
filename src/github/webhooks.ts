@@ -15,7 +15,7 @@ import { ReviewOrchestrator } from '../review/orchestrator.js';
 import { loadConfig } from '../config/loader.js';
 import { modelForRole } from '../config/schema.js';
 import { applyModelOverride, applyProviderOverride } from '../config/overrides.js';
-import { createLLMProvider } from '../providers/factory.js';
+import { createLLMProvider, providerOptionsFromConfig } from '../providers/factory.js';
 import { logger } from '../utils/logger.js';
 interface AppContext {
   apiKey: string;
@@ -69,10 +69,9 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       const llm = createLLMProvider({
         apiKey: appCtx.apiKey,
         provider: appCtx.provider ?? config.provider,
-        model: modelForRole(config, 'groupReview'),
+        ...providerOptionsFromConfig(config),
         baseUrl: appCtx.baseUrl ?? config.baseUrl,
         userAgent: appCtx.userAgent ?? config.userAgent,
-        modelParams: config.modelParams,
       });
 
       const orchestrator = new ReviewOrchestrator(octokit, llm, config, {
@@ -110,10 +109,9 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
       const llm = createLLMProvider({
         apiKey: appCtx.apiKey,
         provider: appCtx.provider ?? config.provider,
-        model: modelForRole(config, 'groupReview'),
+        ...providerOptionsFromConfig(config),
         baseUrl: appCtx.baseUrl ?? config.baseUrl,
         userAgent: appCtx.userAgent ?? config.userAgent,
-        modelParams: config.modelParams,
       });
 
       const { data: pr } = await octokit.pulls.get({
@@ -174,10 +172,9 @@ export function registerWebhooks(webhooks: Webhooks, appCtx: AppContext): void {
     const llm = createLLMProvider({
       apiKey: appCtx.apiKey,
       provider: appCtx.provider ?? config.provider,
-      model: modelForRole(config, 'groupReview'),
+      ...providerOptionsFromConfig(config),
       baseUrl: appCtx.baseUrl ?? config.baseUrl,
       userAgent: appCtx.userAgent ?? config.userAgent,
-      modelParams: config.modelParams,
     });
 
     const orchestrator = new ReviewOrchestrator(octokit, llm, config, {

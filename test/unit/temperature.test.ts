@@ -37,6 +37,13 @@ describe('reviewTemperature', () => {
     }
   });
 
+  it('matches OpenRouter vendor-prefixed model IDs', () => {
+    for (const model of ['anthropic/claude-sonnet-5.5', 'anthropic/claude-opus-5-5', 'openai/gpt-6.1-sol']) {
+      expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBeUndefined();
+    }
+    expect(reviewTemperature({ ...DEFAULT_CONFIG, model: 'anthropic/claude-sonnet-4.5' })).toBe(0.3);
+  });
+
   it('keeps the preferred temperature for older Claude models', () => {
     for (const model of ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-3-5-sonnet']) {
       expect(reviewTemperature({ ...DEFAULT_CONFIG, model })).toBe(0.3);

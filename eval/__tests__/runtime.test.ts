@@ -36,8 +36,8 @@ import {
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 
 // Prove dry mode never creates a live provider: the factory is replaced with a
-// spy that throws when called. Dry main must never call it. SUPPORTED_PROVIDERS
-// stays real so env resolution works.
+// spy that throws when called. Dry main must never call it. The rest of the
+// module (providerOptionsFromConfig) stays real.
 vi.mock('../../src/providers/factory.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../src/providers/factory.js')>();
@@ -718,6 +718,22 @@ describe('executePlan', () => {
     expect(pairInfo).toHaveLength(2);
     expect(pairInfo[0]).toMatchObject({ pairId: 'clean-01@r0', complete: true, completed: 2, failed: 0 });
     expect(pairInfo[1]).toMatchObject({ pairId: 'local-01@r0', complete: true, completed: 2, failed: 0 });
+  });
+
+  it('builds the default provider with prompt caching off so cost is order-independent', async () => {
+    const plan = buildEvalPlanFromEnv(env({ EVAL_CASES: 'clean-01' }));
+    // One stub per attempt; the module-level throwing default stays for other tests.
+    for (const _entry of plan.entries) {
+      mockedCreate.mockImplementationOnce(() => ({
+        chatCompletion: async () => Promise.reject(new Error('offline')),
+      }));
+    }
+    await run(plan);
+
+    expect(mockedCreate).toHaveBeenCalledTimes(plan.entries.length);
+    for (const [options] of mockedCreate.mock.calls) {
+      expect(options).toMatchObject({ promptCache: 'off', provider: 'kimi', model: 'kimi-for-coding' });
+    }
   });
 
   it('records real parse/contract/quality metrics against the case gold', async () => {

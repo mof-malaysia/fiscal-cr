@@ -41,9 +41,22 @@ export type ModelRole = keyof z.infer<typeof modelStageSchema>;
 
 export const MODEL_ROLES = Object.keys(modelStageSchema.shape) as ModelRole[];
 
+/**
+ * Every provider FiscalCR can talk to. The single source for the config enum
+ * and the factory's validation; per-provider behavior lives in
+ * `PROVIDER_DEFAULTS` (`src/providers/factory.ts`) and release models in
+ * `src/config/provider-models.ts`.
+ */
+export const PROVIDERS = ["openai-compatible", "openrouter", "kimi", "openai", "anthropic"] as const;
+
+/** Providers with no release-pinned models, which therefore require `model`. */
+export const PROVIDERS_REQUIRING_MODEL = PROVIDERS.filter(
+  (provider) => defaultModelsForProvider(provider) === undefined,
+);
+
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
-  provider: z.enum(["openai-compatible", "kimi", "openai", "anthropic"]).default("kimi"),
+  provider: z.enum(PROVIDERS).default("kimi"),
   /**
    * Advanced override. Unset → the release-pinned models for `provider` (see
    * `src/config/provider-models.ts`), so upgrading FiscalCR upgrades models
@@ -77,6 +90,18 @@ export const reviewConfigSchema = z.object({
     })
     .passthrough()
     .optional(),
+  /**
+   * Prompt-cache lifetime for the (config-stable) system prompt. `1h` costs
+   * 2x base input per write but survives gaps between pushes; `5m` costs
+   * 1.25x per write; `off` sends no cache hint. Omitted → the provider
+   * default (see PROVIDER_DEFAULTS in `src/providers/factory.ts`):
+   * - anthropic, openrouter: `1h`, sent as `cache_control`
+   * - openai: on, sent as GPT-5.6+ explicit breakpoints (OpenAI's fixed 30m
+   *   lifetime; `off` sends explicit mode with no breakpoint)
+   * - kimi: none (implicit 5m caching); set it to send `prompt_cache_options`
+   * - openai-compatible: none; set it to send `cache_control`
+   */
+  promptCache: z.enum(["1h", "5m", "off"]).optional(),
   /** Enables opt-in prompt optimizations that may change between releases. */
   experimental: z.boolean().default(false),
 
@@ -200,7 +225,8 @@ export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
  * With a `model` override, visualization resolves like the fast path (so an
  * explicit `models.fastPath` still wins); otherwise it falls back to the
  * resolved fast-path model when nothing else resolves. Throws
- * `ConfigError` when nothing resolves (`openai-compatible` without `model`).
+ * `ConfigError` when nothing resolves (a `PROVIDERS_REQUIRING_MODEL` provider
+ * without `model`).
  */
 export function modelForRole(config: ReviewConfig, role: ModelRole): string {
   const resolved =
@@ -213,13 +239,14 @@ export function modelForRole(config: ReviewConfig, role: ModelRole): string {
   if (resolved !== undefined) return resolved;
   if (role === 'visualize') return modelForRole(config, 'fastPath');
   throw new ConfigError(
-    `No model for provider "${config.provider}"; set \`model\` (required for openai-compatible)`,
+    `No model for provider "${config.provider}"; set \`model\` (required for ${PROVIDERS_REQUIRING_MODEL.join(", ")})`,
   );
 }
 
 /**
  * True when `model` or any `models.<stage>` replaces the release-pinned
- * defaults. Providers without defaults (`openai-compatible`) never override.
+ * defaults. Providers without defaults (`PROVIDERS_REQUIRING_MODEL`) never
+ * override.
  */
 export function hasModelOverride(config: ReviewConfig): boolean {
   if (defaultModelsForProvider(config.provider) === undefined) return false;

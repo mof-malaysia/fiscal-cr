@@ -28,7 +28,7 @@ construction. See [review pipeline](review-pipeline.md) for call behavior.
 
 | Field | Meaning |
 | --- | --- |
-| `model` | Optional override for every stage; required for `openai-compatible` |
+| `model` | Optional override for every stage; required for `openai-compatible` and `openrouter` |
 | `models` | Explicit per-stage overrides; default `{}` |
 
 `modelPreset` / `modelPresets` were removed. `loadConfig` logs a warning and
@@ -42,7 +42,7 @@ zod strips them. Stage maps are strict, so unknown stage keys fail.
 2. top-level `model`
 3. `PROVIDER_DEFAULT_MODELS[provider][role]`
 4. `visualize` only: the resolved `fastPath` model
-5. otherwise throws `ConfigError` (`openai-compatible` without `model`)
+5. otherwise throws `ConfigError` (`openai-compatible` or `openrouter` without `model`)
 
 The Action logs the resolved model for every stage and warns when
 `hasModelOverride` is true. PR-head config may override models; that is

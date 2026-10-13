@@ -1,9 +1,18 @@
 import type { ChatMessage } from '../types/review.js';
 
+/** Prompt-cache writes for one call. */
+export interface CacheWriteUsage {
+  /** Tokens written to the cache (already counted in `input`). */
+  tokens: number;
+  /** What a written token costs, as a multiple of the base input price (e.g. 1.25). */
+  priceMultiplier: number;
+}
+
 export interface LLMTokenUsage {
   input: number;
   output: number;
   cached: number;
+  cacheWrite?: CacheWriteUsage;
 }
 
 export interface LLMCompletionResponse {

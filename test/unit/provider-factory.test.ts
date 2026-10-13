@@ -47,6 +47,21 @@ describe('provider factory', () => {
     expect(provider).toBeTruthy();
     expect(typeof provider.chatCompletion).toBe('function');
   });
+  it('creates the openrouter provider against OpenRouter by default', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }),
+    );
+    const provider = createLLMProvider({
+      apiKey: 'test-key',
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-5-5',
+    });
+
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://openrouter.ai/api/v1/chat/completions');
+  });
+
   it('creates the Anthropic provider with its native Messages endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
@@ -64,6 +79,74 @@ describe('provider factory', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/v1/messages');
   });
 
+  it.each([
+    [undefined, [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral', ttl: '1h' } }]],
+    ['5m', [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }]],
+    ['off', 'sys'],
+  ] as const)(
+    'applies the Anthropic prompt-cache default unless overridden (promptCache=%s)',
+    async (promptCache, expected) => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), { status: 200 }),
+      );
+      const provider = createLLMProvider({
+        apiKey: 'test-key',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5-5',
+        promptCache,
+      });
+
+      await provider.chatCompletion({
+        messages: [
+          { role: 'system', content: 'sys' },
+          { role: 'user', content: 'hi' },
+        ],
+      });
+
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      expect(body.system).toEqual(expected);
+    },
+  );
+
+
+  it.each([
+    ['openrouter', 'anthropic/claude-sonnet-5-5', undefined, 'cache_control'],
+    ['openrouter', 'anthropic/claude-sonnet-5-5', 'off', 'none'],
+    // No URL sniffing: OpenRouter via openai-compatible caches only when asked.
+    ['openai-compatible', 'anthropic/claude-sonnet-5-5', undefined, 'none'],
+    ['openai-compatible', 'anthropic/claude-sonnet-5-5', '1h', 'cache_control'],
+    ['kimi', 'k3', undefined, 'none'],
+    ['kimi', 'k3', '1h', 'prompt_cache_options'],
+    ['openai', 'gpt-6.1-sol', undefined, 'breakpoint'],
+    ['openai', 'gpt-6.1-sol', '5m', 'breakpoint'],
+  ] as const)(
+    'resolves the prompt-cache hint for %s/%s (promptCache=%s → %s)',
+    async (provider, model, promptCache, expected) => {
+      const baseUrl = provider === 'openai-compatible' ? 'https://openrouter.ai/api/v1' : undefined;
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }),
+      );
+      const llm = createLLMProvider({ apiKey: 'test-key', provider, baseUrl, model, promptCache });
+
+      await llm.chatCompletion({
+        messages: [
+          { role: 'system', content: 'sys' },
+          { role: 'user', content: 'hi' },
+        ],
+      });
+
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      const systemBlock = Array.isArray(body.messages[0].content) ? body.messages[0].content[0] : {};
+      const hint = systemBlock.cache_control
+        ? 'cache_control'
+        : systemBlock.prompt_cache_breakpoint
+          ? 'breakpoint'
+          : body.prompt_cache_options
+            ? 'prompt_cache_options'
+            : 'none';
+      expect(hint).toBe(expected);
+    },
+  );
 
   it('threads modelParams through to the provider for any provider', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
