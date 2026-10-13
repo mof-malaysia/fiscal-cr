@@ -61,11 +61,13 @@ export async function extractPullRequestContext(
   }) as unknown as { data: string };
 
   // Fetch full file contents (head version) via the configured source —
-  // local checkout in Action mode, parallel API calls otherwise.
+  // local checkout in Action mode, parallel API calls otherwise. Only files
+  // with a patch: findings need diff lines, so contents of removed files,
+  // pure renames, and diffs GitHub omits would cost tokens for nothing.
   const source =
     options.fileSource ?? new ApiFileSource(octokit, owner, repo, pr.head.sha);
   const contentPaths = files
-    .filter((f) => f.status !== 'removed')
+    .filter((f) => f.status !== 'removed' && f.patch)
     .map((f) => f.filename);
   const fileContents = await source.getContents(contentPaths, config.files.maxFileSize);
 

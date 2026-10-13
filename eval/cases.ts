@@ -874,7 +874,7 @@ const MIXED_01 = buildCase(
 // Case pipeline-01: multi-pass canary (large files, small patches).
 //
 // Full-suite-only case that must run through the grouped multi-pass pipeline
-// rather than the single-shot fast path. Three realistic ~60-70 KB modified
+// rather than the single-shot fast path. Three realistic ~120-140 KB modified
 // modules, each with a small patch that plants one or more defects. Combined
 // estimated context exceeds DEFAULT_CONFIG.pipeline.fastPathThreshold, and
 // every file's estimated cost exceeds the grouper's MIN_GROUP_TOKENS, so the
@@ -944,7 +944,7 @@ export interface ProcessResult {
 }
 `;
 
-const PROCESSORS_COUNT = 150;
+const PROCESSORS_COUNT = 300;
 const PROCESSORS_BASE = `${PROCESSORS_HEADER}\n${generateFunctions(
   PROCESSORS_COUNT,
   (i) => `export async function process${i}(item: Item): Promise<ProcessResult> {
@@ -981,7 +981,7 @@ export interface LedgerEntry {
 }
 `;
 
-const LEDGER_COUNT = 225;
+const LEDGER_COUNT = 450;
 const LEDGER_BASE = `${LEDGER_HEADER}\n${generateFunctions(
   LEDGER_COUNT,
   (i) => `export function postEntry${i}(entry: LedgerEntry): LedgerEntry {
@@ -1021,7 +1021,7 @@ export interface ReconResult {
 }
 `;
 
-const RECON_COUNT = 200;
+const RECON_COUNT = 400;
 const RECON_BASE = `${RECON_HEADER}\n${generateFunctions(
   RECON_COUNT,
   (i) => `export async function reconcile${i}(batch: Batch): Promise<ReconResult> {

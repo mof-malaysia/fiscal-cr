@@ -36,7 +36,11 @@ Uncertainty always chooses a full review.
 
 ## Review execution
 
-The token estimate covers changed patches and file contents. Every call uses
+The token estimate covers changed patches and file contents. Contents load
+only for files with a patch (findings need diff lines), so pure renames and
+diffs GitHub omits add no tokens. Defaults: `fastPathThreshold` and
+`groupTokenBudget` are both 80,000; keeping the threshold at least the group
+budget means multi-pass only runs when a PR needs more than one group. Every call uses
 the model resolved for its stage; see [provider models](provider-models.md).
 
 - **Fast path** (`fast-path.ts`): used when the pipeline is disabled or the

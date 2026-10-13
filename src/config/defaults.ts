@@ -46,17 +46,17 @@ export const DEFAULT_CONFIG: ReviewConfig = {
   files: {
     include: ["**/*"],
     exclude: [...DEFAULT_EXCLUDE_PATTERNS],
-    maxFileSize: 100_000,
+    maxFileSize: 200_000,
   },
   rules: [],
   prompt: {},
   pipeline: {
     enabled: true,
     concurrency: 3,
-    groupTokenBudget: 40_000,
+    groupTokenBudget: 80_000,
     relatedContextBudget: 15_000,
     maxGroups: 8,
-    fastPathThreshold: 25_000,
+    fastPathThreshold: 80_000,
     minConfidence: 0.6,
     maxRetries: 3,
     // maxOutputTokens omitted → resolved per model (see reviewMaxOutputTokens).
