@@ -238,6 +238,35 @@ describe('createPRReview (legacy mode)', () => {
       }),
     );
   });
+  it('labels the model that ran, not the pricing-context (group-review) model', () => {
+    // A fast-path review on Sonnet: costEstimate.model carries the group-review
+    // model (Opus) from the pricing context; models[] records what ran.
+    const body = renderTelemetrySummary({
+      ...result,
+      costEstimate: {
+        usd: 0.0172,
+        source: 'exact',
+        provider: 'anthropic',
+        model: 'claude-opus-5-5',
+        models: [
+          {
+            model: 'anthropic/claude-sonnet-5-5',
+            calls: 1,
+            inputTokens: 2_009,
+            cachedTokens: 0,
+            outputTokens: 1_060,
+            inputUsd: 0.0066,
+            cachedUsd: 0,
+            outputUsd: 0.0106,
+            usd: 0.0172,
+          },
+        ],
+      },
+    }).join('\n');
+
+    expect(body).toContain('**Model:** `anthropic/claude-sonnet-5-5`');
+    expect(body).not.toContain('claude-opus-5-5');
+  });
   it('expands model details when staged reviews use multiple models', () => {
     const body = renderTelemetrySummary({
       ...result,
