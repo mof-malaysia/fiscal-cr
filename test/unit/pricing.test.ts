@@ -47,19 +47,18 @@ describe('resolvePricing', () => {
     });
   });
 
-  it('bills the prompt-cache write premium on top of base input', () => {
+  it('bills cache writes at their price multiplier', () => {
     const pricing = { inputPerMillion: 4, outputPerMillion: 20, cachedInputPerMillion: 0.2 };
     const base = calculateCostBreakdownWithPricing({ input: 1_000_000, output: 0, cached: 0 }, pricing);
     expect(base.inputUsd).toBeCloseTo(4);
-    // 1M written tokens at premium 1 bill at 2x base input; at 0.25, 1.25x.
-    const written = (premium: number) =>
+    const written = (priceMultiplier: number) =>
       calculateCostBreakdownWithPricing(
-        { input: 1_000_000, output: 0, cached: 0, cacheWrite: { tokens: 1_000_000, premium } },
+        { input: 1_000_000, output: 0, cached: 0, cacheWrite: { tokens: 1_000_000, priceMultiplier } },
         pricing,
       ).inputUsd;
-    expect(written(1)).toBeCloseTo(8);
-    expect(written(0.25)).toBeCloseTo(5);
-    expect(written(0)).toBeCloseTo(4);
+    expect(written(2)).toBeCloseTo(8);
+    expect(written(1.25)).toBeCloseTo(5);
+    expect(written(1)).toBeCloseTo(4);
   });
 
   it('prices Claude Opus 5.5 at its own rate, not the claude-opus-5 family', () => {

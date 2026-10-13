@@ -4,95 +4,61 @@ import { isClaudeModel, supportsOpenAIExplicitCache } from '../utils/model-ids.j
 import type { CacheWriteUsage } from './interface.js';
 
 /**
- * Prompt caching for the system prompt, per provider wire format.
+ * Prompt caching for the system prompt.
  *
- * The system prompt depends only on repo config, so it is byte-identical
- * across calls, stages, and PRs; it is the only part of a review request worth
- * a cache write. Every rule about what to send and what writes cost lives
- * here, so adding a provider means adding a style, not editing adapters.
+ * The system prompt depends only on repo config, so it is identical across
+ * calls, stages, and PRs. It is the one part of a review request worth
+ * caching. This module decides what each provider is sent and what its cache
+ * writes cost; the adapters only call it.
  */
 
 export type PromptCacheSetting = NonNullable<ReviewConfig['promptCache']>;
 
 /**
  * How a Chat Completions endpoint is told to cache the system prompt:
- * - `cache-control`: Anthropic-style `cache_control` on the system content
- *   block. OpenRouter forwards it to Anthropic/Gemini/Qwen models.
- * - `openai`: GPT-5.6+ explicit mode — `prompt_cache_options.mode: explicit`
- *   plus a `prompt_cache_breakpoint` on the system block. Implicit mode would
- *   write the whole (per-PR) prompt at 1.25x on every call. The lifetime is
- *   OpenAI's fixed 30m, so `5m`/`1h` both enable it; `off` sends explicit
- *   mode with no breakpoint (no writes). Older models get nothing.
- * - `kimi`: Kimi's `prompt_cache_options: { mode: implicit, ttl }`.
+ * - `cache-control`: Anthropic-style `cache_control` on the system block.
+ *   OpenRouter forwards it to Anthropic, Gemini, and Qwen models.
+ * - `openai`: GPT-5.6+ explicit mode (`prompt_cache_options.mode: explicit`)
+ *   with a `prompt_cache_breakpoint` on the system block. Without it, OpenAI
+ *   caches the whole per-PR prompt at 1.25x on every call. OpenAI's lifetime
+ *   is a fixed 30m, so `5m` and `1h` both just turn it on; `off` keeps
+ *   explicit mode with no breakpoint, so nothing is written.
+ * - `kimi`: `prompt_cache_options: { mode: implicit, ttl }`.
  */
 export type PromptCacheStyle = 'cache-control' | 'openai' | 'kimi';
 
-/** Extra cost of a cache write over base input, as a fraction of the input rate. */
-const WRITE_PREMIUM = {
-  /** Anthropic 5m and OpenAI GPT-5.6+ writes: 1.25x. */
-  standard: 0.25,
-  /** Anthropic and Kimi 1h writes: 2x. */
-  oneHour: 1,
-  /** Writes billed at the plain input rate (Kimi 5m, most automatic caches). */
-  none: 0,
-} as const;
-
-/** The requested lifetime when caching is on; undefined for `off` or unset. */
-function cacheTtl(setting: PromptCacheSetting | undefined): '5m' | '1h' | undefined {
-  return setting === '1h' || setting === '5m' ? setting : undefined;
+/** The lifetime to request, or undefined when caching is off or unset. */
+function ttlOf(setting: PromptCacheSetting | undefined): '5m' | '1h' | undefined {
+  return setting === 'off' ? undefined : setting;
 }
 
-/** Anthropic-style `cache_control` marker for a lifetime. */
-function cacheControl(ttl: '5m' | '1h'): Record<string, string> {
+function cacheControl(ttl: '5m' | '1h') {
   return ttl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
-}
-
-function ttlPremium(ttl: '5m' | '1h' | undefined): number {
-  return ttl === '1h' ? WRITE_PREMIUM.oneHour : WRITE_PREMIUM.standard;
 }
 
 // ---------------------------------------------------------------------------
 // Anthropic Messages API
 
-/** The Messages `system` field: a cached text block, or a plain string when off. */
-export function anthropicSystem(
-  systemText: string,
-  setting: PromptCacheSetting | undefined,
-): string | Array<Record<string, unknown>> {
-  const ttl = cacheTtl(setting);
-  return ttl ? [{ type: 'text', text: systemText, cache_control: cacheControl(ttl) }] : systemText;
+/** The `system` field: a cache-marked text block, or plain text when off. */
+export function anthropicSystem(text: string, setting: PromptCacheSetting | undefined) {
+  const ttl = ttlOf(setting);
+  return ttl ? [{ type: 'text', text, cache_control: cacheControl(ttl) }] : text;
 }
 
-/**
- * Cache writes from Messages API usage. Anthropic splits writes by TTL; older
- * responses omit the split, so their writes count as 5m.
- */
-export function anthropicCacheWrite(usage: {
-  cache_creation_input_tokens?: number | null;
-  cache_creation?: {
-    ephemeral_5m_input_tokens?: number;
-    ephemeral_1h_input_tokens?: number;
-  } | null;
-} | undefined): CacheWriteUsage | undefined {
-  const oneHour = usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0;
-  const fiveMinute = usage?.cache_creation
-    ? usage.cache_creation.ephemeral_5m_input_tokens ?? 0
-    : usage?.cache_creation_input_tokens ?? 0;
-  const tokens = oneHour + fiveMinute;
-  if (tokens <= 0) return undefined;
-  const premium =
-    (fiveMinute * WRITE_PREMIUM.standard + oneHour * WRITE_PREMIUM.oneHour) / tokens;
-  return { tokens, premium };
+/** Anthropic bills 5m writes at 1.25x input and 1h writes at 2x. */
+export function anthropicCacheWrite(
+  fiveMinuteTokens: number,
+  oneHourTokens: number,
+): CacheWriteUsage | undefined {
+  const tokens = fiveMinuteTokens + oneHourTokens;
+  if (tokens === 0) return undefined;
+  return { tokens, priceMultiplier: (fiveMinuteTokens * 1.25 + oneHourTokens * 2) / tokens };
 }
 
 // ---------------------------------------------------------------------------
 // Chat Completions (OpenAI, OpenRouter, Kimi, compatible endpoints)
 
-/** Wrap the system prompt in a text block carrying `marker`. */
-function markSystemPrompt(
-  messages: ChatMessage[],
-  marker: Record<string, unknown>,
-): unknown[] {
+function markSystemPrompt(messages: ChatMessage[], marker: object): unknown[] {
   return messages.map((message) =>
     message.role === 'system' && message.content.length > 0
       ? { role: 'system', content: [{ type: 'text', text: message.content, ...marker }] }
@@ -100,39 +66,35 @@ function markSystemPrompt(
   );
 }
 
-/** Request fields and messages carrying this endpoint's cache hint. */
+/** The request's cache fields (sent before `modelParams`) and its messages. */
 export function chatCacheRequest(
   style: PromptCacheStyle,
   setting: PromptCacheSetting | undefined,
   model: string,
   messages: ChatMessage[],
-): { fields: Record<string, unknown>; messages: unknown[] } {
-  const ttl = cacheTtl(setting);
-  const none = { fields: {}, messages };
-  switch (style) {
-    case 'cache-control':
-      if (!ttl) return none;
-      return { fields: {}, messages: markSystemPrompt(messages, { cache_control: cacheControl(ttl) }) };
-    case 'openai':
-      if (setting === undefined || !supportsOpenAIExplicitCache(model)) return none;
-      return {
-        fields: { prompt_cache_options: { mode: 'explicit' } },
-        messages: ttl
-          ? markSystemPrompt(messages, { prompt_cache_breakpoint: { mode: 'explicit' } })
-          : messages,
-      };
-    case 'kimi':
-      if (!ttl) return none;
-      return { fields: { prompt_cache_options: { mode: 'implicit', ttl } }, messages };
+): { fields: object; messages: unknown[] } {
+  const ttl = ttlOf(setting);
+
+  if (style === 'cache-control' && ttl) {
+    return { fields: {}, messages: markSystemPrompt(messages, { cache_control: cacheControl(ttl) }) };
   }
+  if (style === 'kimi' && ttl) {
+    return { fields: { prompt_cache_options: { mode: 'implicit', ttl } }, messages };
+  }
+  if (style === 'openai' && setting && supportsOpenAIExplicitCache(model)) {
+    const breakpoint = { prompt_cache_breakpoint: { mode: 'explicit' } };
+    return {
+      fields: { prompt_cache_options: { mode: 'explicit' } },
+      messages: ttl ? markSystemPrompt(messages, breakpoint) : messages,
+    };
+  }
+  return { fields: {}, messages };
 }
 
 /**
- * Price reported cache writes (`prompt_tokens_details.cache_write_tokens`).
- * The premium depends on who actually wrote the cache: behind `cache-control`
- * (OpenRouter), Claude writes follow the requested TTL while automatic caches
- * (OpenAI GPT-5.6+ at 1.25x, most others at the input rate) bill their own
- * way. Gemini's storage charge is not modeled.
+ * Price reported cache writes. Behind `cache-control` (OpenRouter), only
+ * Claude writes follow the TTL we asked for; other models cache on their own
+ * terms. Gemini's storage charge is not modeled.
  */
 export function chatCacheWrite(
   style: PromptCacheStyle,
@@ -140,22 +102,16 @@ export function chatCacheWrite(
   model: string,
   tokens: number,
 ): CacheWriteUsage | undefined {
-  if (tokens <= 0) return undefined;
-  const automaticPremium = supportsOpenAIExplicitCache(model)
-    ? WRITE_PREMIUM.standard
-    : WRITE_PREMIUM.none;
-  switch (style) {
-    case 'cache-control':
-      return {
-        tokens,
-        premium: isClaudeModel(model) ? ttlPremium(cacheTtl(setting)) : automaticPremium,
-      };
-    case 'openai':
-      return { tokens, premium: automaticPremium };
-    case 'kimi':
-      return {
-        tokens,
-        premium: cacheTtl(setting) === '1h' ? WRITE_PREMIUM.oneHour : WRITE_PREMIUM.none,
-      };
+  if (tokens === 0) return undefined;
+  const oneHour = ttlOf(setting) === '1h';
+
+  let priceMultiplier: number;
+  if (style === 'kimi') {
+    priceMultiplier = oneHour ? 2 : 1; // Kimi 5m writes cost plain input
+  } else if (style === 'cache-control' && isClaudeModel(model)) {
+    priceMultiplier = oneHour ? 2 : 1.25;
+  } else {
+    priceMultiplier = supportsOpenAIExplicitCache(model) ? 1.25 : 1;
   }
+  return { tokens, priceMultiplier };
 }

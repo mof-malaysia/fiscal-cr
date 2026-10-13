@@ -36,8 +36,8 @@ import {
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 
 // Prove dry mode never creates a live provider: the factory is replaced with a
-// spy that throws when called. Dry main must never call it. SUPPORTED_PROVIDERS
-// stays real so env resolution works.
+// spy that throws when called. Dry main must never call it. The rest of the
+// module (providerOptionsFromConfig) stays real.
 vi.mock('../../src/providers/factory.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../src/providers/factory.js')>();

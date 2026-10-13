@@ -143,17 +143,13 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     const model = params.model ?? this.model;
-    // Prompts below the model's minimum cacheable length are silently not cached.
-    const systemField = system.length > 0
-      ? anthropicSystem(system.join('\n\n'), this.promptCache)
-      : undefined;
     const body = {
       // Operator passthrough is the base layer; managed fields below always win.
       ...this.modelParams,
       model,
       messages,
       max_tokens: params.maxTokens ?? 4_096,
-      ...(systemField !== undefined && { system: systemField }),
+      ...(system.length > 0 && { system: anthropicSystem(system.join('\n\n'), this.promptCache) }),
       ...(params.temperature !== undefined && { temperature: params.temperature }),
     };
 
@@ -193,7 +189,13 @@ export class AnthropicProvider implements LLMProvider {
       (usage?.cache_read_input_tokens ?? 0) +
       (usage?.cache_creation_input_tokens ?? 0);
     const input = (usage?.input_tokens ?? 0) + cached;
-    const cacheWrite = anthropicCacheWrite(usage);
+    // Older responses omit the per-TTL split; their writes count as 5m.
+    const cacheWrite = usage?.cache_creation
+      ? anthropicCacheWrite(
+        usage.cache_creation.ephemeral_5m_input_tokens ?? 0,
+        usage.cache_creation.ephemeral_1h_input_tokens ?? 0,
+      )
+      : anthropicCacheWrite(usage?.cache_creation_input_tokens ?? 0, 0);
     const finishReason = data.stop_reason === 'max_tokens'
       ? 'length'
       : data.stop_reason ?? undefined;

@@ -70,7 +70,7 @@ finish reason (`length` signals truncation).
 `createLLMProvider({ apiKey? | federation?, model, baseUrl?, provider, userAgent?, modelParams?, promptCache?, retry? })`:
 
 - validates against `PROVIDERS` (`src/config/schema.ts`), the single
-  provider list; `SUPPORTED_PROVIDERS` re-exports it
+  provider list
 - requires `baseUrl` for `openai-compatible`
 - takes per-provider behavior from `PROVIDER_DEFAULTS`: base URL
   (`endpoints.ts`), token-cap field, API-key header, default `promptCache`,
@@ -98,10 +98,10 @@ provider option there, not at each call site. The eval pins
   system block; openrouter, openai-compatible), `openai` (GPT-5.6+
   `prompt_cache_options.mode: explicit` + `prompt_cache_breakpoint`; `off` =
   explicit mode, no breakpoint), `kimi` (`prompt_cache_options`).
-- Writes are reported as `usage.cacheWrite = { tokens, premium }`, where
-  `premium` is the extra cost over base input chosen by who wrote the cache
-  (Anthropic 5m and OpenAI GPT-5.6+: 0.25; 1h: 1; Kimi 5m and other automatic
-  caches: 0). `pricing.ts` applies it without knowing TTLs.
+- Writes are reported as `usage.cacheWrite = { tokens, priceMultiplier }`:
+  what a written token costs as a multiple of base input, set by whoever
+  wrote the cache (Anthropic 5m and OpenAI GPT-5.6+: 1.25; 1h: 2; Kimi 5m and
+  other automatic caches: 1). `pricing.ts` applies it without knowing TTLs.
 
 ### Adding a provider
 

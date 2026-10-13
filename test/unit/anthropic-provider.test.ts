@@ -74,7 +74,7 @@ describe('AnthropicProvider', () => {
 
     expect(result).toEqual({
       content: '{"summary":"ok"}',
-      usage: { input: 125, output: 7, cached: 20, cacheWrite: { tokens: 5, premium: 0.25 } },
+      usage: { input: 125, output: 7, cached: 20, cacheWrite: { tokens: 5, priceMultiplier: 1.25 } },
       finishReason: 'length',
     });
   });
@@ -126,7 +126,7 @@ describe('AnthropicProvider', () => {
       input: 1_050,
       output: 1,
       cached: 0,
-      cacheWrite: { tokens: 1_000, premium: 1 },
+      cacheWrite: { tokens: 1_000, priceMultiplier: 2 },
     });
   });
 

@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import type { LLMProvider } from '../src/providers/interface.js';
-import { modelForRole, type ReviewConfig } from '../src/config/schema.js';
+import { modelForRole, PROVIDERS, type ReviewConfig } from '../src/config/schema.js';
 import type { PullRequestContext, ReviewResult } from '../src/types/review.js';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
-import { createLLMProvider, providerOptionsFromConfig, SUPPORTED_PROVIDERS } from '../src/providers/factory.js';
+import { createLLMProvider, providerOptionsFromConfig } from '../src/providers/factory.js';
 import { runReviewPipeline, routeReview } from '../src/pipeline/run-review.js';
 import type { RunReviewOptions } from '../src/pipeline/run-review.js';
 import { UsageTracker } from '../src/pipeline/usage.js';
@@ -99,9 +99,9 @@ export interface EvalEnvConfig {
  */
 export function resolveEvalEnv(env: NodeJS.ProcessEnv): EvalEnvConfig {
   const provider = env.MODEL_PROVIDER || DEFAULT_CONFIG.provider;
-  if (!(SUPPORTED_PROVIDERS as readonly string[]).includes(provider)) {
+  if (!(PROVIDERS as readonly string[]).includes(provider)) {
     throw new Error(
-      `Invalid MODEL_PROVIDER "${provider}". Supported: ${SUPPORTED_PROVIDERS.join(', ')}`,
+      `Invalid MODEL_PROVIDER "${provider}". Supported: ${PROVIDERS.join(', ')}`,
     );
   }
   return {

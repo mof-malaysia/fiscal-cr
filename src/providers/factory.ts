@@ -17,8 +17,6 @@ import {
 import type { LLMProvider } from "./interface.js";
 import { ConfigError } from "../utils/errors.js";
 
-export const SUPPORTED_PROVIDERS = PROVIDERS;
-
 /**
  * Per-provider construction defaults. OpenAI-compatible, OpenRouter, OpenAI,
  * and Kimi use the shared Chat Completions adapter; Anthropic uses its native
@@ -54,9 +52,9 @@ const PROVIDER_DEFAULTS: Record<
     cacheStyle: "openai",
     promptCache: "1h",
   },
-  // Kimi caches implicitly (5m, no write premium). `prompt_cache_options` is
-  // documented for the Open Platform, not the Kimi Code endpoint, so it is
-  // only sent when `promptCache` is set explicitly.
+  // Kimi caches implicitly (5m, writes at plain input price).
+  // `prompt_cache_options` is documented for the Open Platform, not the Kimi
+  // Code endpoint, so it is only sent when `promptCache` is set explicitly.
   kimi: { baseUrl: KIMI_API_BASE_URL, cacheStyle: "kimi" },
   anthropic: {
     baseUrl: ANTHROPIC_API_BASE_URL,
@@ -68,12 +66,12 @@ const PROVIDER_DEFAULTS: Record<
 };
 
 function parseProvider(provider: string): ReviewConfig["provider"] {
-  if ((SUPPORTED_PROVIDERS as readonly string[]).includes(provider)) {
+  if ((PROVIDERS as readonly string[]).includes(provider)) {
     return provider as ReviewConfig["provider"];
   }
 
   throw new ConfigError(
-    `Invalid provider: "${provider}". Supported providers: ${SUPPORTED_PROVIDERS.join(", ")}`,
+    `Invalid provider: "${provider}". Supported providers: ${PROVIDERS.join(", ")}`,
   );
 }
 

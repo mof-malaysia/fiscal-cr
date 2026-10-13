@@ -263,11 +263,10 @@ export async function resolvePricingAsync(
 ): Promise<PricingResolution> {
   const local = resolvePricing(context);
   // The openrouter provider may leave baseUrl unset and use the default.
-  const routerBaseUrl = isOpenRouter(context.baseUrl)
-    ? context.baseUrl
-    : context.provider?.trim().toLowerCase() === 'openrouter'
-      ? OPENROUTER_API_BASE_URL
-      : undefined;
+  let routerBaseUrl = context.baseUrl;
+  if (!isOpenRouter(routerBaseUrl)) {
+    routerBaseUrl = context.provider === 'openrouter' ? OPENROUTER_API_BASE_URL : undefined;
+  }
   if (
     local.source !== 'fallback'
     || !context.model
@@ -326,9 +325,11 @@ export function calculateCostBreakdownWithPricing(
 ): TokenCostBreakdown {
   const rates = pricingForUsage(usage, pricing);
   const uncachedInput = Math.max(0, usage.input - usage.cached);
-  // Cache writes are already in `input` at the base rate; add only the premium.
-  const writePremiumTokens = (usage.cacheWrite?.tokens ?? 0) * (usage.cacheWrite?.premium ?? 0);
-  const inputUsd = ((uncachedInput + writePremiumTokens) / 1_000_000) * rates.inputPerMillion;
+  // Cache writes are already in `input` at the base price; add what they cost on top.
+  const writeSurchargeTokens = usage.cacheWrite
+    ? usage.cacheWrite.tokens * (usage.cacheWrite.priceMultiplier - 1)
+    : 0;
+  const inputUsd = ((uncachedInput + writeSurchargeTokens) / 1_000_000) * rates.inputPerMillion;
   const cachedUsd = (usage.cached / 1_000_000) * rates.cachedInputPerMillion;
   const outputUsd = (usage.output / 1_000_000) * rates.outputPerMillion;
   return {
