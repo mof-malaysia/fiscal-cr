@@ -5,7 +5,14 @@ function tableCell(value: string): string {
   return value.replace(/[|\r\n]/g, (character) => (character === '|' ? '\\|' : ' '));
 }
 
+/**
+ * The model that actually ran. `costEstimate.model` is only the pricing
+ * context's model (the group-review stage), so a fast-path review on another
+ * model would be mislabeled; the per-model breakdown records what ran.
+ */
 function displayModel(result: ReviewResult): string | undefined {
+  const ran = result.costEstimate?.models ?? [];
+  if (ran.length === 1) return ran[0].model;
   const model = result.costEstimate?.model;
   if (!model) return undefined;
   const provider = result.costEstimate?.provider;
