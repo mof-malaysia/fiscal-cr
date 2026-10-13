@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { extractPullRequestContext } from '../../src/github/pulls.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
-import type { FileSource } from '../../src/review/file-source.js';
+import type { FileContentSource } from '../../src/review/file-source.js';
 
 function octokitWithFiles(files: Array<Record<string, unknown>>) {
   return {
@@ -16,16 +16,16 @@ function octokitWithFiles(files: Array<Record<string, unknown>>) {
   };
 }
 
-function recordingSource(): FileSource & { requested: string[] } {
+function recordingSource(): FileContentSource & { requested: string[] } {
   const requested: string[] = [];
   return {
     requested,
     isLocal: false,
-    getContents: vi.fn(async (paths: string[]) => {
+    getContents: async (paths) => {
       requested.push(...paths);
       return new Map(paths.map((p) => [p, 'content']));
-    }),
-  } as FileSource & { requested: string[] };
+    },
+  };
 }
 
 describe('extractPullRequestContext', () => {
