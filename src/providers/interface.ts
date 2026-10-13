@@ -4,6 +4,12 @@ export interface LLMTokenUsage {
   input: number;
   output: number;
   cached: number;
+  /**
+   * Prompt-cache write tokens (already counted in `input`), split by TTL so
+   * cost reporting can bill the write premium (1.25x for 5m, 2x for 1h).
+   */
+  cacheWrite5m?: number;
+  cacheWrite1h?: number;
 }
 
 export interface LLMCompletionResponse {

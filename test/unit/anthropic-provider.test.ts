@@ -37,6 +37,7 @@ describe('AnthropicProvider', () => {
       baseUrl: 'https://api.anthropic.com/v1/',
       userAgent: 'FiscalCR-Test/1.0',
       modelParams: { top_p: 0.9, max_tokens: 1 },
+      promptCache: '1h',
     });
     const result = await provider.chatCompletion({
       messages: [
@@ -64,16 +65,64 @@ describe('AnthropicProvider', () => {
     expect(body.max_tokens).not.toBe(1);
     expect(body.top_p).toBe(0.9);
     expect(body.temperature).toBe(0.3);
-    expect(body.system).toContain('You are a code reviewer.');
-    expect(body.system).toContain('single valid JSON object');
+    expect(body.system).toHaveLength(1);
+    expect(body.system[0].text).toContain('You are a code reviewer.');
+    expect(body.system[0].text).toContain('single valid JSON object');
+    expect(body.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
     expect(body.messages).toEqual([{ role: 'user', content: 'Review this change.' }]);
     expect(body.response_format).toBeUndefined();
 
     expect(result).toEqual({
       content: '{"summary":"ok"}',
-      usage: { input: 125, output: 7, cached: 20 },
+      usage: { input: 125, output: 7, cached: 20, cacheWrite5m: 5 },
       finishReason: 'length',
     });
+  });
+
+  it.each([
+    ['5m', [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }]],
+    ['off', 'sys'],
+  ] as const)('honors promptCache=%s for the system prompt', async (promptCache, expected) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      response({ content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1 } }),
+    );
+    const provider = new AnthropicProvider({
+      auth: apiKeyAuth('test-key'),
+      model: 'claude-sonnet-5-5',
+      baseUrl: 'https://api.anthropic.com/v1',
+      promptCache,
+    });
+    await provider.chatCompletion({
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'hi' },
+      ],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.system).toEqual(expected);
+  });
+
+  it('reports cache writes split by TTL', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      response({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: {
+          input_tokens: 50,
+          cache_creation_input_tokens: 1_000,
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1_000 },
+          output_tokens: 1,
+        },
+      }),
+    );
+    const provider = new AnthropicProvider({
+      auth: apiKeyAuth('test-key'),
+      model: 'claude-opus-5-5',
+      baseUrl: 'https://api.anthropic.com/v1',
+    });
+    const result = await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(result.usage).toEqual({ input: 1_050, output: 1, cached: 0, cacheWrite1h: 1_000 });
   });
 
   it('sends a per-call model override in the request payload', async () => {

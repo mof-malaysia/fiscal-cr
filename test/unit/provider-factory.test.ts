@@ -64,6 +64,35 @@ describe('provider factory', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/v1/messages');
   });
 
+  it.each([
+    [undefined, [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral', ttl: '1h' } }]],
+    ['5m', [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }]],
+    ['off', 'sys'],
+  ] as const)(
+    'applies the Anthropic prompt-cache default unless overridden (promptCache=%s)',
+    async (promptCache, expected) => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), { status: 200 }),
+      );
+      const provider = createLLMProvider({
+        apiKey: 'test-key',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5-5',
+        promptCache,
+      });
+
+      await provider.chatCompletion({
+        messages: [
+          { role: 'system', content: 'sys' },
+          { role: 'user', content: 'hi' },
+        ],
+      });
+
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      expect(body.system).toEqual(expected);
+    },
+  );
+
 
   it('threads modelParams through to the provider for any provider', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(

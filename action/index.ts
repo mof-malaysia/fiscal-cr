@@ -138,6 +138,7 @@ async function run(): Promise<void> {
       baseUrl: config.baseUrl,
       userAgent: config.userAgent,
       modelParams: config.modelParams,
+      promptCache: config.promptCache,
     });
 
     // Run review

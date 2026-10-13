@@ -77,6 +77,14 @@ export const reviewConfigSchema = z.object({
     })
     .passthrough()
     .optional(),
+  /**
+   * Prompt-cache lifetime for the (config-stable) system prompt. `1h` costs
+   * 2x base input per write but survives gaps between pushes; `5m` costs
+   * 1.25x per write; `off` sends no cache breakpoint. Omitted → the provider
+   * default (`1h` for anthropic). Providers that cache automatically
+   * (OpenAI-compatible, OpenAI, Kimi) ignore it.
+   */
+  promptCache: z.enum(["1h", "5m", "off"]).optional(),
   /** Enables opt-in prompt optimizations that may change between releases. */
   experimental: z.boolean().default(false),
 

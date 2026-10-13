@@ -26,6 +26,8 @@ const PROVIDER_DEFAULTS: Record<
     completionTokenParam?: "max_completion_tokens";
     /** How a static API key is sent; defaults to `Authorization: Bearer`. */
     apiKeyAuth?: (apiKey: string) => RequestAuth;
+    /** System-prompt cache lifetime when `promptCache` is not configured. */
+    promptCache?: ReviewConfig["promptCache"];
   }
 > = {
   "openai-compatible": {},
@@ -37,6 +39,9 @@ const PROVIDER_DEFAULTS: Record<
   anthropic: {
     baseUrl: ANTHROPIC_API_BASE_URL,
     apiKeyAuth: anthropicApiKeyAuth,
+    // Caching is opt-in on the Messages API. One review fans out into several
+    // calls sharing a system prompt, and pushes often land within the hour.
+    promptCache: "1h",
   },
 };
 
@@ -80,6 +85,8 @@ export function createLLMProvider(config: {
   userAgent?: string;
   /** Provider-native request fields merged into every call. */
   modelParams?: Record<string, unknown>;
+  /** System-prompt cache lifetime. Omitted → the provider default. */
+  promptCache?: ReviewConfig["promptCache"];
   retry?: ResilientProviderOptions;
 }): LLMProvider {
   const provider = parseProvider(config.provider);
@@ -102,6 +109,7 @@ export function createLLMProvider(config: {
         baseUrl,
         userAgent: config.userAgent,
         modelParams: config.modelParams,
+        promptCache: config.promptCache ?? defaults.promptCache,
       }),
       config.retry,
     );

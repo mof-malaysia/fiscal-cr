@@ -312,13 +312,21 @@ export interface TokenCostBreakdown {
   totalUsd: number;
 }
 
+/** Extra cost over base input for a cache write, as a fraction of the input rate. */
+const CACHE_WRITE_PREMIUM_5M = 0.25;
+const CACHE_WRITE_PREMIUM_1H = 1;
+
 export function calculateCostBreakdownWithPricing(
-  usage: { input: number; output: number; cached: number },
+  usage: { input: number; output: number; cached: number; cacheWrite5m?: number; cacheWrite1h?: number },
   pricing: TokenPricing,
 ): TokenCostBreakdown {
   const rates = pricingForUsage(usage, pricing);
   const uncachedInput = Math.max(0, usage.input - usage.cached);
-  const inputUsd = (uncachedInput / 1_000_000) * rates.inputPerMillion;
+  // Cache writes are already in `input` at the base rate; add only the premium.
+  const writePremiumTokens =
+    (usage.cacheWrite5m ?? 0) * CACHE_WRITE_PREMIUM_5M +
+    (usage.cacheWrite1h ?? 0) * CACHE_WRITE_PREMIUM_1H;
+  const inputUsd = ((uncachedInput + writePremiumTokens) / 1_000_000) * rates.inputPerMillion;
   const cachedUsd = (usage.cached / 1_000_000) * rates.cachedInputPerMillion;
   const outputUsd = (usage.output / 1_000_000) * rates.outputPerMillion;
   return {
@@ -331,7 +339,7 @@ export function calculateCostBreakdownWithPricing(
 
 
 export function calculateCostWithPricing(
-  usage: { input: number; output: number; cached: number },
+  usage: { input: number; output: number; cached: number; cacheWrite5m?: number; cacheWrite1h?: number },
   pricing: TokenPricing,
 ): number {
   return calculateCostBreakdownWithPricing(usage, pricing).totalUsd;

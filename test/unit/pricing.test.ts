@@ -47,6 +47,21 @@ describe('resolvePricing', () => {
     });
   });
 
+  it('bills the prompt-cache write premium by TTL on top of base input', () => {
+    const pricing = { inputPerMillion: 4, outputPerMillion: 20, cachedInputPerMillion: 0.2 };
+    const base = calculateCostBreakdownWithPricing({ input: 1_000_000, output: 0, cached: 0 }, pricing);
+    expect(base.inputUsd).toBeCloseTo(4);
+    // 1M tokens written with a 1h TTL bill at 2x base input; 5m at 1.25x.
+    expect(
+      calculateCostBreakdownWithPricing({ input: 1_000_000, output: 0, cached: 0, cacheWrite1h: 1_000_000 }, pricing)
+        .inputUsd,
+    ).toBeCloseTo(8);
+    expect(
+      calculateCostBreakdownWithPricing({ input: 1_000_000, output: 0, cached: 0, cacheWrite5m: 1_000_000 }, pricing)
+        .inputUsd,
+    ).toBeCloseTo(5);
+  });
+
   it('prices Claude Opus 5.5 at its own rate, not the claude-opus-5 family', () => {
     expect(resolvePricing({ provider: 'anthropic', model: 'claude-opus-5-5' })).toMatchObject({
       matchedModel: 'claude-opus-5-5',
