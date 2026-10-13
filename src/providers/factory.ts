@@ -2,7 +2,8 @@ import type { ReviewConfig } from "../config/schema.js";
 import { AnthropicProvider, anthropicApiKeyAuth } from "./anthropic.js";
 import { bearerAuth, type RequestAuth } from "./auth.js";
 import { createFederatedAuth, type FederationConfig } from "./federation.js";
-import { OpenAICompatibleProvider } from "./openai-compatible.js";
+import { OpenAICompatibleProvider, type PromptCacheStyle } from "./openai-compatible.js";
+import { isOpenRouter } from "../utils/pricing.js";
 import {
   ResilientProvider,
   type ResilientProviderOptions,
@@ -28,14 +29,20 @@ const PROVIDER_DEFAULTS: Record<
     apiKeyAuth?: (apiKey: string) => RequestAuth;
     /** System-prompt cache lifetime when `promptCache` is not configured. */
     promptCache?: ReviewConfig["promptCache"];
+    /** How a Chat Completions endpoint is told to cache; see `PromptCacheStyle`. */
+    cacheStyle?: PromptCacheStyle;
   }
 > = {
-  "openai-compatible": {},
+  "openai-compatible": { cacheStyle: "cache-control" },
   openai: {
     baseUrl: OPENAI_API_BASE_URL,
     completionTokenParam: "max_completion_tokens",
+    cacheStyle: "automatic",
   },
-  kimi: { baseUrl: KIMI_API_BASE_URL },
+  // Kimi caches implicitly (5m, no write premium). `prompt_cache_options` is
+  // documented for the Open Platform, not the Kimi Code endpoint, so it is
+  // only sent when `promptCache` is set explicitly.
+  kimi: { baseUrl: KIMI_API_BASE_URL, cacheStyle: "kimi" },
   anthropic: {
     baseUrl: ANTHROPIC_API_BASE_URL,
     apiKeyAuth: anthropicApiKeyAuth,
@@ -44,6 +51,19 @@ const PROVIDER_DEFAULTS: Record<
     promptCache: "1h",
   },
 };
+
+/**
+ * Cache lifetime when `promptCache` is not configured. OpenRouter fronts
+ * models (Anthropic, Gemini, Qwen) that only cache with an explicit
+ * breakpoint; other compatible endpoints get no hint unless configured.
+ */
+function defaultPromptCache(
+  provider: ReviewConfig["provider"],
+  baseUrl: string,
+): ReviewConfig["promptCache"] {
+  if (provider === "openai-compatible") return isOpenRouter(baseUrl) ? "1h" : undefined;
+  return PROVIDER_DEFAULTS[provider].promptCache;
+}
 
 function parseProvider(provider: string): ReviewConfig["provider"] {
   if ((SUPPORTED_PROVIDERS as readonly string[]).includes(provider)) {
@@ -100,6 +120,7 @@ export function createLLMProvider(config: {
   }
 
   const auth = resolveAuth(config, provider, baseUrl);
+  const promptCache = config.promptCache ?? defaultPromptCache(provider, baseUrl);
 
   if (provider === "anthropic") {
     return new ResilientProvider(
@@ -109,7 +130,7 @@ export function createLLMProvider(config: {
         baseUrl,
         userAgent: config.userAgent,
         modelParams: config.modelParams,
-        promptCache: config.promptCache ?? defaults.promptCache,
+        promptCache,
       }),
       config.retry,
     );
@@ -122,6 +143,8 @@ export function createLLMProvider(config: {
     userAgent: config.userAgent,
     completionTokenParam: defaults.completionTokenParam,
     modelParams: config.modelParams,
+    cacheStyle: defaults.cacheStyle,
+    promptCache,
   });
 
   return new ResilientProvider(inner, config.retry);

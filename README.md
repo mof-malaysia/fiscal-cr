@@ -280,7 +280,7 @@ baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
 # modelParams:
 #   reasoning_effort: medium # provider-native fields; pipeline fields are stripped
-# promptCache: 1h # system-prompt cache: 1h, 5m, or off (default: per provider; anthropic → 1h)
+# promptCache: 1h # system-prompt cache: 1h, 5m, or off (default: 1h for anthropic and OpenRouter; kimi/openai cache automatically)
 experimental: false # opt in to prompt optimizations that may change between releases
 
 review:

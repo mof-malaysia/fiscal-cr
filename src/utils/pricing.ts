@@ -149,7 +149,8 @@ function lookup(
   return { pricing: table[family], source: 'family', matchedModel: family };
 }
 
-function isOpenRouter(baseUrl: string | undefined): boolean {
+/** True when the base URL points at OpenRouter. */
+export function isOpenRouter(baseUrl: string | undefined): boolean {
   if (!baseUrl) return false;
   try {
     const hostname = new URL(baseUrl).hostname.toLowerCase();

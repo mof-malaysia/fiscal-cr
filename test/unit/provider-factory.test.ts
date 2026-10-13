@@ -94,6 +94,38 @@ describe('provider factory', () => {
   );
 
 
+  it.each([
+    ['openai-compatible', 'https://openrouter.ai/api/v1', undefined, 'cache_control'],
+    ['openai-compatible', 'https://openrouter.ai/api/v1', 'off', 'none'],
+    ['openai-compatible', 'https://llm.example.com/v1', undefined, 'none'],
+    ['openai-compatible', 'https://llm.example.com/v1', '1h', 'cache_control'],
+    ['kimi', undefined, undefined, 'none'],
+    ['kimi', undefined, '1h', 'prompt_cache_options'],
+    ['openai', undefined, '1h', 'none'],
+  ] as const)(
+    'resolves the prompt-cache hint for %s at %s (promptCache=%s → %s)',
+    async (provider, baseUrl, promptCache, expected) => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }),
+      );
+      const llm = createLLMProvider({ apiKey: 'test-key', provider, baseUrl, model: 'm', promptCache });
+
+      await llm.chatCompletion({
+        messages: [
+          { role: 'system', content: 'sys' },
+          { role: 'user', content: 'hi' },
+        ],
+      });
+
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      const hasCacheControl = Array.isArray(body.messages[0].content);
+      const hasKimiOptions = body.prompt_cache_options !== undefined;
+      expect(
+        hasCacheControl ? 'cache_control' : hasKimiOptions ? 'prompt_cache_options' : 'none',
+      ).toBe(expected);
+    },
+  );
+
   it('threads modelParams through to the provider for any provider', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async () =>
