@@ -47,6 +47,21 @@ describe('provider factory', () => {
     expect(provider).toBeTruthy();
     expect(typeof provider.chatCompletion).toBe('function');
   });
+  it('creates the openrouter provider against OpenRouter by default', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }),
+    );
+    const provider = createLLMProvider({
+      apiKey: 'test-key',
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-5-5',
+    });
+
+    await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://openrouter.ai/api/v1/chat/completions');
+  });
+
   it('creates the Anthropic provider with its native Messages endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
@@ -95,20 +110,23 @@ describe('provider factory', () => {
 
 
   it.each([
-    ['openai-compatible', 'https://openrouter.ai/api/v1', undefined, 'cache_control'],
-    ['openai-compatible', 'https://openrouter.ai/api/v1', 'off', 'none'],
-    ['openai-compatible', 'https://llm.example.com/v1', undefined, 'none'],
-    ['openai-compatible', 'https://llm.example.com/v1', '1h', 'cache_control'],
-    ['kimi', undefined, undefined, 'none'],
-    ['kimi', undefined, '1h', 'prompt_cache_options'],
-    ['openai', undefined, '1h', 'none'],
+    ['openrouter', 'anthropic/claude-sonnet-5-5', undefined, 'cache_control'],
+    ['openrouter', 'anthropic/claude-sonnet-5-5', 'off', 'none'],
+    // No URL sniffing: OpenRouter via openai-compatible caches only when asked.
+    ['openai-compatible', 'anthropic/claude-sonnet-5-5', undefined, 'none'],
+    ['openai-compatible', 'anthropic/claude-sonnet-5-5', '1h', 'cache_control'],
+    ['kimi', 'k3', undefined, 'none'],
+    ['kimi', 'k3', '1h', 'prompt_cache_options'],
+    ['openai', 'gpt-6.1-sol', undefined, 'breakpoint'],
+    ['openai', 'gpt-6.1-sol', '5m', 'breakpoint'],
   ] as const)(
-    'resolves the prompt-cache hint for %s at %s (promptCache=%s → %s)',
-    async (provider, baseUrl, promptCache, expected) => {
+    'resolves the prompt-cache hint for %s/%s (promptCache=%s → %s)',
+    async (provider, model, promptCache, expected) => {
+      const baseUrl = provider === 'openai-compatible' ? 'https://openrouter.ai/api/v1' : undefined;
       const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }),
       );
-      const llm = createLLMProvider({ apiKey: 'test-key', provider, baseUrl, model: 'm', promptCache });
+      const llm = createLLMProvider({ apiKey: 'test-key', provider, baseUrl, model, promptCache });
 
       await llm.chatCompletion({
         messages: [
@@ -118,11 +136,15 @@ describe('provider factory', () => {
       });
 
       const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-      const hasCacheControl = Array.isArray(body.messages[0].content);
-      const hasKimiOptions = body.prompt_cache_options !== undefined;
-      expect(
-        hasCacheControl ? 'cache_control' : hasKimiOptions ? 'prompt_cache_options' : 'none',
-      ).toBe(expected);
+      const systemBlock = Array.isArray(body.messages[0].content) ? body.messages[0].content[0] : {};
+      const hint = systemBlock.cache_control
+        ? 'cache_control'
+        : systemBlock.prompt_cache_breakpoint
+          ? 'breakpoint'
+          : body.prompt_cache_options
+            ? 'prompt_cache_options'
+            : 'none';
+      expect(hint).toBe(expected);
     },
   );
 

@@ -76,7 +76,7 @@ The Action uses the built-in `GITHUB_TOKEN`; `pull-requests: write` is enough.
 | `anthropic_workspace_id` | No | Rule's sole workspace | Workspace (`wrkspc_...`); needed only if the rule spans several |
 | `oidc_audience` | No | Provider default (`https://api.anthropic.com`) | Audience of the GitHub OIDC token |
 | `github_token` | No       | `${{ github.token }}`           | GitHub token for API access                                       |
-| `provider`     | No       | Repo config or built-in default | `openai-compatible`, `kimi`, `openai`, or `anthropic`             |
+| `provider`     | No       | Repo config or built-in default | `openai-compatible`, `openrouter`, `kimi`, `openai`, or `anthropic` |
 | `model`        | No       | Repo config or built-in default | Model name; overrides the four core review stages                 |
 | `model_params` | No       | Repo config                     | JSON object of provider-native fields merged into each model call  |
 | `base_url`     | No       | Repo config                     | Provider base URL override                                        |
@@ -181,7 +181,9 @@ returns an opaque `401`; the reason is listed in the Console under
   routing prevents it from redirecting requests that contain the API key.
 - Without a `model` override, stage models follow the effective provider and
   the FiscalCR release (see [Models](#models)).
-- `openai-compatible` requires `base_url`. `anthropic` uses the native
+- `openai-compatible` requires `base_url`. `openrouter` defaults to
+  `https://openrouter.ai/api/v1` and requires `model` (an OpenRouter ID such
+  as `anthropic/claude-sonnet-5.5`). `anthropic` uses the native
   Messages API, defaults to `https://api.anthropic.com/v1`, and sends keys in
   `x-api-key` (or a federated `Authorization: Bearer` token).
 
@@ -236,7 +238,7 @@ pnpm dev
 | ----------------------- | -------- | ------------------------------------------- |
 | `API_KEY`               | Yes      | Provider API key                            |
 | `FISCALCR_API_KEY`      | Optional | Alternate API key env name                  |
-| `MODEL_PROVIDER`        | Optional | Provider name (`openai-compatible`, `kimi`, `openai`, or `anthropic`) |
+| `MODEL_PROVIDER`        | Optional | Provider name (`openai-compatible`, `openrouter`, `kimi`, `openai`, or `anthropic`) |
 | `MODEL`                 | Optional | Model name; `FISCALCR_MODEL` is an alias    |
 | `BASE_URL`              | Optional | Operator-controlled URL; `FISCALCR_BASE_URL` is an alias |
 | `LLM_USER_AGENT`        | Optional | Custom User-Agent for whitelisted endpoints |
@@ -280,7 +282,7 @@ baseUrl: https://your-llm-provider.com/v1
 # userAgent: MyCodingAgent/2.1.0   # only for endpoints that whitelist clients
 # modelParams:
 #   reasoning_effort: medium # provider-native fields; pipeline fields are stripped
-# promptCache: 1h # system-prompt cache: 1h, 5m, or off (default: 1h for anthropic and OpenRouter; kimi/openai cache automatically)
+# promptCache: 1h # system-prompt cache: 1h, 5m, or off (default per provider; see "Prompt caching")
 experimental: false # opt in to prompt optimizations that may change between releases
 
 review:
@@ -380,7 +382,7 @@ Models in this release:
 Release-tuned request params: `gpt-6-luna`: `reasoning_effort: max`; `gpt-6.1-sol`: `reasoning_effort: medium`.
 <!-- provider-models:end -->
 
-`openai-compatible` has no release models and requires `model`.
+`openai-compatible` and `openrouter` have no release models and require `model`.
 
 #### Overriding models (advanced)
 
@@ -461,6 +463,26 @@ The visualization call uses `review.visualize.maxOutputTokens` as its
 independent cap. Generation requires the configured file and line thresholds,
 uses bounded patch evidence, and is nonfatal. Delta reviews keep the prior
 full-review visual.
+
+## Prompt caching
+
+The system prompt depends only on repository config, so it repeats across
+calls, stages, and pull requests. FiscalCR marks it for caching in each
+provider's own format. `promptCache` (`1h`, `5m`, or `off`) overrides the
+provider default:
+
+| Provider | What is sent | Default |
+| --- | --- | --- |
+| `anthropic` | `cache_control` on the system prompt | `1h` |
+| `openrouter` | `cache_control` on the system prompt (used by Anthropic, Gemini, and Qwen models; others cache automatically) | `1h` |
+| `openai` | GPT-5.6+: `prompt_cache_options.mode: explicit` plus a breakpoint after the system prompt. OpenAI's lifetime is a fixed 30 minutes, so `1h` and `5m` both enable it; `off` writes nothing. Older models: nothing. | on |
+| `kimi` | `prompt_cache_options` (`mode: implicit`, your TTL) | none (Kimi caches implicitly for 5 minutes) |
+| `openai-compatible` | `cache_control` on the system prompt | none |
+
+Cache writes cost more than plain input (1.25× for 5-minute and OpenAI
+writes, 2× for 1-hour writes), and the cost estimate includes that premium.
+A 1-hour cache pays off at about two calls an hour that share a system
+prompt; for low-traffic repositories set `promptCache: 5m` or `off`.
 
 ## Cost model
 

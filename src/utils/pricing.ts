@@ -149,8 +149,7 @@ function lookup(
   return { pricing: table[family], source: 'family', matchedModel: family };
 }
 
-/** True when the base URL points at OpenRouter. */
-export function isOpenRouter(baseUrl: string | undefined): boolean {
+function isOpenRouter(baseUrl: string | undefined): boolean {
   if (!baseUrl) return false;
   try {
     const hostname = new URL(baseUrl).hostname.toLowerCase();
@@ -261,13 +260,19 @@ export async function resolvePricingAsync(
   context: PricingContext = {},
 ): Promise<PricingResolution> {
   const local = resolvePricing(context);
+  // The openrouter provider may leave baseUrl unset and use the default.
+  const routerBaseUrl = isOpenRouter(context.baseUrl)
+    ? context.baseUrl
+    : context.provider?.trim().toLowerCase() === 'openrouter'
+      ? 'https://openrouter.ai/api/v1'
+      : undefined;
   if (
     local.source !== 'fallback'
     || !context.model
-    || !isOpenRouter(context.baseUrl)
+    || !routerBaseUrl
   ) return local;
 
-  const endpoint = openRouterModelUrl(context.baseUrl, context.model);
+  const endpoint = openRouterModelUrl(routerBaseUrl, context.model);
   if (!endpoint) return local;
 
   const cached = openRouterPricingCache.get(endpoint);

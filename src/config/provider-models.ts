@@ -6,8 +6,8 @@ import type { ModelRole } from "./schema.js";
  * models this version's prompts and harness were tuned against. Upgrading
  * models means editing this map and cutting a minor release.
  *
- * `openai-compatible` has no entry (any model works over the compatible
- * endpoint), so it must set `model` explicitly.
+ * `openai-compatible` and `openrouter` have no entry (any model works over
+ * those endpoints), so they must set `model` explicitly.
  */
 
 /** Stage model assignment for one provider; keys mirror `ModelRole`. */
@@ -55,8 +55,8 @@ export function releaseParamsForModel(model: string): Record<string, unknown> {
 }
 
 /**
- * Release-pinned stage map for a provider. `openai-compatible` and unknown
- * providers return `undefined`.
+ * Release-pinned stage map for a provider. `openai-compatible`, `openrouter`,
+ * and unknown providers return `undefined`.
  */
 export function defaultModelsForProvider(provider: string): ModelStageMap | undefined {
   return Object.hasOwn(PROVIDER_DEFAULT_MODELS, provider)

@@ -371,20 +371,45 @@ describe('OpenAICompatibleProvider', () => {
     });
 
     it.each([
-      ['automatic', '1h'],
-      ['cache-control', 'off'],
-      ['cache-control', undefined],
-    ] as const)('sends no cache hint for cacheStyle=%s, promptCache=%s', async (cacheStyle, promptCache) => {
-      const { body } = await send({ cacheStyle, promptCache });
+      ['cache-control', 'off', 'anthropic/claude-sonnet-5-5'],
+      ['cache-control', undefined, 'anthropic/claude-sonnet-5-5'],
+      ['kimi', 'off', 'kimi-k3'],
+      ['openai', undefined, 'gpt-6.1-sol'],
+      ['openai', '1h', 'gpt-5.5'], // pre-5.6 models reject the explicit-cache fields
+      ['openai', '1h', 'gpt-4.1'],
+    ] as const)(
+      'sends no cache hint for cacheStyle=%s, promptCache=%s, model=%s',
+      async (cacheStyle, promptCache, model) => {
+        const { body } = await send({ cacheStyle, promptCache, model });
 
+        expect(body.messages[0]).toEqual({ role: 'system', content: 'sys' });
+        expect(body.prompt_cache_options).toBeUndefined();
+      },
+    );
+
+    it.each(['gpt-5.6-terra', 'gpt-6-luna', 'gpt-6.1-sol'])(
+      'uses explicit OpenAI breakpoints on %s and bills writes at 1.25x',
+      async (model) => {
+        const { body, result } = await send({ cacheStyle: 'openai', promptCache: '1h', model });
+
+        expect(body.prompt_cache_options).toEqual({ mode: 'explicit' });
+        expect(body.messages).toEqual([
+          {
+            role: 'system',
+            content: [{ type: 'text', text: 'sys', prompt_cache_breakpoint: { mode: 'explicit' } }],
+          },
+          { role: 'user', content: 'hi' },
+        ]);
+        expect(result.usage).toMatchObject({ cacheWrite5m: 1_000 });
+        expect(result.usage.cacheWrite1h).toBeUndefined();
+      },
+    );
+
+    it('turns OpenAI implicit caching off with explicit mode and no breakpoint', async () => {
+      const { body } = await send({ cacheStyle: 'openai', promptCache: 'off', model: 'gpt-6.1-sol' });
+
+      expect(body.prompt_cache_options).toEqual({ mode: 'explicit' });
       expect(body.messages[0]).toEqual({ role: 'system', content: 'sys' });
-      expect(body.prompt_cache_options).toBeUndefined();
-    });
-
-    it('bills automatic-cache writes (OpenAI GPT-5.6+) at the 1.25x premium', async () => {
-      const { result } = await send({ cacheStyle: 'automatic' });
-
-      expect(result.usage).toMatchObject({ cacheWrite5m: 1_000 });
     });
   });
 });

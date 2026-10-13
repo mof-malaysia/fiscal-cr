@@ -36,19 +36,46 @@ export interface OpenAICompatibleProviderConfig {
    */
   modelParams?: Record<string, unknown>;
   /**
-   * How this endpoint is told to cache the system prompt:
-   * - `cache-control`: Anthropic-style `cache_control` on the system content
-   *   block (OpenRouter for Anthropic/Gemini/Qwen models, LiteLLM, …).
-   * - `kimi`: Kimi's `prompt_cache_options` request field.
-   * - `automatic`: the endpoint caches on its own (OpenAI); nothing is sent.
-   * Defaults to `automatic`.
+   * How this endpoint is told to cache the system prompt. See
+   * `PromptCacheStyle`. Defaults to `cache-control`.
    */
   cacheStyle?: PromptCacheStyle;
   /** System-prompt cache lifetime. Omitted → nothing is sent. */
   promptCache?: ReviewConfig['promptCache'];
 }
 
-export type PromptCacheStyle = 'cache-control' | 'kimi' | 'automatic';
+/**
+ * How a Chat Completions endpoint is told to cache the system prompt:
+ * - `cache-control`: Anthropic-style `cache_control` on the system content
+ *   block. OpenRouter forwards it to Anthropic/Gemini/Qwen models.
+ * - `openai`: GPT-5.6+ explicit mode — `prompt_cache_options.mode: explicit`
+ *   plus a `prompt_cache_breakpoint` on the system block. Implicit mode would
+ *   write the whole (per-PR) prompt at 1.25x on every call. The lifetime is
+ *   OpenAI's fixed 30m, so `5m`/`1h` both enable it; `off` sends explicit
+ *   mode with no breakpoint (no writes). Older models get nothing.
+ * - `kimi`: Kimi's `prompt_cache_options: { mode: implicit, ttl }`.
+ */
+export type PromptCacheStyle = 'cache-control' | 'openai' | 'kimi';
+
+/** GPT-5.6 and later accept `prompt_cache_options` and explicit breakpoints. */
+function supportsOpenAICacheBreakpoints(model: string): boolean {
+  const match = /^gpt-(\d+)(?:\.(\d+))?/i.exec(model);
+  if (!match) return false;
+  const major = Number(match[1]);
+  return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 6);
+}
+
+/** Wrap the (config-stable) system prompt in a text block carrying `marker`. */
+function markSystemPrompt(
+  messages: ChatCompletionParams['messages'],
+  marker: Record<string, unknown>,
+): unknown[] {
+  return messages.map((message) =>
+    message.role === 'system' && message.content.length > 0
+      ? { role: 'system', content: [{ type: 'text', text: message.content, ...marker }] }
+      : message,
+  );
+}
 
 /**
  * Keys the pipeline owns and must not accept from operator-supplied modelParams:
@@ -140,38 +167,54 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.userAgent = config.userAgent;
     this.completionTokenParam = config.completionTokenParam ?? 'max_tokens';
     this.modelParams = sanitizeModelParams(config.modelParams);
-    this.cacheStyle = config.cacheStyle ?? 'automatic';
+    this.cacheStyle = config.cacheStyle ?? 'cache-control';
     this.promptCache = config.promptCache;
   }
 
-  /** TTL to request, or undefined when this endpoint gets no cache hint. */
-  private requestedCacheTtl(): '5m' | '1h' | undefined {
-    if (this.cacheStyle === 'automatic') return undefined;
+  /** Configured TTL when caching is on; undefined for `off` or unset. */
+  private cacheTtl(): '5m' | '1h' | undefined {
     return this.promptCache === '1h' || this.promptCache === '5m' ? this.promptCache : undefined;
   }
 
-  /** Mark the (config-stable) system prompt as a cache breakpoint. */
-  private messagesWithCacheControl(params: ChatCompletionParams, ttl: '5m' | '1h'): unknown[] {
-    const cacheControl = ttl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
-    return params.messages.map((message) =>
-      message.role === 'system' && message.content.length > 0
-        ? {
-          role: 'system',
-          content: [{ type: 'text', text: message.content, cache_control: cacheControl }],
-        }
-        : message,
-    );
+  /** Request fields and messages carrying this endpoint's cache hint. */
+  private cacheRequest(
+    params: ChatCompletionParams,
+    model: string,
+  ): { fields: Record<string, unknown>; messages: unknown[] } {
+    const ttl = this.cacheTtl();
+    const none = { fields: {}, messages: params.messages };
+    switch (this.cacheStyle) {
+      case 'cache-control':
+        if (!ttl) return none;
+        return {
+          fields: {},
+          messages: markSystemPrompt(params.messages, {
+            cache_control: ttl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' },
+          }),
+        };
+      case 'openai':
+        if (this.promptCache === undefined || !supportsOpenAICacheBreakpoints(model)) return none;
+        return {
+          fields: { prompt_cache_options: { mode: 'explicit' } },
+          messages: ttl
+            ? markSystemPrompt(params.messages, { prompt_cache_breakpoint: { mode: 'explicit' } })
+            : params.messages,
+        };
+      case 'kimi':
+        if (!ttl) return none;
+        return { fields: { prompt_cache_options: { mode: 'implicit', ttl } }, messages: params.messages };
+    }
   }
 
   /**
-   * Split reported cache writes by the TTL premium they bill at. Kimi bills
-   * 5m writes at the base input rate, so only its 1h writes carry a premium;
-   * automatic endpoints (OpenAI GPT-5.6+) bill writes at 1.25x.
+   * Split reported cache writes by the premium they bill at: `cache-control`
+   * writes by TTL (1.25x / 2x); OpenAI writes at 1.25x; Kimi bills 5m writes
+   * at the base rate, so only its 1h writes carry a premium.
    */
   private cacheWriteUsage(writeTokens: number): { cacheWrite5m?: number; cacheWrite1h?: number } {
     if (writeTokens <= 0) return {};
-    const ttl = this.requestedCacheTtl();
-    if (ttl === '1h') return { cacheWrite1h: writeTokens };
+    if (this.cacheStyle === 'openai') return { cacheWrite5m: writeTokens };
+    if (this.cacheTtl() === '1h') return { cacheWrite1h: writeTokens };
     if (this.cacheStyle === 'kimi') return {};
     return { cacheWrite5m: writeTokens };
   }
@@ -193,19 +236,15 @@ export class OpenAICompatibleProvider implements LLMProvider {
   ): Promise<LLMCompletionResponse> {
     const temperature = params.temperature ?? this.temperature;
     const model = params.model ?? this.model;
-    const cacheTtl = this.requestedCacheTtl();
+    const cache = this.cacheRequest(params, model);
     const body = {
       // Release-tuned params, then the cache hint, then operator passthrough;
       // managed fields below always win.
       ...releaseParamsForModel(model),
-      ...(cacheTtl && this.cacheStyle === 'kimi' && {
-        prompt_cache_options: { mode: 'implicit', ttl: cacheTtl },
-      }),
+      ...cache.fields,
       ...this.modelParams,
       model,
-      messages: cacheTtl && this.cacheStyle === 'cache-control'
-        ? this.messagesWithCacheControl(params, cacheTtl)
-        : params.messages,
+      messages: cache.messages,
       ...(temperature !== undefined && { temperature }),
       ...(params.maxTokens !== undefined && {
         [this.completionTokenParam]: params.maxTokens,

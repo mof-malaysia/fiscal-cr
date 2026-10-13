@@ -66,16 +66,22 @@ finish reason (`length` signals truncation).
 
 ### Factory
 
-`createLLMProvider({ apiKey? | federation?, model, baseUrl?, provider, userAgent?, modelParams?, retry? })`:
+`createLLMProvider({ apiKey? | federation?, model, baseUrl?, provider, userAgent?, modelParams?, promptCache?, retry? })`:
 
-- validates `openai-compatible`, `kimi`, `openai`, or `anthropic`
+- validates `openai-compatible`, `openrouter`, `kimi`, `openai`, or `anthropic`
 - requires `baseUrl` for `openai-compatible`
+- defaults OpenRouter to `https://openrouter.ai/api/v1` (Chat Completions adapter)
 - defaults Kimi to `https://api.kimi.com/coding/v1`
 - defaults OpenAI to `https://api.openai.com/v1` and uses
   `max_completion_tokens`
 - defaults Anthropic to `https://api.anthropic.com/v1` and uses its Messages API
 - requires exactly one of `apiKey` or `federation`, and builds the adapter's
   `RequestAuth` (API keys use the provider's `apiKeyAuth`, default bearer)
+- resolves `promptCache` (config value, else `PROVIDER_DEFAULTS[provider].promptCache`)
+  and passes each Chat Completions provider its `cacheStyle`:
+  `cache-control` (openrouter, openai-compatible), `openai` (GPT-5.6+
+  explicit breakpoints), or `kimi` (`prompt_cache_options`). Anthropic marks
+  the system block with `cache_control` itself.
 - wraps each adapter in `ResilientProvider`
 
 ### Auth and workload identity federation

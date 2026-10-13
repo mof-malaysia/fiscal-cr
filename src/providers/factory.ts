@@ -3,7 +3,6 @@ import { AnthropicProvider, anthropicApiKeyAuth } from "./anthropic.js";
 import { bearerAuth, type RequestAuth } from "./auth.js";
 import { createFederatedAuth, type FederationConfig } from "./federation.js";
 import { OpenAICompatibleProvider, type PromptCacheStyle } from "./openai-compatible.js";
-import { isOpenRouter } from "../utils/pricing.js";
 import {
   ResilientProvider,
   type ResilientProviderOptions,
@@ -11,14 +10,22 @@ import {
 import type { LLMProvider } from "./interface.js";
 import { ConfigError } from "../utils/errors.js";
 
-export const SUPPORTED_PROVIDERS = ["openai-compatible", "kimi", "openai", "anthropic"] as const;
+export const SUPPORTED_PROVIDERS = [
+  "openai-compatible",
+  "openrouter",
+  "kimi",
+  "openai",
+  "anthropic",
+] as const;
 const KIMI_API_BASE_URL = "https://api.kimi.com/coding/v1";
 const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
 const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com/v1";
+export const OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1";
 
 /**
- * Per-provider construction defaults. OpenAI-compatible, OpenAI, and Kimi use
- * the shared Chat Completions adapter; Anthropic uses its native Messages API.
+ * Per-provider construction defaults. OpenAI-compatible, OpenRouter, OpenAI,
+ * and Kimi use the shared Chat Completions adapter; Anthropic uses its native
+ * Messages API. `promptCache` is the cache lifetime when the config sets none.
  */
 const PROVIDER_DEFAULTS: Record<
   ReviewConfig["provider"],
@@ -33,11 +40,22 @@ const PROVIDER_DEFAULTS: Record<
     cacheStyle?: PromptCacheStyle;
   }
 > = {
+  // Unknown endpoint: cache_control is only sent when promptCache is set.
   "openai-compatible": { cacheStyle: "cache-control" },
+  // Anthropic/Gemini/Qwen models behind OpenRouter only cache with an
+  // explicit breakpoint; automatic-cache models ignore it.
+  openrouter: {
+    baseUrl: OPENROUTER_API_BASE_URL,
+    cacheStyle: "cache-control",
+    promptCache: "1h",
+  },
+  // GPT-5.6+ explicit mode: only the system prompt is written (lifetime is
+  // OpenAI's fixed 30m), instead of the whole per-PR prompt.
   openai: {
     baseUrl: OPENAI_API_BASE_URL,
     completionTokenParam: "max_completion_tokens",
-    cacheStyle: "automatic",
+    cacheStyle: "openai",
+    promptCache: "1h",
   },
   // Kimi caches implicitly (5m, no write premium). `prompt_cache_options` is
   // documented for the Open Platform, not the Kimi Code endpoint, so it is
@@ -51,19 +69,6 @@ const PROVIDER_DEFAULTS: Record<
     promptCache: "1h",
   },
 };
-
-/**
- * Cache lifetime when `promptCache` is not configured. OpenRouter fronts
- * models (Anthropic, Gemini, Qwen) that only cache with an explicit
- * breakpoint; other compatible endpoints get no hint unless configured.
- */
-function defaultPromptCache(
-  provider: ReviewConfig["provider"],
-  baseUrl: string,
-): ReviewConfig["promptCache"] {
-  if (provider === "openai-compatible") return isOpenRouter(baseUrl) ? "1h" : undefined;
-  return PROVIDER_DEFAULTS[provider].promptCache;
-}
 
 function parseProvider(provider: string): ReviewConfig["provider"] {
   if ((SUPPORTED_PROVIDERS as readonly string[]).includes(provider)) {
@@ -120,7 +125,7 @@ export function createLLMProvider(config: {
   }
 
   const auth = resolveAuth(config, provider, baseUrl);
-  const promptCache = config.promptCache ?? defaultPromptCache(provider, baseUrl);
+  const promptCache = config.promptCache ?? defaults.promptCache;
 
   if (provider === "anthropic") {
     return new ResilientProvider(

@@ -112,6 +112,21 @@ afterEach(() => {
 });
 
 describe('resolvePricingAsync', () => {
+  it('looks up OpenRouter prices for the openrouter provider without a baseUrl', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: { id: 'vendor/other-model', pricing: { prompt: '0.000001', completion: '0.000002' } },
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolved = await resolvePricingAsync({ provider: 'openrouter', model: 'vendor/other-model' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/model/vendor/other-model',
+      expect.anything(),
+    );
+    expect(resolved).toMatchObject({ source: 'remote', pricing: { inputPerMillion: 1 } });
+  });
+
   it('fetches and caches an unknown OpenRouter model price', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       data: {
