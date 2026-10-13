@@ -720,6 +720,22 @@ describe('executePlan', () => {
     expect(pairInfo[1]).toMatchObject({ pairId: 'local-01@r0', complete: true, completed: 2, failed: 0 });
   });
 
+  it('builds the default provider with prompt caching off so cost is order-independent', async () => {
+    const plan = buildEvalPlanFromEnv(env({ EVAL_CASES: 'clean-01' }));
+    // One stub per attempt; the module-level throwing default stays for other tests.
+    for (const _entry of plan.entries) {
+      mockedCreate.mockImplementationOnce(() => ({
+        chatCompletion: async () => Promise.reject(new Error('offline')),
+      }));
+    }
+    await run(plan);
+
+    expect(mockedCreate).toHaveBeenCalledTimes(plan.entries.length);
+    for (const [options] of mockedCreate.mock.calls) {
+      expect(options).toMatchObject({ promptCache: 'off', provider: 'kimi', model: 'kimi-for-coding' });
+    }
+  });
+
   it('records real parse/contract/quality metrics against the case gold', async () => {
     const plan = buildEvalPlanFromEnv(env({ EVAL_CASES: 'clean-01, local-01' }));
     const { attempts, cases } = await run(plan, { providerFactory: successFactory(plan) });

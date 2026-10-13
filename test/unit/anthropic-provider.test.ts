@@ -74,7 +74,7 @@ describe('AnthropicProvider', () => {
 
     expect(result).toEqual({
       content: '{"summary":"ok"}',
-      usage: { input: 125, output: 7, cached: 20, cacheWrite5m: 5 },
+      usage: { input: 125, output: 7, cached: 20, cacheWrite: { tokens: 5, premium: 0.25 } },
       finishReason: 'length',
     });
   });
@@ -122,7 +122,12 @@ describe('AnthropicProvider', () => {
     });
     const result = await provider.chatCompletion({ messages: [{ role: 'user', content: 'hi' }] });
 
-    expect(result.usage).toEqual({ input: 1_050, output: 1, cached: 0, cacheWrite1h: 1_000 });
+    expect(result.usage).toEqual({
+      input: 1_050,
+      output: 1,
+      cached: 0,
+      cacheWrite: { tokens: 1_000, premium: 1 },
+    });
   });
 
   it('sends a per-call model override in the request payload', async () => {

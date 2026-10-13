@@ -1,15 +1,18 @@
 import type { ChatMessage } from '../types/review.js';
 
+/** Prompt-cache writes for one call, priced by the provider that made them. */
+export interface CacheWriteUsage {
+  /** Tokens written to the cache (already counted in `input`). */
+  tokens: number;
+  /** Extra cost over base input, as a fraction of the input rate (0.25 = 1.25x). */
+  premium: number;
+}
+
 export interface LLMTokenUsage {
   input: number;
   output: number;
   cached: number;
-  /**
-   * Prompt-cache write tokens (already counted in `input`), split by TTL so
-   * cost reporting can bill the write premium (1.25x for 5m, 2x for 1h).
-   */
-  cacheWrite5m?: number;
-  cacheWrite1h?: number;
+  cacheWrite?: CacheWriteUsage;
 }
 
 export interface LLMCompletionResponse {

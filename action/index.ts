@@ -3,7 +3,7 @@ import * as github from "@actions/github";
 import { ReviewOrchestrator } from "../src/review/orchestrator.js";
 import { createActionOctokit } from "./github-client.js";
 import { mergeActionConfig } from "./config.js";
-import { createLLMProvider } from "../src/providers/factory.js";
+import { createLLMProvider, providerOptionsFromConfig } from "../src/providers/factory.js";
 import { loadConfig } from "../src/config/loader.js";
 import { MODEL_ROLES, hasModelOverride, modelForRole } from "../src/config/schema.js";
 import { applyModelOverride, applyProviderOverride } from "../src/config/overrides.js";
@@ -134,11 +134,9 @@ async function run(): Promise<void> {
       apiKey,
       federation,
       provider: providerInput || config.provider,
-      model: modelForRole(config, "groupReview"),
+      ...providerOptionsFromConfig(config),
       baseUrl: config.baseUrl,
       userAgent: config.userAgent,
-      modelParams: config.modelParams,
-      promptCache: config.promptCache,
     });
 
     // Run review

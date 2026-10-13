@@ -41,9 +41,22 @@ export type ModelRole = keyof z.infer<typeof modelStageSchema>;
 
 export const MODEL_ROLES = Object.keys(modelStageSchema.shape) as ModelRole[];
 
+/**
+ * Every provider FiscalCR can talk to. The single source for the config enum
+ * and the factory's validation; per-provider behavior lives in
+ * `PROVIDER_DEFAULTS` (`src/providers/factory.ts`) and release models in
+ * `src/config/provider-models.ts`.
+ */
+export const PROVIDERS = ["openai-compatible", "openrouter", "kimi", "openai", "anthropic"] as const;
+
+/** Providers with no release-pinned models, which therefore require `model`. */
+export const PROVIDERS_REQUIRING_MODEL = PROVIDERS.filter(
+  (provider) => defaultModelsForProvider(provider) === undefined,
+);
+
 export const reviewConfigSchema = z.object({
   language: z.enum(["en", "zh-TW", "zh-CN", "ja", "ko"]).default("en"),
-  provider: z.enum(["openai-compatible", "openrouter", "kimi", "openai", "anthropic"]).default("kimi"),
+  provider: z.enum(PROVIDERS).default("kimi"),
   /**
    * Advanced override. Unset → the release-pinned models for `provider` (see
    * `src/config/provider-models.ts`), so upgrading FiscalCR upgrades models
@@ -212,7 +225,7 @@ export type ReviewConfig = z.infer<typeof reviewConfigSchema>;
  * With a `model` override, visualization resolves like the fast path (so an
  * explicit `models.fastPath` still wins); otherwise it falls back to the
  * resolved fast-path model when nothing else resolves. Throws
- * `ConfigError` when nothing resolves (`openai-compatible` or `openrouter`
+ * `ConfigError` when nothing resolves (a `PROVIDERS_REQUIRING_MODEL` provider
  * without `model`).
  */
 export function modelForRole(config: ReviewConfig, role: ModelRole): string {
@@ -226,14 +239,14 @@ export function modelForRole(config: ReviewConfig, role: ModelRole): string {
   if (resolved !== undefined) return resolved;
   if (role === 'visualize') return modelForRole(config, 'fastPath');
   throw new ConfigError(
-    `No model for provider "${config.provider}"; set \`model\` (required for openai-compatible and openrouter)`,
+    `No model for provider "${config.provider}"; set \`model\` (required for ${PROVIDERS_REQUIRING_MODEL.join(", ")})`,
   );
 }
 
 /**
  * True when `model` or any `models.<stage>` replaces the release-pinned
- * defaults. Providers without defaults (`openai-compatible`, `openrouter`)
- * never override.
+ * defaults. Providers without defaults (`PROVIDERS_REQUIRING_MODEL`) never
+ * override.
  */
 export function hasModelOverride(config: ReviewConfig): boolean {
   if (defaultModelsForProvider(config.provider) === undefined) return false;

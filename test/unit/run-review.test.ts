@@ -352,3 +352,64 @@ function make(overrides: Partial<PullRequestContext> = {}): PullRequestContext {
     ...overrides,
   });
 }
+// Prompt caching keys on the system prompt, so it must depend only on repo
+// config. Anything PR-specific there would silently zero the cache hit rate.
+describe('system prompts are cache-stable across pull requests', () => {
+  const multiPassScript = () =>
+    scriptedLLM([
+      { match: isIntentCall, content: { intent: 'x', walkthrough: [], groups: [], riskHotspots: [] } },
+      { match: isGroupCall, content: groupResponse('Finding') },
+      {
+        match: isSynthesisCall,
+        content: { summary: 'Done', score: 70, walkthrough: [], nearDuplicates: [], likelyFalsePositives: [] },
+      },
+      {
+        match: isFastPathCall,
+        content: { intent: 'x', summary: 'ok', score: 90, walkthrough: [], findings: [] },
+      },
+    ]);
+
+  const stageOf = (p: ChatCompletionParams) =>
+    isIntentCall(p) ? 'intent' : isGroupCall(p) ? 'group' : isSynthesisCall(p) ? 'synthesis' : 'fast-path';
+
+  async function systemPromptsFor(config: ReviewConfig, ctx: PullRequestContext, deltaHint?: string) {
+    const llm = multiPassScript();
+    await runReviewPipeline(llm, ctx, config, new UsageTracker(), { deltaHint });
+    return new Map(llm.calls.map((call) => [stageOf(call), call.messages[0].content]));
+  }
+
+  // Two files in separate directories → two review groups, so synthesis runs.
+  const pr = (overrides: Partial<PullRequestContext>, paths: [string, string], body: string) =>
+    context({
+      ...overrides,
+      changedFiles: paths.map((filename) => ({
+        filename,
+        status: 'modified' as const,
+        additions: 2,
+        deletions: 0,
+        patch: PATCH,
+      })),
+      fileContents: new Map(paths.map((path) => [path, body])),
+    });
+  const prA = () => pr({}, ['src/a.ts', 'lib/b.ts'], 'a\nb\n');
+  const prB = () =>
+    pr(
+      { pullNumber: 42, title: 'Completely different change', body: 'Another description' },
+      ['app/x.py', 'docs/y.md'],
+      'c\nd\ne\n',
+    );
+
+  it.each([
+    ['fast path', cfg(), ['fast-path']],
+    ['multi-pass', cfg({ fastPathThreshold: 1, groupTokenBudget: 1 }), ['group', 'intent', 'synthesis']],
+  ])('keeps every %s system prompt identical between two different PRs', async (_route, config, stages) => {
+    const a = await systemPromptsFor(config, prA());
+    const b = await systemPromptsFor(config, prB(), '### Incremental Review\nOnly files since abc1234.');
+
+    expect([...a.keys()].sort()).toEqual(stages);
+    expect([...b.keys()].sort()).toEqual(stages);
+    for (const [stage, prompt] of a) {
+      expect(b.get(stage), stage).toBe(prompt);
+    }
+  });
+});

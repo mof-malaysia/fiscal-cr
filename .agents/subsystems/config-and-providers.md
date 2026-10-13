@@ -5,7 +5,8 @@ Configuration loading, precedence, provider construction, and request policy.
 Sources:
 
 - Config: `src/config/{schema,defaults,loader,provider-models,overrides}.ts`
-- Providers: `src/providers/{interface,factory,openai-compatible,anthropic,resilient,auth,federation}.ts`
+- Providers: `src/providers/{interface,factory,endpoints,prompt-cache,openai-compatible,anthropic,resilient,auth,federation}.ts`
+- Model-ID parsing: `src/utils/model-ids.ts`
 - Entrypoints: `action/{index,config,review-config}.ts`, `src/github/webhooks.ts`
 
 See [provider models](provider-models.md) for stage resolution and [review
@@ -68,21 +69,56 @@ finish reason (`length` signals truncation).
 
 `createLLMProvider({ apiKey? | federation?, model, baseUrl?, provider, userAgent?, modelParams?, promptCache?, retry? })`:
 
-- validates `openai-compatible`, `openrouter`, `kimi`, `openai`, or `anthropic`
+- validates against `PROVIDERS` (`src/config/schema.ts`), the single
+  provider list; `SUPPORTED_PROVIDERS` re-exports it
 - requires `baseUrl` for `openai-compatible`
-- defaults OpenRouter to `https://openrouter.ai/api/v1` (Chat Completions adapter)
-- defaults Kimi to `https://api.kimi.com/coding/v1`
-- defaults OpenAI to `https://api.openai.com/v1` and uses
-  `max_completion_tokens`
-- defaults Anthropic to `https://api.anthropic.com/v1` and uses its Messages API
+- takes per-provider behavior from `PROVIDER_DEFAULTS`: base URL
+  (`endpoints.ts`), token-cap field, API-key header, default `promptCache`,
+  and Chat Completions `cacheStyle`
+- uses the Messages API for `anthropic` and the Chat Completions adapter for
+  the rest
 - requires exactly one of `apiKey` or `federation`, and builds the adapter's
   `RequestAuth` (API keys use the provider's `apiKeyAuth`, default bearer)
-- resolves `promptCache` (config value, else `PROVIDER_DEFAULTS[provider].promptCache`)
-  and passes each Chat Completions provider its `cacheStyle`:
-  `cache-control` (openrouter, openai-compatible), `openai` (GPT-5.6+
-  explicit breakpoints), or `kimi` (`prompt_cache_options`). Anthropic marks
-  the system block with `cache_control` itself.
+- resolves `promptCache` (config value, else the provider default)
 - wraps each adapter in `ResilientProvider`
+
+Entry points (`action/index.ts`, `src/github/webhooks.ts`, `eval/runtime.ts`)
+spread `providerOptionsFromConfig(config)` (model, `modelParams`,
+`promptCache`) and add only what they override. Wire a new config-driven
+provider option there, not at each call site. The eval pins
+`promptCache: 'off'` so per-variant cost does not depend on run order.
+
+### Prompt caching
+
+`prompt-cache.ts` owns every caching rule; adapters only call it.
+
+- Only the system prompt is marked: it depends on repo config alone, so it
+  repeats across calls, stages, and PRs.
+- Chat Completions styles: `cache-control` (Anthropic-style marker on the
+  system block; openrouter, openai-compatible), `openai` (GPT-5.6+
+  `prompt_cache_options.mode: explicit` + `prompt_cache_breakpoint`; `off` =
+  explicit mode, no breakpoint), `kimi` (`prompt_cache_options`).
+- Writes are reported as `usage.cacheWrite = { tokens, premium }`, where
+  `premium` is the extra cost over base input chosen by who wrote the cache
+  (Anthropic 5m and OpenAI GPT-5.6+: 0.25; 1h: 1; Kimi 5m and other automatic
+  caches: 0). `pricing.ts` applies it without knowing TTLs.
+
+### Adding a provider
+
+1. Add the name to `PROVIDERS` in `src/config/schema.ts` (enum, factory
+   validation, and the "requires `model`" error all derive from it).
+2. Add a `PROVIDER_DEFAULTS` entry in `src/providers/factory.ts`: base URL
+   (in `endpoints.ts`), token-cap field, API-key header, default
+   `promptCache`, and `cacheStyle` (add a style in `prompt-cache.ts` if none
+   fits).
+3. Release models: add to `PROVIDER_DEFAULT_MODELS` and run
+   `pnpm models:sync`, or leave it out to require `model`.
+4. Pricing: add a table to `PROVIDER_PRICING` in `src/utils/pricing.ts`.
+5. Federation (optional): see below.
+6. Docs: provider lists in `README.md`, `action.yml`, `action/action.yml`,
+   and `docs/llm-evaluation.md`; the README "Prompt caching" table.
+7. Tests: `provider-factory` (construction and cache hint), plus adapter
+   tests for any new cache style.
 
 ### Auth and workload identity federation
 
@@ -110,7 +146,8 @@ streaming.
 - Sends `User-Agent: fiscalcr/1.0`, or the configured user agent.
 - Omits temperature when the resolved model requires the server default.
 - Aborts after the configured timeout (default 300s).
-- Maps `prompt_tokens`, `completion_tokens`, and `cached_tokens`.
+- Maps `prompt_tokens`, `completion_tokens`, `cached_tokens`, and
+  `cache_write_tokens` (priced via `chatCacheWrite`).
 - Converts non-2xx responses to `LLMApiError` with status, body snippet, and
   parsed `Retry-After`.
 
@@ -119,7 +156,8 @@ streaming.
 - Posts to `{baseUrl}/messages` with its `RequestAuth` headers (`x-api-key` or a
   federated bearer token) and `anthropic-version: 2023-06-01`.
 - Moves system messages into the top-level `system` field.
-- Normalizes input, cache, and output token usage.
+- Normalizes input, cache, and output token usage; cache writes are priced
+  from Anthropic's per-TTL split (`anthropicCacheWrite`).
 - Uses an explicit JSON-only instruction because Messages has no shared
   `response_format` field.
 
@@ -138,6 +176,8 @@ provider default.
 - `temperature.ts`: explicit config wins; Kimi, OpenAI reasoning models, and
   Claude models that reject sampling params (5.x+, Opus 4.7+) omit
   temperature; other models use the preferred value (`0.3`).
+- `model-ids.ts`: model-family checks used above and by prompt caching. All
+  helpers strip OpenRouter vendor prefixes (`anthropic/claude-…`).
 - `max-output.ts`: explicit `pipeline.maxOutputTokens` wins; Kimi defaults to
   65,536 completion tokens and other models to 32,768.
 - `tokens.ts`: estimates input size and calculates approximate cost.
@@ -151,6 +191,9 @@ provider default.
 - `openai-compatible` without `baseUrl` is a `ConfigError`.
 - Retry classification excludes auth and bad-request errors.
 - JSON calls set a response format and token cap so truncation is detectable.
+- System prompts depend only on repo config, never on the PR. Prompt caching
+  keys on them, so PR-specific text there silently zeroes the hit rate
+  (`run-review` test: "system prompts are cache-stable across pull requests").
 
 ## Relevant tests
 
@@ -158,4 +201,6 @@ provider default.
   `action-model-params`, `action-experimental`, `action-federation`
 - Provider mapping: `provider-factory`, `openai-compatible-provider`,
   `anthropic-provider`, `resilient-provider`, `auth`, `federation`
+- Prompt caching: `openai-compatible-provider`, `anthropic-provider`,
+  `provider-factory`, `pricing`, `run-review` (system-prompt stability)
 - Per-model controls: `temperature`, `max-output`, `tokens`

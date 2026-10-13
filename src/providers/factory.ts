@@ -1,8 +1,15 @@
-import type { ReviewConfig } from "../config/schema.js";
+import { modelForRole, PROVIDERS, type ReviewConfig } from "../config/schema.js";
 import { AnthropicProvider, anthropicApiKeyAuth } from "./anthropic.js";
 import { bearerAuth, type RequestAuth } from "./auth.js";
+import {
+  ANTHROPIC_API_BASE_URL,
+  KIMI_API_BASE_URL,
+  OPENAI_API_BASE_URL,
+  OPENROUTER_API_BASE_URL,
+} from "./endpoints.js";
 import { createFederatedAuth, type FederationConfig } from "./federation.js";
-import { OpenAICompatibleProvider, type PromptCacheStyle } from "./openai-compatible.js";
+import { OpenAICompatibleProvider } from "./openai-compatible.js";
+import type { PromptCacheSetting, PromptCacheStyle } from "./prompt-cache.js";
 import {
   ResilientProvider,
   type ResilientProviderOptions,
@@ -10,17 +17,7 @@ import {
 import type { LLMProvider } from "./interface.js";
 import { ConfigError } from "../utils/errors.js";
 
-export const SUPPORTED_PROVIDERS = [
-  "openai-compatible",
-  "openrouter",
-  "kimi",
-  "openai",
-  "anthropic",
-] as const;
-const KIMI_API_BASE_URL = "https://api.kimi.com/coding/v1";
-const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
-const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com/v1";
-export const OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1";
+export const SUPPORTED_PROVIDERS = PROVIDERS;
 
 /**
  * Per-provider construction defaults. OpenAI-compatible, OpenRouter, OpenAI,
@@ -35,7 +32,7 @@ const PROVIDER_DEFAULTS: Record<
     /** How a static API key is sent; defaults to `Authorization: Bearer`. */
     apiKeyAuth?: (apiKey: string) => RequestAuth;
     /** System-prompt cache lifetime when `promptCache` is not configured. */
-    promptCache?: ReviewConfig["promptCache"];
+    promptCache?: PromptCacheSetting;
     /** How a Chat Completions endpoint is told to cache; see `PromptCacheStyle`. */
     cacheStyle?: PromptCacheStyle;
   }
@@ -98,6 +95,24 @@ function resolveAuth(
   );
 }
 
+/**
+ * Provider options that come straight from repo config. Every entry point
+ * spreads this into `createLLMProvider`, so a new config knob is wired once
+ * here; callers add only what they override (provider, baseUrl, userAgent,
+ * credentials).
+ */
+export function providerOptionsFromConfig(config: ReviewConfig): {
+  model: string;
+  modelParams?: Record<string, unknown>;
+  promptCache?: PromptCacheSetting;
+} {
+  return {
+    model: modelForRole(config, "groupReview"),
+    modelParams: config.modelParams,
+    promptCache: config.promptCache,
+  };
+}
+
 export function createLLMProvider(config: {
   /** Static provider API key. Exactly one of `apiKey` or `federation`. */
   apiKey?: string;
@@ -111,7 +126,7 @@ export function createLLMProvider(config: {
   /** Provider-native request fields merged into every call. */
   modelParams?: Record<string, unknown>;
   /** System-prompt cache lifetime. Omitted → the provider default. */
-  promptCache?: ReviewConfig["promptCache"];
+  promptCache?: PromptCacheSetting;
   retry?: ResilientProviderOptions;
 }): LLMProvider {
   const provider = parseProvider(config.provider);

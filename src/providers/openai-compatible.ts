@@ -1,8 +1,13 @@
-import type { ReviewConfig } from '../config/schema.js';
 import { ConfigError, errorSnippet, LLMApiError } from '../utils/errors.js';
 import { releaseParamsForModel } from '../config/provider-models.js';
 import { logger } from '../utils/logger.js';
 import { fetchWithAuth, type RequestAuth } from './auth.js';
+import {
+  chatCacheRequest,
+  chatCacheWrite,
+  type PromptCacheSetting,
+  type PromptCacheStyle,
+} from './prompt-cache.js';
 import {
   DEFAULT_USER_AGENT,
   type ChatCompletionParams,
@@ -41,40 +46,7 @@ export interface OpenAICompatibleProviderConfig {
    */
   cacheStyle?: PromptCacheStyle;
   /** System-prompt cache lifetime. Omitted → nothing is sent. */
-  promptCache?: ReviewConfig['promptCache'];
-}
-
-/**
- * How a Chat Completions endpoint is told to cache the system prompt:
- * - `cache-control`: Anthropic-style `cache_control` on the system content
- *   block. OpenRouter forwards it to Anthropic/Gemini/Qwen models.
- * - `openai`: GPT-5.6+ explicit mode — `prompt_cache_options.mode: explicit`
- *   plus a `prompt_cache_breakpoint` on the system block. Implicit mode would
- *   write the whole (per-PR) prompt at 1.25x on every call. The lifetime is
- *   OpenAI's fixed 30m, so `5m`/`1h` both enable it; `off` sends explicit
- *   mode with no breakpoint (no writes). Older models get nothing.
- * - `kimi`: Kimi's `prompt_cache_options: { mode: implicit, ttl }`.
- */
-export type PromptCacheStyle = 'cache-control' | 'openai' | 'kimi';
-
-/** GPT-5.6 and later accept `prompt_cache_options` and explicit breakpoints. */
-function supportsOpenAICacheBreakpoints(model: string): boolean {
-  const match = /^gpt-(\d+)(?:\.(\d+))?/i.exec(model);
-  if (!match) return false;
-  const major = Number(match[1]);
-  return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 6);
-}
-
-/** Wrap the (config-stable) system prompt in a text block carrying `marker`. */
-function markSystemPrompt(
-  messages: ChatCompletionParams['messages'],
-  marker: Record<string, unknown>,
-): unknown[] {
-  return messages.map((message) =>
-    message.role === 'system' && message.content.length > 0
-      ? { role: 'system', content: [{ type: 'text', text: message.content, ...marker }] }
-      : message,
-  );
+  promptCache?: PromptCacheSetting;
 }
 
 /**
@@ -153,7 +125,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly completionTokenParam: 'max_tokens' | 'max_completion_tokens';
   private readonly modelParams: Record<string, unknown>;
   private readonly cacheStyle: PromptCacheStyle;
-  private readonly promptCache?: ReviewConfig['promptCache'];
+  private readonly promptCache?: PromptCacheSetting;
 
   constructor(config: OpenAICompatibleProviderConfig) {
     this.auth = config.auth;
@@ -169,54 +141,6 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.modelParams = sanitizeModelParams(config.modelParams);
     this.cacheStyle = config.cacheStyle ?? 'cache-control';
     this.promptCache = config.promptCache;
-  }
-
-  /** Configured TTL when caching is on; undefined for `off` or unset. */
-  private cacheTtl(): '5m' | '1h' | undefined {
-    return this.promptCache === '1h' || this.promptCache === '5m' ? this.promptCache : undefined;
-  }
-
-  /** Request fields and messages carrying this endpoint's cache hint. */
-  private cacheRequest(
-    params: ChatCompletionParams,
-    model: string,
-  ): { fields: Record<string, unknown>; messages: unknown[] } {
-    const ttl = this.cacheTtl();
-    const none = { fields: {}, messages: params.messages };
-    switch (this.cacheStyle) {
-      case 'cache-control':
-        if (!ttl) return none;
-        return {
-          fields: {},
-          messages: markSystemPrompt(params.messages, {
-            cache_control: ttl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' },
-          }),
-        };
-      case 'openai':
-        if (this.promptCache === undefined || !supportsOpenAICacheBreakpoints(model)) return none;
-        return {
-          fields: { prompt_cache_options: { mode: 'explicit' } },
-          messages: ttl
-            ? markSystemPrompt(params.messages, { prompt_cache_breakpoint: { mode: 'explicit' } })
-            : params.messages,
-        };
-      case 'kimi':
-        if (!ttl) return none;
-        return { fields: { prompt_cache_options: { mode: 'implicit', ttl } }, messages: params.messages };
-    }
-  }
-
-  /**
-   * Split reported cache writes by the premium they bill at: `cache-control`
-   * writes by TTL (1.25x / 2x); OpenAI writes at 1.25x; Kimi bills 5m writes
-   * at the base rate, so only its 1h writes carry a premium.
-   */
-  private cacheWriteUsage(writeTokens: number): { cacheWrite5m?: number; cacheWrite1h?: number } {
-    if (writeTokens <= 0) return {};
-    if (this.cacheStyle === 'openai') return { cacheWrite5m: writeTokens };
-    if (this.cacheTtl() === '1h') return { cacheWrite1h: writeTokens };
-    if (this.cacheStyle === 'kimi') return {};
-    return { cacheWrite5m: writeTokens };
   }
 
   async chatCompletion(params: ChatCompletionParams): Promise<LLMCompletionResponse> {
@@ -236,7 +160,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   ): Promise<LLMCompletionResponse> {
     const temperature = params.temperature ?? this.temperature;
     const model = params.model ?? this.model;
-    const cache = this.cacheRequest(params, model);
+    const cache = chatCacheRequest(this.cacheStyle, this.promptCache, model, params.messages);
     const body = {
       // Release-tuned params, then the cache hint, then operator passthrough;
       // managed fields below always win.
@@ -287,11 +211,17 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const content = data.choices?.[0]?.message?.content ?? '';
     const finishReason = data.choices?.[0]?.finish_reason;
 
+    const cacheWrite = chatCacheWrite(
+      this.cacheStyle,
+      this.promptCache,
+      model,
+      data.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
+    );
     const usage = {
       input: data.usage?.prompt_tokens ?? 0,
       output: data.usage?.completion_tokens ?? 0,
       cached: data.usage?.prompt_tokens_details?.cached_tokens ?? data.usage?.cached_tokens ?? 0,
-      ...this.cacheWriteUsage(data.usage?.prompt_tokens_details?.cache_write_tokens ?? 0),
+      ...(cacheWrite && { cacheWrite }),
     };
 
     logger.info(
@@ -301,7 +231,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         promptTokens: usage.input,
         completionTokens: usage.output,
         cachedTokens: usage.cached,
-        cacheWriteTokens: data.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
+        cacheWriteTokens: cacheWrite?.tokens ?? 0,
         finishReason,
       },
       'LLM API call completed',

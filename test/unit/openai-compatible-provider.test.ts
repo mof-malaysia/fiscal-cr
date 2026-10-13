@@ -348,26 +348,25 @@ describe('OpenAICompatibleProvider', () => {
         { role: 'user', content: 'hi' },
       ]);
       expect(body.prompt_cache_options).toBeUndefined();
-      expect(result.usage).toMatchObject({ cacheWrite1h: 1_000 });
+      expect(result.usage.cacheWrite).toEqual({ tokens: 1_000, premium: 1 });
     });
 
     it('uses the default 5m cache_control shape', async () => {
       const { body, result } = await send({ cacheStyle: 'cache-control', promptCache: '5m' });
 
       expect(body.messages[0].content[0].cache_control).toEqual({ type: 'ephemeral' });
-      expect(result.usage).toMatchObject({ cacheWrite5m: 1_000 });
+      expect(result.usage.cacheWrite).toEqual({ tokens: 1_000, premium: 0.25 });
     });
 
     it('sends prompt_cache_options to Kimi; 5m writes carry no premium', async () => {
       const oneHour = await send({ cacheStyle: 'kimi', promptCache: '1h' });
       expect(oneHour.body.prompt_cache_options).toEqual({ mode: 'implicit', ttl: '1h' });
       expect(oneHour.body.messages[0]).toEqual({ role: 'system', content: 'sys' });
-      expect(oneHour.result.usage).toMatchObject({ cacheWrite1h: 1_000 });
+      expect(oneHour.result.usage.cacheWrite).toEqual({ tokens: 1_000, premium: 1 });
 
       const fiveMinutes = await send({ cacheStyle: 'kimi', promptCache: '5m' });
       expect(fiveMinutes.body.prompt_cache_options).toEqual({ mode: 'implicit', ttl: '5m' });
-      expect(fiveMinutes.result.usage.cacheWrite5m).toBeUndefined();
-      expect(fiveMinutes.result.usage.cacheWrite1h).toBeUndefined();
+      expect(fiveMinutes.result.usage.cacheWrite).toEqual({ tokens: 1_000, premium: 0 });
     });
 
     it.each([
@@ -400,10 +399,18 @@ describe('OpenAICompatibleProvider', () => {
           },
           { role: 'user', content: 'hi' },
         ]);
-        expect(result.usage).toMatchObject({ cacheWrite5m: 1_000 });
-        expect(result.usage.cacheWrite1h).toBeUndefined();
+        expect(result.usage.cacheWrite).toEqual({ tokens: 1_000, premium: 0.25 });
       },
     );
+
+    it.each([
+      ['openai/gpt-6.1-sol', 0.25], // automatic cache, GPT-5.6+ write premium
+      ['deepseek/deepseek-v4', 0], // automatic cache billed at the input rate
+    ])('prices OpenRouter writes for %s by the serving model, not the TTL', async (model, premium) => {
+      const { result } = await send({ cacheStyle: 'cache-control', promptCache: '1h', model });
+
+      expect(result.usage.cacheWrite).toEqual({ tokens: 1_000, premium });
+    });
 
     it('turns OpenAI implicit caching off with explicit mode and no breakpoint', async () => {
       const { body } = await send({ cacheStyle: 'openai', promptCache: 'off', model: 'gpt-6.1-sol' });

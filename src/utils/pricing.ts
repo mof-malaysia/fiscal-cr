@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { OPENROUTER_API_BASE_URL } from '../providers/endpoints.js';
+import type { LLMTokenUsage } from '../providers/interface.js';
 
 /**
  * Published token prices in USD per million tokens.
@@ -264,7 +266,7 @@ export async function resolvePricingAsync(
   const routerBaseUrl = isOpenRouter(context.baseUrl)
     ? context.baseUrl
     : context.provider?.trim().toLowerCase() === 'openrouter'
-      ? 'https://openrouter.ai/api/v1'
+      ? OPENROUTER_API_BASE_URL
       : undefined;
   if (
     local.source !== 'fallback'
@@ -318,20 +320,14 @@ export interface TokenCostBreakdown {
   totalUsd: number;
 }
 
-/** Extra cost over base input for a cache write, as a fraction of the input rate. */
-const CACHE_WRITE_PREMIUM_5M = 0.25;
-const CACHE_WRITE_PREMIUM_1H = 1;
-
 export function calculateCostBreakdownWithPricing(
-  usage: { input: number; output: number; cached: number; cacheWrite5m?: number; cacheWrite1h?: number },
+  usage: Pick<LLMTokenUsage, 'input' | 'output' | 'cached' | 'cacheWrite'>,
   pricing: TokenPricing,
 ): TokenCostBreakdown {
   const rates = pricingForUsage(usage, pricing);
   const uncachedInput = Math.max(0, usage.input - usage.cached);
   // Cache writes are already in `input` at the base rate; add only the premium.
-  const writePremiumTokens =
-    (usage.cacheWrite5m ?? 0) * CACHE_WRITE_PREMIUM_5M +
-    (usage.cacheWrite1h ?? 0) * CACHE_WRITE_PREMIUM_1H;
+  const writePremiumTokens = (usage.cacheWrite?.tokens ?? 0) * (usage.cacheWrite?.premium ?? 0);
   const inputUsd = ((uncachedInput + writePremiumTokens) / 1_000_000) * rates.inputPerMillion;
   const cachedUsd = (usage.cached / 1_000_000) * rates.cachedInputPerMillion;
   const outputUsd = (usage.output / 1_000_000) * rates.outputPerMillion;
@@ -345,7 +341,7 @@ export function calculateCostBreakdownWithPricing(
 
 
 export function calculateCostWithPricing(
-  usage: { input: number; output: number; cached: number; cacheWrite5m?: number; cacheWrite1h?: number },
+  usage: Pick<LLMTokenUsage, 'input' | 'output' | 'cached' | 'cacheWrite'>,
   pricing: TokenPricing,
 ): number {
   return calculateCostBreakdownWithPricing(usage, pricing).totalUsd;

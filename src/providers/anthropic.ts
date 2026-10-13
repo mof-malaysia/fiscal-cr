@@ -1,7 +1,11 @@
 import { ConfigError, errorSnippet, LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { fetchWithAuth, staticAuth, type RequestAuth } from './auth.js';
-import type { ReviewConfig } from '../config/schema.js';
+import {
+  anthropicCacheWrite,
+  anthropicSystem,
+  type PromptCacheSetting,
+} from './prompt-cache.js';
 import {
   DEFAULT_USER_AGENT,
   type ChatCompletionParams,
@@ -24,7 +28,7 @@ export interface AnthropicProviderConfig {
   /** Provider-native request fields merged into each Messages request. */
   modelParams?: Record<string, unknown>;
   /** System-prompt cache lifetime. Omitted → no cache breakpoint. */
-  promptCache?: ReviewConfig['promptCache'];
+  promptCache?: PromptCacheSetting;
 }
 
 interface AnthropicResponse {
@@ -95,7 +99,7 @@ export class AnthropicProvider implements LLMProvider {
   private readonly baseUrl: string;
   private readonly userAgent?: string;
   private readonly modelParams: Record<string, unknown>;
-  private readonly promptCache?: ReviewConfig['promptCache'];
+  private readonly promptCache?: PromptCacheSetting;
 
   constructor(config: AnthropicProviderConfig) {
     this.auth = config.auth;
@@ -139,19 +143,10 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     const model = params.model ?? this.model;
-    // The system prompt depends only on repo config, so it is byte-identical
-    // across calls, stages, and PRs. Mark it as a cache breakpoint; prompts
-    // below the model's minimum cacheable length are silently not cached.
-    const systemText = system.join('\n\n');
-    const cacheControl =
-      this.promptCache === '1h' ? { type: 'ephemeral', ttl: '1h' }
-        : this.promptCache === '5m' ? { type: 'ephemeral' }
-          : undefined;
-    const systemField = system.length === 0
-      ? undefined
-      : cacheControl
-        ? [{ type: 'text', text: systemText, cache_control: cacheControl }]
-        : systemText;
+    // Prompts below the model's minimum cacheable length are silently not cached.
+    const systemField = system.length > 0
+      ? anthropicSystem(system.join('\n\n'), this.promptCache)
+      : undefined;
     const body = {
       // Operator passthrough is the base layer; managed fields below always win.
       ...this.modelParams,
@@ -198,11 +193,7 @@ export class AnthropicProvider implements LLMProvider {
       (usage?.cache_read_input_tokens ?? 0) +
       (usage?.cache_creation_input_tokens ?? 0);
     const input = (usage?.input_tokens ?? 0) + cached;
-    // Older responses omit the per-TTL split; treat their writes as 5m.
-    const cacheWrite1h = usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0;
-    const cacheWrite5m = usage?.cache_creation
-      ? usage.cache_creation.ephemeral_5m_input_tokens ?? 0
-      : usage?.cache_creation_input_tokens ?? 0;
+    const cacheWrite = anthropicCacheWrite(usage);
     const finishReason = data.stop_reason === 'max_tokens'
       ? 'length'
       : data.stop_reason ?? undefined;
@@ -214,7 +205,7 @@ export class AnthropicProvider implements LLMProvider {
         promptTokens: input,
         completionTokens: usage?.output_tokens ?? 0,
         cachedTokens: usage?.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: cacheWrite5m + cacheWrite1h,
+        cacheWriteTokens: cacheWrite?.tokens ?? 0,
         finishReason,
       },
       'LLM API call completed',
@@ -226,8 +217,7 @@ export class AnthropicProvider implements LLMProvider {
         input,
         output: usage?.output_tokens ?? 0,
         cached: usage?.cache_read_input_tokens ?? 0,
-        ...(cacheWrite5m > 0 && { cacheWrite5m }),
-        ...(cacheWrite1h > 0 && { cacheWrite1h }),
+        ...(cacheWrite && { cacheWrite }),
       },
       finishReason,
     };
