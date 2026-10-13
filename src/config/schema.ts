@@ -174,7 +174,7 @@ export const reviewConfigSchema = z.object({
     .object({
       include: z.array(z.string()).default(["**/*"]),
       exclude: z.array(z.string()).default([...DEFAULT_EXCLUDE_PATTERNS]),
-      maxFileSize: z.number().default(100_000),
+      maxFileSize: z.number().default(200_000),
     })
     .default({}),
 
@@ -203,10 +203,15 @@ export const reviewConfigSchema = z.object({
       /** false → single-call review regardless of PR size (legacy behavior). */
       enabled: z.boolean().default(true),
       concurrency: z.number().min(1).max(8).default(3),
-      groupTokenBudget: z.number().min(8_000).default(40_000),
+      groupTokenBudget: z.number().min(8_000).default(80_000),
       relatedContextBudget: z.number().min(0).default(15_000),
       maxGroups: z.number().min(1).max(20).default(8),
-      fastPathThreshold: z.number().default(25_000),
+      /**
+       * PRs estimated below this use one combined call. Keep it at least
+       * `groupTokenBudget`: a smaller PR would fit one group anyway, so
+       * multi-pass would only add an intent call.
+       */
+      fastPathThreshold: z.number().default(80_000),
       minConfidence: z.number().min(0).max(1).default(0.6),
       maxRetries: z.number().min(0).max(5).default(3),
       // Unset → resolved per model (reasoning models get longer). See reviewCallTimeoutMs.

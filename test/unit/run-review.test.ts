@@ -95,7 +95,7 @@ describe('routeReview', () => {
 
   it('routes a large PR to the multi-pass pipeline', () => {
     const big = context({
-      fileContents: new Map([['src/a.ts', 'x'.repeat(200_000)]]),
+      fileContents: new Map([['src/a.ts', 'x'.repeat(400_000)]]),
     });
     const decision = routeReview(big, cfg());
     expect(decision.route).toBe('multi-pass');
@@ -105,7 +105,7 @@ describe('routeReview', () => {
   });
 
   it('forces the fast path when the pipeline is disabled, even for large PRs', () => {
-    const big = context({ fileContents: new Map([['src/a.ts', 'x'.repeat(200_000)]]) });
+    const big = context({ fileContents: new Map([['src/a.ts', 'x'.repeat(400_000)]]) });
     const decision = routeReview(big, cfg({ enabled: false }));
     expect(decision.route).toBe('fast-path');
   });

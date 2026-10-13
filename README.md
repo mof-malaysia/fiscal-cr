@@ -330,7 +330,7 @@ files:
     - "**/package-lock.json"
     - "**/yarn.lock"
     - "**/pnpm-lock.yaml"
-  maxFileSize: 100000
+  maxFileSize: 200000 # characters; larger files are reviewed from their diff only
 
 rules:
   - name: no-console-log
@@ -345,10 +345,10 @@ prompt:
 pipeline:
   enabled: true # false → single-call review regardless of PR size (legacy behavior)
   concurrency: 3 # parallel group-review calls (1–8)
-  groupTokenBudget: 40000 # max tokens of file content per review group
+  groupTokenBudget: 80000 # max tokens of file content per review group
   relatedContextBudget: 15000 # tokens of unchanged imported files per group (Action mode only)
   maxGroups: 8 # overflow groups are reviewed diff-only
-  fastPathThreshold: 25000 # PRs under this total use a single combined call
+  fastPathThreshold: 80000 # PRs under this total use a single combined call; keep >= groupTokenBudget
   minConfidence: 0.6 # findings below this are dropped (criticals kept to 0.4)
   maxRetries: 3
   # callTimeoutMs: 120000 # unset → 300000 for reasoning models (Claude 5, GPT-5+), 120000 otherwise
