@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mof-malaysia/fiscal-cr@main
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
         with:
           api_key: ${{ secrets.LLM_API_KEY }}
           provider: openai-compatible
@@ -117,7 +117,7 @@ When either input is omitted, the corresponding repository setting is kept.
 For example, these settings can be supplied without a repository config file:
 
 ```yaml
-      - uses: mof-malaysia/fiscal-cr@main
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
         with:
           api_key: ${{ secrets.LLM_API_KEY }}
           visualize: true
@@ -178,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mof-malaysia/fiscal-cr@main
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
         with:
           provider: anthropic
           anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}

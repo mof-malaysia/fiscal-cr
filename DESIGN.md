@@ -233,7 +233,7 @@ components:
 
 **Creative North Star: "The Lit Line"**
 
-FiscalCR's site is a member of the FTDS family: FTDS tokens, FTDS's Astro components (navbar, phase banner, buttons, footer, icons), and Inter, self-hosted. It does not have its own palette, typeface or radius scale. Its expression comes from a few FTDS primitives promoted to named roles: the Field (Primary 700) as the full-bleed blue it opens and closes on, the Stage (Primary 950) as the dark panel that white objects sit on, and Ink-black code blocks. The one thing it owns outright is the Review Field: a canvas minimap of a pull request where a review pass sweeps down and individual lines light up as findings, turn green as they're fixed, and settle back.
+FiscalCR's site is a member of the FTDS family: FTDS tokens, FTDS's Astro components (navbar, buttons, footer, icons), and Inter, self-hosted. It does not have its own palette, typeface or radius scale. Its expression comes from a few FTDS primitives promoted to named roles: the Field (Primary 700) as the full-bleed blue it opens and closes on, the Stage (Primary 950) as the dark panel that white objects sit on, and Ink-black code blocks. The one thing it owns outright is the Review Field: a canvas minimap of a pull request where a review pass sweeps down and individual lines light up as findings, turn green as they're fixed, and settle back.
 
 The North Star is that single lit line. Everything on the page is quiet, flat FTDS so that a finding (a danger-red line, a severity tag, a thread with a coloured edge) is the brightest thing in view. Severity colour is reserved for findings and their states; it is never decoration. Density is FTDS's comfortable setting: 48px controls, generous section padding, a 1280px column.
 
@@ -272,9 +272,9 @@ FTDS Blue on white, with the blue deepened into two surfaces and the three FTDS 
 
 ### Neutral
 - **Sheet** (sheet): page background, cards, the example review, the sheet on the Stage.
-- **Paper** (paper): alternating sections (pipeline, details), the summary comment in the example, the App callout, the phase banner.
+- **Paper** (paper): alternating sections (pipeline, details), the summary comment in the example, the App callout.
 - **Well** (well): the navbar's secondary button; also FTDS's Divider tone, used for every hairline rule between rows and cards.
-- **Hairline** (hairline): the navbar's and phase banner's bottom borders.
+- **Hairline** (hairline): the navbar's bottom border.
 - **Ink** (ink): body text, and the code block background.
 - **Ink Secondary** (ink-secondary): descriptions and supporting copy.
 - **Ink Tertiary** (ink-tertiary): file paths, line numbers, small notes, field labels.
@@ -317,7 +317,7 @@ A single 1280px column centred with an 18px gutter on phones and 24px from 768px
 
 From 1024px, sections with a demonstration use a 12-column grid split 5/7: words left, the object right (the example review, the Stage, the config block, the workflow file), with a 48px gap (56px at the split). Below 1024px they stack, words first. Lists of points run as 2 or 4 columns on the Field and 2 columns on Paper, each item opened by a top hairline.
 
-The opening fills the viewport less the navbar and phase banner (`100svh - 7rem`). The navbar is FTDS's sticky 64px bar (56px on phones) and collapses to its popover menu below 1280px; the navbar's GitHub and Install buttons hide below 640px. The models table becomes a definition list below 640px.
+The opening fills the viewport less the navbar (`100svh - 4rem`). The navbar is FTDS's sticky 64px bar (56px on phones) and collapses to its popover menu below 1280px; the navbar's GitHub and Install buttons hide below 640px. The models table becomes a definition list below 640px.
 
 ## Elevation & Depth
 
@@ -370,7 +370,7 @@ Provider names on the Field: translucent white pills, label size, no border.
 Ink background, white text, body-small monospace at a relaxed 1.625 line height, 14px corners, tab size 2, horizontal scroll rather than wrap. Comments in Code Comment grey, keys in On-Field Edge blue, strings in Success Edge green.
 
 ### Navigation
-FTDS's navbar: sticky white bar with a Hairline bottom border, logo and "FiscalCR" at body-lg semibold, anchor links, then GitHub (secondary) and Install (primary). Below 1280px the links move into a popover panel over a 40% Ink scrim. FTDS's phase banner sits beneath it, marking the site Beta.
+FTDS's navbar: sticky white bar with a Hairline bottom border, logo and "FiscalCR" at body-lg semibold, anchor links, then GitHub (secondary) and Install (primary). Below 1280px the links move into a popover panel over a 40% Ink scrim.
 
 ### Numbered Steps
 FTDS Blue circles with white semibold numerals (28px in the pipeline, 36px in install), marked `aria-hidden` with the number repeated for screen readers.

@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mof-malaysia/fiscal-cr@main
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
         with:
           api_key: \${{ secrets.LLM_API_KEY }}
           provider: anthropic

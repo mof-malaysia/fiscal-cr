@@ -1,6 +1,6 @@
 ---
 /**
- * Every page: skip link, navbar, phase banner, the page, and the footer.
+ * Every page: skip link, navbar, the page, and the footer.
  * No analytics and no third-party requests.
  */
 // Only Inter's Latin file, preloaded so it starts loading with the page.
@@ -8,7 +8,6 @@ import interLatin from "@fontsource-variable/inter/files/inter-latin-wght-normal
 import "@/styles/global.css";
 import Button from "@/components/ui/button.astro";
 import Navbar from "@/components/ui/navbar.astro";
-import PhaseBanner from "@/components/ui/phase-banner.astro";
 import SiteFooter from "@/components/ui/site-footer.astro";
 import Skiplink from "@/components/ui/skiplink.astro";
 import { APP_URL, CONFIG_URL, GITHUB_URL, ISSUES_URL, navItems, README_URL, url } from "@/site";
@@ -56,10 +55,6 @@ const anchor = (hash: string) => (Astro.url.pathname === home ? hash : `${home}$
       <Button slot="actions" href={GITHUB_URL} variant="default-outline" class="max-sm:hidden">GitHub</Button>
       <Button slot="actions" href={anchor("#install")} variant="primary-fill" class="max-sm:hidden">Install</Button>
     </Navbar>
-    <PhaseBanner phase="Beta" lang="en">
-      FiscalCR is beta software and still changing.{" "}
-      <a href={ISSUES_URL} class="text-txt-primary focus-ring rounded-xs font-medium underline decoration-1 underline-offset-[3px]">Report an issue on GitHub</a>
-    </PhaseBanner>
     <main id="main" tabindex="-1">
       <slot />
     </main>
