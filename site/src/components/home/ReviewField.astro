@@ -12,10 +12,10 @@
  */
 import CopyButton from "@/components/CopyButton.astro";
 import FieldButton from "@/components/FieldButton.astro";
-import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
+import { GITHUB_URL, pageColumn } from "@/site";
 ---
 
-<section class="review-field on-field text-txt-white relative isolate overflow-hidden" aria-labelledby="hero-title" data-field>
+<section class="on-field relative isolate overflow-hidden" aria-labelledby="hero-title" data-field>
   <canvas class="review-field__canvas" aria-hidden="true" data-canvas></canvas>
   <div class="review-field__veil" aria-hidden="true"></div>
   <div class:list={[pageColumn, "relative grid min-h-[calc(100svh-4rem)] items-center gap-12 py-20 md:py-24 lg:grid-cols-12"]}>
@@ -30,7 +30,7 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
         FiscalCR reviews every pull request with the model you choose, inside your own GitHub Actions.
       </p>
       <div class="mt-10 flex flex-wrap gap-3">
-        <CopyButton text={WORKFLOW} variant="field" />
+        <CopyButton />
         <FieldButton href={GITHUB_URL} variant="quiet">View on GitHub</FieldButton>
       </div>
       <p class="text-txt-on-field text-body-sm mt-8 max-w-[34rem]">
@@ -64,9 +64,6 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
 </section>
 
 <style>
-  .review-field {
-    background: rgb(var(--_primary-700));
-  }
   .review-field__canvas {
     position: absolute;
     inset: 0;
@@ -116,7 +113,7 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
 
   const rgb = (name: string) => {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim().split(/\s+/).map(Number);
-    return v.length === 3 && v.every(Number.isFinite) ? `${v[0]}, ${v[1]}, ${v[2]}` : "255, 255, 255";
+    return v.length === 3 && v.every(Number.isFinite) ? `rgb(${v[0]} ${v[1]} ${v[2]})` : "rgb(255 255 255)";
   };
 
   // A small seeded random, so every visit draws the same pull request.
@@ -175,10 +172,18 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
       return lines;
     };
 
+    // Colours are fixed strings; opacity goes through globalAlpha, so no colour string is built per bar.
+    const paint = (color: string | CanvasGradient, alpha: number) => {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = alpha;
+    };
+
     let width = 0;
     let height = 0;
     let columns = 0;
     let offsetX = 0;
+    // The example card's left edge and its removed line, relative to the field; measured on resize, not per frame.
+    let anchor: { x: number; y: number } | null = null;
     const dpr = Math.min(2, devicePixelRatio || 1);
 
     const resize = () => {
@@ -191,7 +196,23 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
       columns = Math.ceil((width + GAP) / (COLUMN + GAP)) + 1;
       offsetX = (width - (columns * (COLUMN + GAP) - GAP)) / 2;
       while (files.length < columns) files.push(makeFile(1009 + files.length * 7919));
+      // Offsets, not getBoundingClientRect: the card's entrance transform must not move the anchor.
+      anchor = null;
+      if (card?.offsetParent) {
+        let x = 0;
+        let y = 0;
+        for (let el: HTMLElement | null = card; el && el !== section; el = el.offsetParent as HTMLElement | null) {
+          x += el.offsetLeft;
+          y += el.offsetTop;
+        }
+        anchor = { x, y: y + 162 };
+      }
     };
+
+    // The wash above the sweep, made once and moved with translate.
+    const wash = ctx.createLinearGradient(0, -90, 0, 0);
+    wash.addColorStop(0, c.sweep.replace(")", " / 0)"));
+    wash.addColorStop(1, c.sweep.replace(")", " / 0.1)"));
 
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const born = performance.now();
@@ -220,10 +241,11 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
 
         for (let rep = -1; rep <= Math.ceil(height / PATTERN); rep++) {
           const base = rep * PATTERN - scroll;
+          if (base > height || base + PATTERN < 0) continue;
           // The file's tab, at the top of each repeat.
           const tabY = base + 6;
           if (tabY > -20 && tabY < height) {
-            ctx.fillStyle = `rgba(${c.line}, 0.28)`;
+            paint(c.line, 0.28);
             ctx.beginPath();
             ctx.roundRect(left, tabY, 92, 7, 3.5);
             ctx.fill();
@@ -231,7 +253,8 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
 
           for (const line of file) {
             const y = base + line.y;
-            if (y < -BAR || y > height) continue;
+            if (y < -BAR) continue;
+            if (y > height) break; // lines are in order
 
             // Lit by the sweep: brighter the closer it passes.
             const near = Math.max(0, 1 - Math.abs(y - sy) / 70);
@@ -254,18 +277,18 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
               }
               if (age < SHOW + FIXED + FADE) {
                 // The line is highlighted across the file, with a marker in the gutter, like an inline comment.
-                ctx.fillStyle = `rgba(${color}, ${alpha * 0.28})`;
+                paint(color, alpha * 0.28);
                 ctx.beginPath();
                 ctx.roundRect(left - 6, y - 4, COLUMN + 12, BAR + 8, 3);
                 ctx.fill();
-                ctx.fillStyle = `rgba(${color}, ${alpha})`;
+                paint(color, alpha);
                 ctx.beginPath();
                 ctx.arc(left - 14, y + BAR / 2, 4, 0, Math.PI * 2);
                 ctx.fill();
               }
             }
 
-            ctx.fillStyle = `rgba(${color}, ${alpha})`;
+            paint(color, alpha);
             ctx.beginPath();
             ctx.roundRect(left + line.x, y, line.w, BAR, BAR / 2);
             ctx.fill();
@@ -274,36 +297,31 @@ import { GITHUB_URL, pageColumn, WORKFLOW } from "@/site";
       }
 
       // The example finding's line: held critical beside the card, with a lead from its gutter to the card.
-      if (card && card.offsetParent) {
-        const cr = card.getBoundingClientRect();
-        const sr = section.getBoundingClientRect();
-        // Level with the card's removed line.
-        const ay = cr.top - sr.top + 162;
-        const ax = cr.left - sr.left;
+      if (anchor) {
+        const { x: ax, y: ay } = anchor;
         const from = ax - 200;
-        ctx.fillStyle = `rgba(${c.critical}, 0.22)`;
+        paint(c.critical, 0.22);
         ctx.beginPath();
         ctx.roundRect(from, ay - 6, ax - from, 12, 3);
         ctx.fill();
-        ctx.fillStyle = `rgba(${c.critical}, 0.95)`;
+        paint(c.critical, 0.95);
         ctx.beginPath();
         ctx.roundRect(from + 18, ay - 2, 110, BAR, BAR / 2);
         ctx.fill();
         ctx.beginPath();
         ctx.arc(from + 6, ay, 4, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = `rgba(${c.critical}, 0.7)`;
+        paint(c.critical, 0.7);
         ctx.fillRect(from + 136, ay - 0.5, ax - from - 136, 1);
       }
 
       // The sweep itself: a fine line, with a faint wash above it where it has just read.
       if (sy > -100 && sy < height + 100) {
-        const wash = ctx.createLinearGradient(0, sy - 90, 0, sy);
-        wash.addColorStop(0, `rgba(${c.sweep}, 0)`);
-        wash.addColorStop(1, `rgba(${c.sweep}, 0.1)`);
-        ctx.fillStyle = wash;
-        ctx.fillRect(0, sy - 90, width, 90);
-        ctx.fillStyle = `rgba(${c.sweep}, 0.65)`;
+        ctx.translate(0, sy);
+        paint(wash, 1);
+        ctx.fillRect(0, -90, width, 90);
+        ctx.translate(0, -sy);
+        paint(c.sweep, 0.65);
         ctx.fillRect(0, sy, width, 1);
       }
     };

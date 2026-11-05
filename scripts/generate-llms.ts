@@ -11,30 +11,18 @@
  *
  * `test/unit/llms.test.ts` fails when the committed `llms.txt` is out of date.
  */
-import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse, stringify } from 'yaml';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 import { PROVIDER_DEFAULT_MODELS, RELEASE_MODEL_PARAMS } from '../src/config/provider-models.js';
 import { MODEL_ROLES, PROVIDERS, PROVIDERS_REQUIRING_MODEL } from '../src/config/schema.js';
+import { latestRelease, workflowYaml } from './release.js';
 
 export const LLMS_PATH = fileURLToPath(new URL('../llms.txt', import.meta.url));
 const ACTION_PATH = fileURLToPath(new URL('../action.yml', import.meta.url));
 const REPO = 'mof-malaysia/fiscal-cr';
 const SITE = 'https://mof-malaysia.github.io/fiscal-cr';
-
-/** The newest stable release tag (vX.Y.Z), from the local git tags. */
-export function latestRelease(): string {
-  const tags = execFileSync('git', ['tag', '--list', 'v*', '--sort=-v:refname'], { encoding: 'utf8' })
-    .split('\n')
-    .map((tag) => tag.trim())
-    .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag));
-  if (!tags[0]) {
-    throw new Error('No stable release tag (vX.Y.Z) found. Run `git fetch --tags` first.');
-  }
-  return tags[0];
-}
 
 /** The version a rendered guide was written for, from its title line. */
 export function versionOf(guide: string): string | undefined {
@@ -56,6 +44,12 @@ export function readAction(): ActionMetadata {
 }
 
 const code = (value: string) => `\`${value}\``;
+
+/** `a`, `a` and `b`, `a`, `b` and `c`. */
+const listOf = (values: readonly string[]) => {
+  const items = values.map(code);
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+};
 
 function inputLines(action: ActionMetadata): string {
   return Object.entries(action.inputs)
@@ -86,7 +80,8 @@ function modelLines(): string {
 
 export function renderLlmsTxt(version: string, action: ActionMetadata = readAction()): string {
   const uses = `${REPO}@${version}`;
-  const needModel = PROVIDERS_REQUIRING_MODEL.map(code).join(' and ');
+  const needModel = listOf(PROVIDERS_REQUIRING_MODEL);
+  const withModels = listOf(Object.keys(PROVIDER_DEFAULT_MODELS));
   return `# FiscalCR ${version}
 
 > FiscalCR is open-source AI code review for GitHub pull requests. It runs as a GitHub Action in the repository's own CI (or as a self-hosted GitHub App), sends the pull request to the LLM provider the team configures, and posts a check run, one summary comment and inline findings on the changed lines. Fixed findings are replied to and their threads resolved. FiscalCR has no backend of its own. This guide is for coding agents adding or configuring FiscalCR in a repository; it is generated from FiscalCR's own sources for ${version}.
@@ -102,32 +97,7 @@ Changing FiscalCR itself: read AGENTS.md in the repository, not this file.
 2. Commit this workflow as \`.github/workflows/fiscalcr-review.yml\`:
 
 \`\`\`yaml
-name: FiscalCR Review
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, review_requested]
-
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
-
-# Serializes runs for one PR so two reviews never race the same state.
-concurrency:
-  group: fiscalcr-\${{ github.event.pull_request.number }}
-  cancel-in-progress: false
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ${uses}
-        with:
-          api_key: \${{ secrets.LLM_API_KEY }}
-          provider: anthropic
-\`\`\`
+${workflowYaml(version)}\`\`\`
 
 3. Optionally add \`.fiscalcr-review.yml\` at the repository root (see Configuration). Without it, built-in defaults apply.
 4. Open a pull request. FiscalCR reviews it on open, on every push, when it is marked ready for review and when review is requested. Drafts are skipped by default.
@@ -138,7 +108,7 @@ Keep the \`permissions\` and \`concurrency\` blocks as shown. Pin the action to 
 
 Providers: ${PROVIDERS.map(code).join(', ')}.
 
-- ${code('anthropic')}, ${code('openai')} and ${code('kimi')} use the models pinned to this release (below) when \`model\` is not set. Prefer that: the prompts were tuned against them.
+- ${withModels} use the models pinned to this release (below) when \`model\` is not set. Prefer that: the prompts were tuned against them.
 - ${needModel} have no release models and require \`model\`.
 - ${code('openai-compatible')} also requires \`base_url\` (the provider's \`/v1\` URL). ${code('openrouter')} defaults to \`https://openrouter.ai/api/v1\` and takes OpenRouter model IDs such as \`anthropic/claude-sonnet-5.5\`.
 - ${code('anthropic')} uses the native Messages API and defaults to \`https://api.anthropic.com/v1\`.

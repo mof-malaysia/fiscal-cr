@@ -18,8 +18,9 @@ interface Props {
   noindex?: boolean;
 }
 const { title, description, noindex = false } = Astro.props;
-const canonical = new URL(url("/"), Astro.site).href;
 const home = url("/");
+const logo = url("/logo.svg");
+const canonical = new URL(home, Astro.site).href;
 const anchor = (hash: string) => (Astro.url.pathname === home ? hash : `${home}${hash}`);
 ---
 
@@ -37,7 +38,7 @@ const anchor = (hash: string) => (Astro.url.pathname === home ? hash : `${home}$
       set:html={`@font-face{font-family:"Inter Variable";font-style:normal;font-display:swap;font-weight:100 900;src:url(${interLatin}) format("woff2-variations");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`}
     />
     <link rel="canonical" href={canonical} />
-    <link rel="icon" href={url("/logo.svg")} type="image/svg+xml" />
+    <link rel="icon" href={logo} type="image/svg+xml" />
     <meta name="theme-color" content="#1D4ED8" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
@@ -48,7 +49,7 @@ const anchor = (hash: string) => (Astro.url.pathname === home ? hash : `${home}$
   <body class="bg-bg-white text-txt-black-900 font-body">
     <Skiplink href="#main" lang="en" />
     <Navbar
-      brand={{ title: "FiscalCR", href: home, logo: { src: url("/logo.svg"), alt: "" } }}
+      brand={{ title: "FiscalCR", href: home, logo: { src: logo, alt: "" } }}
       items={navItems.map((item) => ({ ...item, href: anchor(item.href) }))}
       lang="en"
     >
@@ -85,7 +86,7 @@ const anchor = (hash: string) => (Astro.url.pathname === home ? hash : `${home}$
       ]}
       class="px-4.5 md:px-[max(1.5rem,calc((100%-1232px)/2))]"
     >
-      <img slot="logo" src={url("/logo.svg")} alt="" width="36" height="36" class="size-9" />
+      <img slot="logo" src={logo} alt="" width="36" height="36" class="size-9" />
       <p>Open-source AI code review for GitHub pull requests.</p>
       <p>Open source under the MIT licence.</p>
     </SiteFooter>

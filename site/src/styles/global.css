@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "tw-animate-css";
 @import "../../styles/ftds.css";
 
 /* Inter is self-hosted (@fontsource-variable/inter): no third-party font requests. */
@@ -15,7 +14,6 @@
  * (Primary 950) that white objects sit on. Everything else is FTDS.
  */
 @theme inline {
-  --color-bg-field: rgb(var(--_primary-700));
   --color-bg-stage: rgb(var(--_primary-950));
   --color-txt-on-field: rgb(var(--_primary-100));
   --color-otl-on-field: rgb(var(--_primary-300));
@@ -51,7 +49,15 @@ html {
   }
 }
 
-/* On the primary field, focus rings are white: Focus Blue doesn't show on Blue 700. */
+/* The primary field, with white text. Focus rings are white too: Focus Blue doesn't show on Blue 700. */
 .on-field {
+  background: rgb(var(--_primary-700));
+  color: rgb(var(--txt-white));
   --fr-primary: 255 255 255;
+}
+
+/* Code in running text. */
+#main p > code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
 }

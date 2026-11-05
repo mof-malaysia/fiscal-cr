@@ -1,8 +1,7 @@
 // What the page shares: addresses with the base path, the links, the classes
 // sections share, and the workflow file the Copy buttons put on the clipboard.
 // Its version is read from the latest release tag at build time.
-import { withBase } from "./base-path.mjs";
-import { latestRelease } from "./lib/release";
+import { latestRelease, workflowYaml } from "../../scripts/release";
 
 export const GITHUB_URL = "https://github.com/mof-malaysia/fiscal-cr";
 export const README_URL = `${GITHUB_URL}#readme`;
@@ -13,8 +12,16 @@ export const APP_URL = `${GITHUB_URL}#self-hosted-github-app`;
 /** The release the workflow pins, e.g. "v1.2.0": the newest stable git tag. */
 export const RELEASE = latestRelease();
 
-/** A root-relative address ("/logo.svg") with the site's base in front. */
-export const url = (path: string) => withBase(import.meta.env.BASE_URL, path);
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+/** A root-relative address ("/logo.svg") with the site's base in front ("/fiscal-cr/logo.svg"). */
+export const url = (path: string) => (path === "/" ? base || "/" : base + path);
+
+/** A link-styled button on the primary field, where FTDS's filled primary button would vanish. */
+export const fieldButton = {
+  solid: "control-lg text-label-lg focus-ring inline-flex items-center gap-2 rounded-md font-medium transition-colors bg-bg-white text-txt-primary hover:bg-bg-primary-50",
+  quiet: "control-lg text-label-lg focus-ring inline-flex items-center gap-2 rounded-md font-medium transition-colors text-txt-white bg-bg-white/12 hover:bg-bg-white/20",
+};
 
 /** The page column every section sits in: FTDS's wide column, with the navbar's gutter. */
 export const pageColumn = "mx-auto w-full max-w-[1280px] px-4.5 md:px-6";
@@ -31,30 +38,5 @@ export const navItems = [
   { label: "Install", href: "#install" },
 ];
 
-/** The workflow from the README's quick start, as a team would commit it. */
-export const WORKFLOW = `# .github/workflows/fiscalcr-review.yml
-name: FiscalCR Review
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, review_requested]
-
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
-
-concurrency:
-  group: fiscalcr-\${{ github.event.pull_request.number }}
-  cancel-in-progress: false
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: mof-malaysia/fiscal-cr@${RELEASE}
-        with:
-          api_key: \${{ secrets.LLM_API_KEY }}
-          provider: anthropic
-`;
+/** The quick-start workflow, the same one llms.txt gives (scripts/release.ts). */
+export const WORKFLOW = workflowYaml(RELEASE);

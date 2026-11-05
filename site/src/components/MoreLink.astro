@@ -1,20 +1,18 @@
 ---
-/** A "read more" link with an arrow: primary on white, white on the primary field. */
+/** A "read more" link with an arrow. */
 import ArrowForward from "@/components/ui/icons/arrow-forward.astro";
 
 interface Props {
   href: string;
-  onField?: boolean;
   class?: string;
 }
-const { href, onField = false, class: className } = Astro.props;
+const { href, class: className } = Astro.props;
 ---
 
 <a
   href={href}
   class:list={[
-    "text-label-lg focus-ring inline-flex items-center gap-1.5 rounded-xs font-medium underline decoration-1 underline-offset-[3px] hover:decoration-2",
-    onField ? "text-txt-white" : "text-txt-primary",
+    "text-label-lg focus-ring text-txt-primary inline-flex items-center gap-1.5 rounded-xs font-medium underline decoration-1 underline-offset-[3px] hover:decoration-2",
     className,
   ]}
 >

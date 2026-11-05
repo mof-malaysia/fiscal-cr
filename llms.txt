@@ -13,6 +13,7 @@ Changing FiscalCR itself: read AGENTS.md in the repository, not this file.
 2. Commit this workflow as `.github/workflows/fiscalcr-review.yml`:
 
 ```yaml
+# .github/workflows/fiscalcr-review.yml
 name: FiscalCR Review
 
 on:
@@ -49,7 +50,7 @@ Keep the `permissions` and `concurrency` blocks as shown. Pin the action to a re
 
 Providers: `openai-compatible`, `openrouter`, `kimi`, `openai`, `anthropic`.
 
-- `anthropic`, `openai` and `kimi` use the models pinned to this release (below) when `model` is not set. Prefer that: the prompts were tuned against them.
+- `kimi`, `openai` and `anthropic` use the models pinned to this release (below) when `model` is not set. Prefer that: the prompts were tuned against them.
 - `openai-compatible` and `openrouter` have no release models and require `model`.
 - `openai-compatible` also requires `base_url` (the provider's `/v1` URL). `openrouter` defaults to `https://openrouter.ai/api/v1` and takes OpenRouter model IDs such as `anthropic/claude-sonnet-5.5`.
 - `anthropic` uses the native Messages API and defaults to `https://api.anthropic.com/v1`.
