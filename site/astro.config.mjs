@@ -4,8 +4,9 @@
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "astro/config";
 
-// GitHub Pages serves the project at /fiscal-cr until there's a custom domain.
-// SITE_BASE="/" builds for the root (a custom domain, or `pnpm dev`).
+// The deploy sets SITE_BASE from Pages' own path (configure-pages' base_path):
+// /fiscal-cr today, / once there's a custom domain. Unset, as in `pnpm dev`,
+// the site builds for the root.
 const base = process.env.SITE_BASE ?? "/";
 
 export default defineConfig({
