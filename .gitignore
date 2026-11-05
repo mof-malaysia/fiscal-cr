@@ -10,8 +10,7 @@ coverage/
 .vscode/
 .idea/
 .claude
-.impeccable
-!.impeccable/DESIGN.json
+.impeccable/
 
 # Cache / build metadata
 .cache/
