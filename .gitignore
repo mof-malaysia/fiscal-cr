@@ -9,6 +9,9 @@ action/dist/
 coverage/
 .vscode/
 .idea/
+.claude
+.impeccable
+!.impeccable/DESIGN.json
 
 # Cache / build metadata
 .cache/

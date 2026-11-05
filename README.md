@@ -1,20 +1,41 @@
-# FiscalCR
+<p align="center">
+  <img src="docs/logo.svg" alt="FiscalCR logo" width="88" height="88">
+</p>
 
-AI-powered, model-agnostic code review for GitHub pull requests.
+<h1 align="center">FiscalCR</h1>
 
-[GitHub Action](#quick-start--github-action) · [Self-Hosted GitHub App](#self-hosted-github-app) · [Configuration](#configuration)
+<p align="center">
+  <strong>Code review worth reading, from the model you choose.</strong><br>
+  AI review for every GitHub pull request, running in your own CI with your own API key. Findings land on the line, and resolve themselves when you fix them.
+</p>
 
-## Features
+<p align="center">
+  <a href="https://mof-malaysia.github.io/fiscal-cr">Website</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#self-hosted-github-app">Self-hosted App</a> ·
+  <a href="#how-it-works">How it works</a>
+</p>
 
-- Model-agnostic providers: Anthropic, OpenAI, Kimi, and compatible APIs
-- Full-PR reviews with inline annotations and summary comments
-- Optional visualizations for eligible full reviews
-- Sticky lifecycle state and legacy comment modes
-- Repo-level config via `.fiscalcr-review.yml`
-- GitHub Action and self-hosted GitHub App modes
-- Multilingual reviews in `en`, `zh-TW`, `zh-CN`, `ja`, and `ko`
+---
 
-## Quick Start — GitHub Action
+A review bot is only useful if people read what it posts. FiscalCR reviews each pull request with Anthropic, OpenAI, Kimi, OpenRouter or any OpenAI-compatible endpoint. It posts a check run, one summary comment and inline findings on the lines they're about. It drops low-confidence findings, doesn't repeat itself, and resolves its own threads when a push fixes them. It runs as a step in your GitHub Actions, or as a GitHub App on your own server. FiscalCR has no backend of its own: reviews go straight to the provider you configure.
+
+|                                  |                                                                                                       |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 🔌 **Any model, your key**       | Anthropic (native API), OpenAI, Kimi, OpenRouter or any OpenAI-compatible endpoint, self-hosted too.  |
+| 🔑 **Keyless on Anthropic**      | GitHub OIDC and workload identity federation: no Claude secret stored in GitHub.                      |
+| 🎯 **Signal over noise**         | Confidence threshold, annotation caps, deduped findings; nitpicks go to check annotations.            |
+| ♻️ **Cleans up after itself**    | One sticky summary, incremental reviews of new commits, fixed findings replied to and resolved.       |
+| 🧭 **Scales with the PR**        | Small PRs take one call; large ones run intent, parallel group reviews and synthesis.                 |
+| 📌 **Release-pinned models**     | Each release pins the models its prompts were tuned against, so reviews don't drift.                  |
+| ⚙️ **One YAML file**             | Aspects, severity floor, `failOn`, custom rules, prompt focus and file filters in `.fiscalcr-review.yml`. |
+| 🗺️ **Optional visualizations**   | A flowchart, sequence diagram or change table on eligible full reviews.                               |
+| 🌏 **Five review languages**     | `en`, `zh-TW`, `zh-CN`, `ja` and `ko`.                                                                |
+
+## Quick start
+
+Add FiscalCR to a repository as a GitHub Action in two steps. For comment-driven reviews (`@fiscalcr review`), run the [self-hosted GitHub App](#self-hosted-github-app) instead.
 
 ### 1. Add secrets
 
@@ -407,12 +428,17 @@ warning.
 
 ## How it works
 
-```text
-PR event → load config → extract and filter files
-  ├─ small PR / pipeline disabled → one combined fast-path call
-  └─ large PR → intent → groups → parallel reviews → synthesis
-      └─ eligible full review → optional visualization
-→ publish the Check Run and PR review
+```mermaid
+flowchart LR
+  E([PR event]) --> C[Load config, extract and filter files]
+  C -->|small PR or pipeline off| F[Fast path: one combined call]
+  C -->|large PR| I[Intent and grouping]
+  I --> G[Parallel group reviews]
+  G --> S[Synthesis]
+  S -.->|eligible full review| V[Optional visualization]
+  F --> P([Check run, summary and inline review])
+  S --> P
+  V -.-> P
 ```
 
 - Fast-path and multi-pass findings use the same validation.
@@ -443,7 +469,7 @@ comment per PR. Legacy mode stores no lifecycle state.
 
 Fork PRs use read-only tokens and cannot post reviews. Thread cleanup needs
 `pull-requests: write`; manual resolution also needs the App thread webhook.
-Cleanup failures log and do not fail the review. Keep the Quick Start
+Cleanup failures log and do not fail the review. Keep the Quick start
 `concurrency` group to serialize runs for one PR.
 
 ### Visualizations
@@ -541,7 +567,9 @@ fiscal-cr/
 │   ├── types/
 │   └── utils/
 ├── docs/
-│   └── llm-evaluation.md
+│   ├── llm-evaluation.md
+│   └── logo.svg
+├── site/                   # landing page (Astro + FTDS), deployed to GitHub Pages
 ├── test/
 │   └── unit/
 └── .fiscalcr-review.yml
@@ -555,6 +583,21 @@ pnpm test
 pnpm lint
 pnpm build:action
 ```
+
+### Landing page
+
+The website in `site/` is a static Astro build on the FTDS components,
+deployed to GitHub Pages by `.github/workflows/site.yml`. It's a separate
+package with its own lockfile (Node 24, pnpm 12):
+
+```bash
+cd site
+pnpm install
+pnpm dev        # http://localhost:4322
+```
+
+The workflow its Copy buttons copy lives in `site/src/site.ts`; keep it in
+step with the Quick start above. See [site/README.md](site/README.md).
 
 ## Local LLM evaluation
 

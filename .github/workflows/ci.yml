@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mof-malaysia/fiscal-cr@v1.1.1-beta.1
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
         with:
           provider: anthropic
           anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
