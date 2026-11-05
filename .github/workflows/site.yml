@@ -8,6 +8,13 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/site.yml"
+      # llms.txt is generated from these at build time.
+      - "action.yml"
+      - "src/config/**"
+      - "scripts/generate-llms.ts"
+  # A new release changes the pinned version on the page and in llms.txt.
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -29,6 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The release tags: the page and llms.txt pin the latest one.
+          fetch-depth: 0
+          ref: main
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: site/package.json
@@ -36,7 +47,12 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: site/pnpm-lock.yaml
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            site/pnpm-lock.yaml
+      # The root packages: llms.txt is generated from FiscalCR's own sources.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: .
       - run: pnpm install --frozen-lockfile
       - id: pages
         uses: actions/configure-pages@v5

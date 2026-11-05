@@ -71,6 +71,7 @@ const anchor = (hash: string) => (Astro.url.pathname === home ? hash : `${home}$
             { label: "README", href: README_URL },
             { label: "Configuration", href: CONFIG_URL },
             { label: "Self-hosted App", href: APP_URL },
+            { label: "llms.txt (for agents)", href: url("/llms.txt") },
           ],
         },
         {

@@ -1,12 +1,17 @@
 // What the page shares: addresses with the base path, the links, the classes
 // sections share, and the workflow file the Copy buttons put on the clipboard.
+// Its version is read from the latest release tag at build time.
 import { withBase } from "./base-path.mjs";
+import { latestRelease } from "./lib/release";
 
 export const GITHUB_URL = "https://github.com/mof-malaysia/fiscal-cr";
 export const README_URL = `${GITHUB_URL}#readme`;
 export const ISSUES_URL = `${GITHUB_URL}/issues`;
 export const CONFIG_URL = `${GITHUB_URL}#configuration`;
 export const APP_URL = `${GITHUB_URL}#self-hosted-github-app`;
+
+/** The release the workflow pins, e.g. "v1.2.0": the newest stable git tag. */
+export const RELEASE = latestRelease();
 
 /** A root-relative address ("/logo.svg") with the site's base in front. */
 export const url = (path: string) => withBase(import.meta.env.BASE_URL, path);
@@ -48,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mof-malaysia/fiscal-cr@v1.2.0
+      - uses: mof-malaysia/fiscal-cr@${RELEASE}
         with:
           api_key: \${{ secrets.LLM_API_KEY }}
           provider: anthropic

@@ -1,0 +1,261 @@
+# FiscalCR v1.2.0
+
+> FiscalCR is open-source AI code review for GitHub pull requests. It runs as a GitHub Action in the repository's own CI (or as a self-hosted GitHub App), sends the pull request to the LLM provider the team configures, and posts a check run, one summary comment and inline findings on the changed lines. Fixed findings are replied to and their threads resolved. FiscalCR has no backend of its own. This guide is for coding agents adding or configuring FiscalCR in a repository; it is generated from FiscalCR's own sources for v1.2.0.
+
+Source: https://github.com/mof-malaysia/fiscal-cr
+README (full reference): https://github.com/mof-malaysia/fiscal-cr#readme
+Website: https://mof-malaysia.github.io/fiscal-cr
+Changing FiscalCR itself: read AGENTS.md in the repository, not this file.
+
+## Add FiscalCR to a repository
+
+1. Add an Actions secret named `LLM_API_KEY` holding the provider's API key (repository Settings → Secrets and variables → Actions). Never write the key into a workflow or config file. On Anthropic, you can skip the secret and use keyless OIDC instead (below).
+2. Commit this workflow as `.github/workflows/fiscalcr-review.yml`:
+
+```yaml
+name: FiscalCR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+# Serializes runs for one PR so two reviews never race the same state.
+concurrency:
+  group: fiscalcr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
+        with:
+          api_key: ${{ secrets.LLM_API_KEY }}
+          provider: anthropic
+```
+
+3. Optionally add `.fiscalcr-review.yml` at the repository root (see Configuration). Without it, built-in defaults apply.
+4. Open a pull request. FiscalCR reviews it on open, on every push, when it is marked ready for review and when review is requested. Drafts are skipped by default.
+
+Keep the `permissions` and `concurrency` blocks as shown. Pin the action to a release tag (`mof-malaysia/fiscal-cr@v1.2.0`); `@main` is unreleased code.
+
+## Choosing a provider
+
+Providers: `openai-compatible`, `openrouter`, `kimi`, `openai`, `anthropic`.
+
+- `anthropic`, `openai` and `kimi` use the models pinned to this release (below) when `model` is not set. Prefer that: the prompts were tuned against them.
+- `openai-compatible` and `openrouter` have no release models and require `model`.
+- `openai-compatible` also requires `base_url` (the provider's `/v1` URL). `openrouter` defaults to `https://openrouter.ai/api/v1` and takes OpenRouter model IDs such as `anthropic/claude-sonnet-5.5`.
+- `anthropic` uses the native Messages API and defaults to `https://api.anthropic.com/v1`.
+
+Models pinned to v1.2.0, per pipeline stage:
+
+- `kimi`: intent `k3-256k`, fastPath `k3-256k`, groupReview `k3`, synthesis `k3`, visualize `k3-256k`
+- `openai`: intent `gpt-6-luna`, fastPath `gpt-6-luna`, groupReview `gpt-6.1-sol`, synthesis `gpt-6.1-sol`, visualize `gpt-6-luna`
+- `anthropic`: intent `claude-sonnet-5-5`, fastPath `claude-sonnet-5-5`, groupReview `claude-opus-5-5`, synthesis `claude-opus-5-5`, visualize `claude-sonnet-5-5`
+
+Release-tuned request params: `gpt-6-luna` is sent `reasoning_effort: max`; `gpt-6.1-sol` is sent `reasoning_effort: medium`.
+
+To override, set `model` (every stage) or `models.<stage>` (one stage) in the Action inputs or the config file. Resolution order: `models.<stage>`, then `model`, then the release model.
+
+### Keyless Anthropic (GitHub OIDC)
+
+With `provider: anthropic`, set the four federation inputs instead of `api_key` and add `id-token: write` to `permissions`:
+
+```yaml
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
+        with:
+          provider: anthropic
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+```
+
+The IDs are Actions variables, not secrets. The federation rule is created in the Claude Console (Settings → Workload identity); see the README. Set either `api_key` or the federation inputs, never both. Pull requests from forks get no OIDC token.
+
+## Action inputs
+
+- `api_key`: LLM API key (omit when using the anthropic_federation_* inputs)
+- `anthropic_federation_rule_id`: Anthropic workload identity federation rule ID (fdrl_...); enables keyless auth via GitHub OIDC. Requires provider anthropic and id-token: write
+- `anthropic_organization_id`: Anthropic organization ID (UUID) for workload identity federation
+- `anthropic_service_account_id`: Anthropic service account ID (svac_...) for workload identity federation
+- `anthropic_workspace_id`: Anthropic workspace ID (wrkspc_...); required only when the federation rule spans multiple workspaces
+- `oidc_audience`: Audience for the GitHub OIDC token used in federation (defaults to the provider's API audience)
+- `github_token` (default `${{ github.token }}`): GitHub token for API access
+- `provider`: Model provider: openai-compatible, openrouter, kimi, openai, or anthropic
+- `model`: Model to use (overrides repo config when provided)
+- `base_url`: Provider base URL override; Anthropic defaults to api.anthropic.com/v1
+- `user_agent`: Custom User-Agent header for endpoints that whitelist clients
+- `model_params`: Provider-native request fields as a JSON object, merged into every model call
+- `language`: Review comment language (overrides repo config when provided)
+- `fail_on`: Fail the check on: critical, warning, never (overrides repo config when provided)
+- `config_path` (default `.fiscalcr-review.yml`): Path to config file (relative to repo root)
+- `telemetry` (default `false`): Emit metrics-only token telemetry to Action logs
+- `experimental`: Enable experimental prompt optimizations (overrides repo config when provided)
+- `visualize`: Enable review visualization (overrides review.visualize.enabled when provided)
+- `comments`: Comment mode: sticky or legacy (overrides review.comments.mode when provided)
+
+Inputs override the config file. `visualize` maps to `review.visualize.enabled` and `comments` to `review.comments.mode`.
+
+## Action outputs
+
+- `review_summary`: The review summary text
+- `annotations_count`: Number of annotations created
+- `critical_count`: Number of critical issues found
+- `tokens_used`: Total tokens used
+- `cost_estimate`: Estimated API cost in USD
+
+## Configuration (.fiscalcr-review.yml)
+
+Every key is optional. An invalid file fails the run instead of being ignored. These are the built-in defaults:
+
+```yaml
+language: en
+provider: kimi
+models: {}
+experimental: false
+review:
+  auto:
+    enabled: true
+    onOpen: true
+    onPush: true
+    onReviewRequest: true
+    drafts: false
+  aspects:
+    bugs: true
+    security: true
+    performance: true
+    style: true
+    bestPractices: true
+    documentation: false
+    testing: false
+  visualize:
+    enabled: false
+    mode: auto
+    maxOutputTokens: 2000
+    minChangedFiles: 2
+    minChangedLines: 20
+  minSeverity: suggestion
+  maxAnnotations: 30
+  failOn: critical
+  incremental:
+    enabled: true
+    maxDeltaFiles: 150
+  comments:
+    mode: sticky
+    dedupe: true
+    resolveOutdated: true
+    maxOpenComments: 100
+files:
+  include:
+    - "**/*"
+  exclude:
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/*.min.*"
+    - "**/*.lock"
+    - "**/*.lockb"
+    - "**/package-lock.json"
+    - "**/npm-shrinkwrap.json"
+    - "**/yarn.lock"
+    - "**/pnpm-lock.yaml"
+    - "**/bun.lockb"
+    - "**/go.sum"
+    - "**/go.work.sum"
+    - "**/packages.lock.json"
+  maxFileSize: 200000
+rules: []
+prompt: {}
+pipeline:
+  enabled: true
+  concurrency: 3
+  groupTokenBudget: 80000
+  relatedContextBudget: 15000
+  maxGroups: 8
+  fastPathThreshold: 80000
+  minConfidence: 0.6
+  maxRetries: 3
+```
+
+Keys with no default:
+
+- `model`, `models.<stage>` (stages: `intent`, `fastPath`, `groupReview`, `synthesis`, `visualize`): model overrides, as above.
+- `baseUrl`: provider base URL.
+- `userAgent`: custom User-Agent for endpoints that whitelist clients. Some providers treat changing it as a terms violation.
+- `temperature`: 0 to 2. Unset uses 0.3, except models that only accept their server default (FiscalCR omits it for those).
+- `modelParams`: provider-native fields merged into each call, e.g. `reasoning_effort: medium`.
+- `promptCache`: `1h`, `5m` or `off`; unset uses the provider's default.
+- `rules[]`: `{ name, description, severity (critical | warning | suggestion, default warning), filePattern? }`.
+- `prompt.systemAppend` (up to 2000 characters) and `prompt.reviewFocus` (up to 500).
+- `pipeline.callTimeoutMs` and `pipeline.maxOutputTokens`: unset resolves per model.
+
+Values: `language` is en, zh-TW, zh-CN, ja or ko. `review.minSeverity` is critical, warning, suggestion or nitpick. `review.failOn` is critical, warning or never. `review.comments.mode` is sticky (one updated summary, incremental reviews) or legacy (a full review per run).
+
+## Rules an agent must respect
+
+- `provider` and `base_url` are read from the pull request's base branch, not its head. A pull request cannot redirect the API key by editing the config. Changes to routing take effect after they merge.
+- Other config comes from the PR head and applies to that PR's own review.
+- Never put an API key in `.fiscalcr-review.yml` or a workflow file; use a secret or OIDC.
+- Pull requests from forks get read-only tokens: FiscalCR cannot post reviews on them.
+- Thread cleanup needs `pull-requests: write`.
+
+## Recipes
+
+Security and bugs only, fail the check on warnings:
+
+```yaml
+review:
+  aspects: { bugs: true, security: true, performance: false, style: false, bestPractices: false }
+  minSeverity: warning
+  failOn: warning
+```
+
+A team rule:
+
+```yaml
+rules:
+  - name: no-console-log
+    description: "No console.log in production code"
+    severity: warning
+    filePattern: "src/**/*.ts"
+```
+
+OpenRouter:
+
+```yaml
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
+        with:
+          api_key: ${{ secrets.LLM_API_KEY }}
+          provider: openrouter
+          model: anthropic/claude-sonnet-5.5
+```
+
+A self-hosted or other OpenAI-compatible endpoint:
+
+```yaml
+      - uses: mof-malaysia/fiscal-cr@v1.2.0
+        with:
+          api_key: ${{ secrets.LLM_API_KEY }}
+          provider: openai-compatible
+          base_url: https://llm.example.internal/v1
+          model: your-model-name
+```
+
+## Self-hosted GitHub App
+
+For comment commands, run FiscalCR as a GitHub App on your own server (clone the repository, `pnpm install`, `pnpm dev`). Environment: `API_KEY` (or `FISCALCR_API_KEY`), `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, and optionally `MODEL_PROVIDER`, `MODEL`, `BASE_URL`, `LLM_USER_AGENT`, `PORT` (3000), `LOG_LEVEL`. Comment `@fiscalcr review` on a pull request for a full review, or `@fiscalcr help`.
+
+## Severity levels
+
+- `critical`: must fix before merge (bugs, security issues, data loss risk)
+- `warning`: should fix (performance issues, risky practices)
+- `suggestion`: nice to have (readability, maintainability)
+- `nitpick`: optional; posted as check-run annotations, not inline comments
