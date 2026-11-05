@@ -1,0 +1,66 @@
+---
+/**
+ * Copies `text` to the clipboard and says so, in place and to screen readers.
+ * Three looks: white on the primary field, FTDS primary on white, and a
+ * small quiet one for the top corner of a code block.
+ */
+interface Props {
+  text: string;
+  label?: string;
+  variant?: "field" | "primary" | "code";
+  class?: string;
+}
+const { text, label = "Copy workflow", variant = "primary", class: className } = Astro.props;
+---
+
+<button
+  type="button"
+  data-copy={text}
+  class:list={[
+    "focus-ring inline-flex items-center gap-2 font-medium transition-colors",
+    variant === "field" && "control-lg text-label-lg bg-bg-white text-txt-primary hover:bg-bg-primary-50 rounded-md",
+    variant === "primary" && "control-lg text-label-lg bg-bg-primary-600 text-txt-white hover:bg-bg-primary-700 rounded-md",
+    variant === "code" && "text-label-sm text-txt-white bg-bg-white/10 hover:bg-bg-white/20 h-8 rounded-md px-3",
+    className,
+  ]}
+>
+  <svg class="size-4 shrink-0" viewBox="0 0 20 20" fill="none" aria-hidden="true" data-icon="copy">
+    <rect x="6.75" y="6.75" width="9.5" height="9.5" rx="1.75" stroke="currentColor" stroke-width="1.5" />
+    <path d="M13.25 4.5v-.25a1.5 1.5 0 0 0-1.5-1.5h-7a1.5 1.5 0 0 0-1.5 1.5v7a1.5 1.5 0 0 0 1.5 1.5H5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+  </svg>
+  <svg class="hidden size-4 shrink-0" viewBox="0 0 20 20" fill="none" aria-hidden="true" data-icon="done">
+    <path d="m4.5 10.5 3.5 3.5 7.5-8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+  <span data-label>{label}</span>
+  <span class="sr-only" role="status" data-status></span>
+</button>
+
+<script>
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
+    const labelEl = button.querySelector<HTMLElement>("[data-label]")!;
+    const status = button.querySelector<HTMLElement>("[data-status]")!;
+    const original = labelEl.textContent ?? "";
+    let timer = 0;
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy ?? "");
+        labelEl.textContent = "Copied";
+        status.textContent = "Workflow copied to the clipboard";
+        button.querySelector("[data-icon=copy]")?.classList.add("hidden");
+        button.querySelector("[data-icon=done]")?.classList.remove("hidden");
+      } catch {
+        // No clipboard (an insecure context or a refusal): take them to the file instead.
+        document.querySelector("#workflow")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        status.textContent = "Couldn't copy. The workflow is shown in the Install section.";
+        return;
+      }
+      clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        labelEl.textContent = original;
+        status.textContent = "";
+        button.querySelector("[data-icon=copy]")?.classList.remove("hidden");
+        button.querySelector("[data-icon=done]")?.classList.add("hidden");
+      }, 2200);
+    });
+  }
+</script>

@@ -1,0 +1,23 @@
+---
+/**
+ * A button-like link on the primary field, where FTDS's filled primary
+ * button would vanish: white with primary text, or a quiet translucent one.
+ */
+interface Props {
+  href: string;
+  variant?: "solid" | "quiet";
+}
+const { href, variant = "solid" } = Astro.props;
+---
+
+<a
+  href={href}
+  class:list={[
+    "control-lg text-label-lg focus-ring inline-flex items-center gap-2 rounded-md font-medium transition-colors",
+    variant === "solid"
+      ? "bg-bg-white text-txt-primary hover:bg-bg-primary-50"
+      : "text-txt-white bg-bg-white/12 hover:bg-bg-white/20",
+  ]}
+>
+  <slot />
+</a>

@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "../../styles/ftds.css";
+
+/* Inter is self-hosted (@fontsource-variable/inter): no third-party font requests. */
+@theme {
+  --font-body: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/*
+ * FiscalCR's additions to FTDS, as on Laman's site: the primary field
+ * (Primary 700) for the opening and the closing band, and the stage
+ * (Primary 950) that white objects sit on. Everything else is FTDS.
+ */
+@theme inline {
+  --color-bg-field: rgb(var(--_primary-700));
+  --color-bg-stage: rgb(var(--_primary-950));
+  --color-txt-on-field: rgb(var(--_primary-100));
+  --color-otl-on-field: rgb(var(--_primary-300));
+}
+
+::selection {
+  background: rgb(var(--_primary-200));
+  color: rgb(var(--_gray-900));
+}
+.on-field ::selection {
+  background: rgb(var(--_primary-100));
+  color: rgb(var(--_primary-900));
+}
+html {
+  scroll-padding-top: 5rem;
+  text-underline-offset: 3px;
+}
+
+@layer components {
+  /* Code: a dark block, not FTDS's inline code wash. */
+  .code-block {
+    @apply bg-bg-black-900 text-txt-white text-body-sm overflow-x-auto rounded-xl p-5 font-mono leading-relaxed md:p-6;
+    tab-size: 2;
+  }
+  .code-block .c {
+    color: rgb(var(--_gray-400));
+  }
+  .code-block .k {
+    color: rgb(var(--_primary-300));
+  }
+  .code-block .s {
+    color: rgb(var(--_success-300));
+  }
+}
+
+/* On the primary field, focus rings are white: Focus Blue doesn't show on Blue 700. */
+.on-field {
+  --fr-primary: 255 255 255;
+}

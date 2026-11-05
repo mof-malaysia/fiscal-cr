@@ -1,0 +1,113 @@
+---
+/**
+ * Every page: skip link, navbar, phase banner, the page, and the footer.
+ * No analytics and no third-party requests.
+ */
+// Only Inter's Latin file, preloaded so it starts loading with the page.
+import interLatin from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
+import "@/styles/global.css";
+import Button from "@/components/ui/button.astro";
+import Navbar from "@/components/ui/navbar.astro";
+import PhaseBanner from "@/components/ui/phase-banner.astro";
+import SiteFooter from "@/components/ui/site-footer.astro";
+import Skiplink from "@/components/ui/skiplink.astro";
+import { APP_URL, CONFIG_URL, GITHUB_URL, ISSUES_URL, navItems, README_URL, url } from "@/site";
+
+interface Props {
+  title: string;
+  description: string;
+  noindex?: boolean;
+}
+const { title, description, noindex = false } = Astro.props;
+const canonical = new URL(url("/"), Astro.site).href;
+const home = url("/");
+const anchor = (hash: string) => (Astro.url.pathname === home ? hash : `${home}${hash}`);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
+    <link rel="preload" href={interLatin} as="font" type="font/woff2" crossorigin />
+    <style
+      is:inline
+      set:html={`@font-face{font-family:"Inter Variable";font-style:normal;font-display:swap;font-weight:100 900;src:url(${interLatin}) format("woff2-variations");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`}
+    />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href={url("/logo.svg")} type="image/svg+xml" />
+    <meta name="theme-color" content="#1D4ED8" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:site_name" content="FiscalCR" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+  </head>
+  <body class="bg-bg-white text-txt-black-900 font-body">
+    <Skiplink href="#main" lang="en" />
+    <Navbar
+      brand={{ title: "FiscalCR", href: home, logo: { src: url("/logo.svg"), alt: "" } }}
+      items={navItems.map((item) => ({ ...item, href: anchor(item.href) }))}
+      lang="en"
+    >
+      <Button slot="actions" href={GITHUB_URL} variant="default-outline" class="max-sm:hidden">GitHub</Button>
+      <Button slot="actions" href={anchor("#install")} variant="primary-fill" class="max-sm:hidden">Install</Button>
+    </Navbar>
+    <PhaseBanner phase="Beta" lang="en">
+      FiscalCR is beta software and still changing.{" "}
+      <a href={ISSUES_URL} class="text-txt-primary focus-ring rounded-xs font-medium underline decoration-1 underline-offset-[3px]">Report an issue on GitHub</a>
+    </PhaseBanner>
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+    <SiteFooter
+      logoTitle="FiscalCR"
+      groups={[
+        {
+          title: "Product",
+          links: navItems.map((item) => ({ label: item.label, href: anchor(item.href) })),
+        },
+        {
+          title: "Docs",
+          links: [
+            { label: "README", href: README_URL },
+            { label: "Configuration", href: CONFIG_URL },
+            { label: "Self-hosted App", href: APP_URL },
+          ],
+        },
+        {
+          title: "Source",
+          links: [
+            { label: "GitHub", href: GITHUB_URL },
+            { label: "Issues", href: ISSUES_URL },
+            { label: "Releases", href: `${GITHUB_URL}/releases` },
+          ],
+        },
+      ]}
+      class="px-4.5 md:px-[max(1.5rem,calc((100%-1232px)/2))]"
+    >
+      <img slot="logo" src={url("/logo.svg")} alt="" width="36" height="36" class="size-9" />
+      <p>Open-source AI code review for GitHub pull requests.</p>
+      <p>Open source under the MIT licence.</p>
+    </SiteFooter>
+    <script>
+      // The navbar's mobile menu is a popover. Older browsers lack the API: only they download the polyfill.
+      if (!("popover" in HTMLElement.prototype)) void import("@oddbird/popover-polyfill");
+    </script>
+    <style is:global>
+      [data-ftds-navbar-panel].\:popover-open {
+        display: flex;
+        flex-direction: column;
+      }
+      header:has([data-ftds-navbar-panel].\:popover-open) [popovertarget] > :is(svg, span):first-of-type {
+        display: none;
+      }
+      header:has([data-ftds-navbar-panel].\:popover-open) [popovertarget] > svg:nth-of-type(2) {
+        display: block;
+      }
+    </style>
+  </body>
+</html>
