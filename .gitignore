@@ -9,6 +9,8 @@ action/dist/
 coverage/
 .vscode/
 .idea/
+.claude
+.impeccable/
 
 # Cache / build metadata
 .cache/

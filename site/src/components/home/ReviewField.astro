@@ -1,0 +1,358 @@
+---
+/**
+ * The opening: the Review Field. A pull request seen from far away, as a
+ * minimap: files side by side, every line of code a short bar, the changed
+ * hunks a little brighter. A review pass sweeps down through it; a few lines
+ * light up as findings (Danger, Warning, Primary), then turn Success green
+ * as they're fixed, and settle back. The sweep follows the pointer's height.
+ *
+ * Canvas 2D, no library. It pauses off screen, draws one still frame (with
+ * findings shown) under reduced motion, and without a canvas the field stays
+ * the plain primary colour.
+ */
+import CopyButton from "@/components/CopyButton.astro";
+import FieldButton from "@/components/FieldButton.astro";
+import { GITHUB_URL, pageColumn } from "@/site";
+---
+
+<section class="on-field relative isolate overflow-hidden" aria-labelledby="hero-title" data-field>
+  <canvas class="review-field__canvas" aria-hidden="true" data-canvas></canvas>
+  <div class="review-field__veil" aria-hidden="true"></div>
+  <div class:list={[pageColumn, "relative grid min-h-[calc(100svh-4rem)] items-center gap-12 py-20 md:py-24 lg:grid-cols-12"]}>
+    <div class="lg:col-span-7">
+      <h1
+        id="hero-title"
+        class="max-w-[12ch] text-[clamp(3rem,1.4rem+5vw,5.5rem)] leading-[0.98] font-semibold tracking-[-0.035em] text-balance"
+      >
+        Code review worth reading.
+      </h1>
+      <p class="text-txt-on-field mt-7 max-w-[34rem] text-[clamp(1.125rem,1rem+0.4vw,1.375rem)] leading-snug">
+        FiscalCR reviews every pull request with the model you choose, inside your own GitHub Actions.
+      </p>
+      <div class="mt-10 flex flex-wrap gap-3">
+        <CopyButton />
+        <FieldButton href={GITHUB_URL} variant="quiet">View on GitHub</FieldButton>
+      </div>
+      <p class="text-txt-on-field text-body-sm mt-8 max-w-[34rem]">
+        Open source, MIT licence. One workflow file and an API key from Anthropic, OpenAI, Kimi, OpenRouter or any
+        OpenAI-compatible endpoint.
+      </p>
+    </div>
+
+    <figure class="review-field__card text-txt-black-900 hidden lg:col-span-5 lg:block" aria-label="An example finding" data-card>
+      <div class="bg-bg-white rounded-xl p-5 shadow-[0_24px_48px_-16px_rgb(var(--_primary-950)/0.55)]">
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-label-sm bg-bg-danger-50 text-txt-danger inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold">
+            <span class="bg-bg-danger-600 size-1.5 rounded-full" aria-hidden="true"></span>
+            Critical · Security
+          </span>
+          <code class="text-body-xs text-txt-black-500 font-mono">src/billing/invoice.ts:43</code>
+        </div>
+        <p class="text-body-md mt-4 font-semibold">The invoice id is built into the SQL string</p>
+        <p class="text-body-sm text-txt-black-700 mt-1.5">
+          <code class="font-mono">req.params.id</code> reaches the query unescaped. Pass it as a parameter so the driver
+          quotes it.
+        </p>
+        <pre class="text-body-xs mt-4 overflow-x-auto rounded-lg font-mono leading-6"><code class="block"><span class="bg-bg-danger-50 text-txt-danger block px-3">- db.query(`SELECT * FROM invoices WHERE id = {"${id}"}`)</span><span class="bg-bg-success-50 text-txt-success block px-3">+ db.query("SELECT * FROM invoices WHERE id = $1", [id])</span></code></pre>
+        <p class="text-body-xs text-txt-black-500 border-otl-divider mt-4 flex items-center justify-between border-t pt-3">
+          <span>Suggested fix · confidence 0.92</span>
+          <span>Example</span>
+        </p>
+      </div>
+    </figure>
+  </div>
+</section>
+
+<style>
+  .review-field__canvas {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transition: opacity 1.2s ease-out;
+  }
+  .review-field__canvas[data-ready] {
+    opacity: 1;
+  }
+  /* Quiet the field behind the words, so they read on any part of it. */
+  .review-field__veil {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(90deg, rgb(var(--_primary-800) / 0.92) 0%, rgb(var(--_primary-800) / 0.7) 38%, rgb(var(--_primary-800) / 0) 72%);
+  }
+  @media (width < 64rem) {
+    .review-field__veil {
+      background: linear-gradient(180deg, rgb(var(--_primary-800) / 0.2), rgb(var(--_primary-800) / 0.55) 45%, rgb(var(--_primary-800) / 0.3));
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .review-field__card {
+      animation: card-in 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) 0.6s both;
+    }
+  }
+  @keyframes card-in {
+    from {
+      translate: 0 14px;
+    }
+  }
+</style>
+
+<script>
+  type Severity = "critical" | "warning" | "suggestion";
+  interface Line {
+    x: number; // indent, px from the column's left
+    w: number; // length
+    y: number; // px from the pattern's top
+    changed: boolean;
+    finding?: Severity;
+    found: number; // when the sweep last flagged it (ms), or -1
+  }
+
+  const rgb = (name: string) => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim().split(/\s+/).map(Number);
+    return v.length === 3 && v.every(Number.isFinite) ? `rgb(${v[0]} ${v[1]} ${v[2]})` : "rgb(255 255 255)";
+  };
+
+  // A small seeded random, so every visit draws the same pull request.
+  const random = (seed: number) => () => {
+    seed = (seed * 16807) % 2147483647;
+    return (seed - 1) / 2147483646;
+  };
+
+  const COLUMN = 210; // a file's width
+  const GAP = 34;
+  const PITCH = 11; // line height
+  const BAR = 4;
+  const PATTERN = 1320; // the PR's height; it repeats as it scrolls
+
+  // Timings of a finding, after the sweep flags it.
+  const SHOW = 5200; // flagged
+  const FIXED = 2400; // green
+  const FADE = 1600; // back to a plain line
+
+  for (const section of document.querySelectorAll<HTMLElement>("[data-field]")) {
+    const canvas = section.querySelector<HTMLCanvasElement>("[data-canvas]")!;
+    const card = section.querySelector<HTMLElement>("[data-card]");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) continue;
+
+    const c = {
+      line: rgb("--_primary-300"),
+      changed: rgb("--_primary-200"),
+      sweep: rgb("--_primary-100"),
+      critical: rgb("--_danger-400"),
+      warning: rgb("--_warning-300"),
+      suggestion: rgb("--_primary-100"),
+      fixed: rgb("--_success-400"),
+    };
+
+    // One file per column: its lines, with hunks of changed lines and a few findings among them.
+    const files: Line[][] = [];
+    const makeFile = (seed: number) => {
+      const rnd = random(seed);
+      const lines: Line[] = [];
+      let depth = 0;
+      let hunk = 0;
+      for (let y = 26; y < PATTERN - PITCH; y += PITCH) {
+        if (rnd() < 0.08) continue; // a blank line
+        if (hunk === 0 && rnd() < 0.07) hunk = 3 + Math.floor(rnd() * 9);
+        depth = Math.max(0, Math.min(4, depth + (rnd() < 0.3 ? 1 : 0) - (rnd() < 0.3 ? 1 : 0)));
+        const changed = hunk > 0;
+        if (hunk > 0) hunk--;
+        const x = depth * 14;
+        const w = Math.min(COLUMN - x, 24 + rnd() * (COLUMN - 40 - x));
+        const roll = rnd();
+        const finding: Severity | undefined =
+          changed && roll < 0.06 ? "critical" : changed && roll < 0.17 ? "warning" : changed && roll < 0.25 ? "suggestion" : undefined;
+        lines.push({ x, w, y, changed, finding, found: -1 });
+      }
+      return lines;
+    };
+
+    // Colours are fixed strings; opacity goes through globalAlpha, so no colour string is built per bar.
+    const paint = (color: string | CanvasGradient, alpha: number) => {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = alpha;
+    };
+
+    let width = 0;
+    let height = 0;
+    let columns = 0;
+    let offsetX = 0;
+    // The example card's left edge and its removed line, relative to the field; measured on resize, not per frame.
+    let anchor: { x: number; y: number } | null = null;
+    const dpr = Math.min(2, devicePixelRatio || 1);
+
+    const resize = () => {
+      const r = section.getBoundingClientRect();
+      width = r.width;
+      height = r.height;
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      columns = Math.ceil((width + GAP) / (COLUMN + GAP)) + 1;
+      offsetX = (width - (columns * (COLUMN + GAP) - GAP)) / 2;
+      while (files.length < columns) files.push(makeFile(1009 + files.length * 7919));
+      // Offsets, not getBoundingClientRect: the card's entrance transform must not move the anchor.
+      anchor = null;
+      if (card?.offsetParent) {
+        let x = 0;
+        let y = 0;
+        for (let el: HTMLElement | null = card; el && el !== section; el = el.offsetParent as HTMLElement | null) {
+          x += el.offsetLeft;
+          y += el.offsetTop;
+        }
+        anchor = { x, y: y + 162 };
+      }
+    };
+
+    // The wash above the sweep, made once and moved with translate.
+    const wash = ctx.createLinearGradient(0, -90, 0, 0);
+    wash.addColorStop(0, c.sweep.replace(")", " / 0)"));
+    wash.addColorStop(1, c.sweep.replace(")", " / 0.1)"));
+
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const born = performance.now();
+    const sweep = { y: 0, target: -1, last: 0 };
+    let pointerY = -1;
+
+    // Each column scrolls at its own slow pace, so the field never reads as a grid.
+    const scrollOf = (col: number, t: number) => (reduced ? 140 + col * 260 : t * (0.006 + (col % 3) * 0.0016) + col * 260);
+
+    const draw = (now: number) => {
+      const t = now - born;
+      ctx.clearRect(0, 0, width, height);
+
+      // The sweep: down the field at a steady pace, or toward the pointer while it's here.
+      const dt = Math.min(64, now - (sweep.last || now));
+      sweep.last = now;
+      if (reduced) sweep.y = height * 0.52;
+      else if (pointerY >= 0) sweep.y += (pointerY - sweep.y) * 0.06;
+      else sweep.y = (sweep.y + dt * 0.055) % (height + 160);
+      const sy = sweep.y - 80;
+
+      for (let col = 0; col < columns; col++) {
+        const left = offsetX + col * (COLUMN + GAP);
+        const scroll = scrollOf(col, t) % PATTERN;
+        const file = files[col]!;
+
+        for (let rep = -1; rep <= Math.ceil(height / PATTERN); rep++) {
+          const base = rep * PATTERN - scroll;
+          if (base > height || base + PATTERN < 0) continue;
+          // The file's tab, at the top of each repeat.
+          const tabY = base + 6;
+          if (tabY > -20 && tabY < height) {
+            paint(c.line, 0.28);
+            ctx.beginPath();
+            ctx.roundRect(left, tabY, 92, 7, 3.5);
+            ctx.fill();
+          }
+
+          for (const line of file) {
+            const y = base + line.y;
+            if (y < -BAR) continue;
+            if (y > height) break; // lines are in order
+
+            // Lit by the sweep: brighter the closer it passes.
+            const near = Math.max(0, 1 - Math.abs(y - sy) / 70);
+            let color = line.changed ? c.changed : c.line;
+            let alpha = (line.changed ? 0.42 : 0.2) + near * 0.4;
+
+            if (line.finding) {
+              if (reduced) line.found = t - 1000;
+              else if (Math.abs(y - sy) < 3 && (line.found < 0 || t - line.found > SHOW + FIXED + FADE)) line.found = t;
+              const age = line.found < 0 ? Infinity : t - line.found;
+              if (age < SHOW) {
+                color = c[line.finding];
+                alpha = 0.95;
+              } else if (age < SHOW + FIXED) {
+                color = c.fixed;
+                alpha = 0.9;
+              } else if (age < SHOW + FIXED + FADE) {
+                color = c.fixed;
+                alpha = 0.9 - ((age - SHOW - FIXED) / FADE) * (0.9 - alpha);
+              }
+              if (age < SHOW + FIXED + FADE) {
+                // The line is highlighted across the file, with a marker in the gutter, like an inline comment.
+                paint(color, alpha * 0.28);
+                ctx.beginPath();
+                ctx.roundRect(left - 6, y - 4, COLUMN + 12, BAR + 8, 3);
+                ctx.fill();
+                paint(color, alpha);
+                ctx.beginPath();
+                ctx.arc(left - 14, y + BAR / 2, 4, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+
+            paint(color, alpha);
+            ctx.beginPath();
+            ctx.roundRect(left + line.x, y, line.w, BAR, BAR / 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      // The example finding's line: held critical beside the card, with a lead from its gutter to the card.
+      if (anchor) {
+        const { x: ax, y: ay } = anchor;
+        const from = ax - 200;
+        paint(c.critical, 0.22);
+        ctx.beginPath();
+        ctx.roundRect(from, ay - 6, ax - from, 12, 3);
+        ctx.fill();
+        paint(c.critical, 0.95);
+        ctx.beginPath();
+        ctx.roundRect(from + 18, ay - 2, 110, BAR, BAR / 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(from + 6, ay, 4, 0, Math.PI * 2);
+        ctx.fill();
+        paint(c.critical, 0.7);
+        ctx.fillRect(from + 136, ay - 0.5, ax - from - 136, 1);
+      }
+
+      // The sweep itself: a fine line, with a faint wash above it where it has just read.
+      if (sy > -100 && sy < height + 100) {
+        ctx.translate(0, sy);
+        paint(wash, 1);
+        ctx.fillRect(0, -90, width, 90);
+        ctx.translate(0, -sy);
+        paint(c.sweep, 0.65);
+        ctx.fillRect(0, sy, width, 1);
+      }
+    };
+
+    let raf = 0;
+    let visible = true;
+    const loop = (now: number) => {
+      draw(now);
+      if (visible && !reduced) raf = requestAnimationFrame(loop);
+    };
+
+    new ResizeObserver(() => {
+      resize();
+      draw(performance.now());
+    }).observe(section);
+    resize();
+    sweep.y = height * 0.3;
+    draw(performance.now());
+    canvas.dataset.ready = "";
+
+    if (reduced) continue;
+    section.addEventListener("pointermove", (e) => {
+      pointerY = e.clientY - section.getBoundingClientRect().top + 80;
+    });
+    section.addEventListener("pointerleave", () => {
+      pointerY = -1;
+    });
+    new IntersectionObserver(([entry]) => {
+      visible = !!entry?.isIntersecting;
+      cancelAnimationFrame(raf);
+      if (visible) raf = requestAnimationFrame(loop);
+    }).observe(section);
+  }
+</script>

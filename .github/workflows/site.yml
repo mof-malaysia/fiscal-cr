@@ -1,0 +1,77 @@
+# Builds the landing page (site/) and deploys it to GitHub Pages.
+# Pages must be enabled for the repository with "GitHub Actions" as the source.
+name: Landing page
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+      # llms.txt is generated from these at build time.
+      - "action.yml"
+      - "src/config/**"
+      - "scripts/generate-llms.ts"
+  # A new release changes the pinned version on the page and in llms.txt.
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; a newer push doesn't cancel one already deploying.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: site
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      # Only the tags, not the history: the page and llms.txt pin the latest release.
+      - run: git fetch --depth=1 --tags origin
+        working-directory: .
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            site/pnpm-lock.yaml
+      # The root packages: llms.txt is generated from FiscalCR's own sources.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: .
+      - run: pnpm install --frozen-lockfile
+      - id: pages
+        uses: actions/configure-pages@v5
+      - run: pnpm build
+        env:
+          # https://<owner>.github.io/<repo>, or the custom domain set in Pages.
+          SITE_URL: ${{ steps.pages.outputs.origin }}
+          SITE_BASE: ${{ steps.pages.outputs.base_path || '/' }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

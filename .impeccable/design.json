@@ -1,0 +1,740 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-05T08:31:06+00:00",
+  "title": "Design System: FiscalCR",
+  "extensions": {
+    "colorMeta": {
+      "ftds-blue": {
+        "role": "primary",
+        "displayName": "FTDS Blue",
+        "canonical": "rgb(37 99 235) (--_primary-600)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "ftds-blue-wash": {
+        "role": "primary",
+        "displayName": "FTDS Blue Wash",
+        "canonical": "rgb(239 246 255) (--_primary-50)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "focus-blue": {
+        "role": "primary",
+        "displayName": "Focus Blue",
+        "canonical": "rgb(58 117 246) (--_primary-500, --fr-primary)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "field": {
+        "role": "secondary",
+        "displayName": "The Field",
+        "canonical": "rgb(29 78 216) (--_primary-700, --color-bg-field)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "field-veil": {
+        "role": "secondary",
+        "displayName": "Field Veil",
+        "canonical": "rgb(30 64 175) (--_primary-800), used at 0-92% alpha",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "stage": {
+        "role": "secondary",
+        "displayName": "The Stage",
+        "canonical": "rgb(23 37 84) (--_primary-950, --color-bg-stage)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "on-field-text": {
+        "role": "secondary",
+        "displayName": "On-Field Text",
+        "canonical": "rgb(219 234 254) (--_primary-100, --color-txt-on-field)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "on-field-edge": {
+        "role": "secondary",
+        "displayName": "On-Field Edge",
+        "canonical": "rgb(150 183 255) (--_primary-300, --color-otl-on-field)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "selection": {
+        "role": "secondary",
+        "displayName": "Selection Blue",
+        "canonical": "rgb(194 213 255) (--_primary-200)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#6394FF",
+          "#C2D5FF",
+          "#EFF6FF"
+        ]
+      },
+      "sheet": {
+        "role": "neutral",
+        "displayName": "Sheet",
+        "canonical": "rgb(255 255 255) (--bg-white)",
+        "tonalRamp": [
+          "#09090B",
+          "#18181B",
+          "#27272A",
+          "#3F3F46",
+          "#6B6B74",
+          "#A1A1AA",
+          "#E4E4E7",
+          "#FAFAFA"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "rgb(250 250 250) (--bg-gray-50)",
+        "tonalRamp": [
+          "#09090B",
+          "#18181B",
+          "#27272A",
+          "#3F3F46",
+          "#6B6B74",
+          "#A1A1AA",
+          "#E4E4E7",
+          "#FAFAFA"
+        ]
+      },
+      "well": {
+        "role": "neutral",
+        "displayName": "Well",
+        "canonical": "rgb(244 244 245) (--bg-washed, --otl-divider)",
+        "tonalRamp": [
+          "#09090B",
+          "#18181B",
+          "#27272A",
+          "#3F3F46",
+          "#6B6B74",
+          "#A1A1AA",
+          "#E4E4E7",
+          "#FAFAFA"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "rgb(228 228 231) (--otl-gray-200)",
+        "tonalRamp": [
+          "#09090B",
+          "#18181B",
+          "#27272A",
+          "#3F3F46",
+          "#6B6B74",
+          "#A1A1AA",
+          "#E4E4E7",
+          "#FAFAFA"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "rgb(24 24 27) (--txt-black-900, --bg-black-900)",
+        "tonalRamp": [
+          "#09090B",
+          "#18181B",
+          "#27272A",
+          "#3F3F46",
+          "#6B6B74",
+          "#A1A1AA",
+          "#E4E4E7",
+          "#FAFAFA"
+        ]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Ink Secondary",
+        "canonical": "rgb(63 63 70) (--txt-black-700)",
+        "tonalRamp": [
+          "#09090B",
+          "#18181B",
+          "#27272A",
+          "#3F3F46",
+          "#6B6B74",
+          "#A1A1AA",
+          "#E4E4E7",
+          "#FAFAFA"
+        ]
+      },
+      "ink-tertiary": {
+        "role": "neutral",
+        "displayName": "Ink Tertiary",
+        "canonical": "rgb(107 107 116) (--txt-black-500)",
+        "tonalRamp": [
+          "#09090B",
+          "#18181B",
+          "#27272A",
+          "#3F3F46",
+          "#6B6B74",
+          "#A1A1AA",
+          "#E4E4E7",
+          "#FAFAFA"
+        ]
+      },
+      "code-comment": {
+        "role": "neutral",
+        "displayName": "Code Comment",
+        "canonical": "rgb(161 161 170) (--_gray-400)",
+        "tonalRamp": [
+          "#09090B",
+          "#18181B",
+          "#27272A",
+          "#3F3F46",
+          "#6B6B74",
+          "#A1A1AA",
+          "#E4E4E7",
+          "#FAFAFA"
+        ]
+      },
+      "code-string": {
+        "role": "tertiary",
+        "displayName": "Code String",
+        "canonical": "rgb(131 218 163) (--_success-300)",
+        "tonalRamp": [
+          "#052E16",
+          "#14532D",
+          "#15803D",
+          "#16A34A",
+          "#4ADE80",
+          "#83DAA3",
+          "#DCFCE7",
+          "#F0FDF4"
+        ]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Danger",
+        "canonical": "rgb(185 28 28) (--txt-danger)",
+        "tonalRamp": [
+          "#450A0A",
+          "#7F1D1D",
+          "#B91C1C",
+          "#DC2626",
+          "#F87171",
+          "#FCA5A5",
+          "#FEE2E2",
+          "#FEF2F2"
+        ]
+      },
+      "danger-fill": {
+        "role": "tertiary",
+        "displayName": "Danger Fill",
+        "canonical": "rgb(220 38 38) (--bg-danger-600)",
+        "tonalRamp": [
+          "#450A0A",
+          "#7F1D1D",
+          "#B91C1C",
+          "#DC2626",
+          "#F87171",
+          "#FCA5A5",
+          "#FEE2E2",
+          "#FEF2F2"
+        ]
+      },
+      "danger-wash": {
+        "role": "tertiary",
+        "displayName": "Danger Wash",
+        "canonical": "rgb(254 242 242) (--bg-danger-50)",
+        "tonalRamp": [
+          "#450A0A",
+          "#7F1D1D",
+          "#B91C1C",
+          "#DC2626",
+          "#F87171",
+          "#FCA5A5",
+          "#FEE2E2",
+          "#FEF2F2"
+        ]
+      },
+      "danger-edge": {
+        "role": "tertiary",
+        "displayName": "Danger Edge",
+        "canonical": "rgb(252 165 165) (--_danger-300)",
+        "tonalRamp": [
+          "#450A0A",
+          "#7F1D1D",
+          "#B91C1C",
+          "#DC2626",
+          "#F87171",
+          "#FCA5A5",
+          "#FEE2E2",
+          "#FEF2F2"
+        ]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Success",
+        "canonical": "rgb(21 128 61) (--txt-success)",
+        "tonalRamp": [
+          "#052E16",
+          "#14532D",
+          "#15803D",
+          "#16A34A",
+          "#4ADE80",
+          "#83DAA3",
+          "#DCFCE7",
+          "#F0FDF4"
+        ]
+      },
+      "success-fill": {
+        "role": "tertiary",
+        "displayName": "Success Fill",
+        "canonical": "rgb(22 163 74) (--bg-success-600)",
+        "tonalRamp": [
+          "#052E16",
+          "#14532D",
+          "#15803D",
+          "#16A34A",
+          "#4ADE80",
+          "#83DAA3",
+          "#DCFCE7",
+          "#F0FDF4"
+        ]
+      },
+      "success-wash": {
+        "role": "tertiary",
+        "displayName": "Success Wash",
+        "canonical": "rgb(240 253 244) (--bg-success-50)",
+        "tonalRamp": [
+          "#052E16",
+          "#14532D",
+          "#15803D",
+          "#16A34A",
+          "#4ADE80",
+          "#83DAA3",
+          "#DCFCE7",
+          "#F0FDF4"
+        ]
+      },
+      "success-edge": {
+        "role": "tertiary",
+        "displayName": "Success Edge",
+        "canonical": "rgb(131 218 163) (--_success-300)",
+        "tonalRamp": [
+          "#052E16",
+          "#14532D",
+          "#15803D",
+          "#16A34A",
+          "#4ADE80",
+          "#83DAA3",
+          "#DCFCE7",
+          "#F0FDF4"
+        ]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Warning",
+        "canonical": "rgb(161 98 7) (--txt-warning)",
+        "tonalRamp": [
+          "#422006",
+          "#713F12",
+          "#A16207",
+          "#CA8A04",
+          "#EAB308",
+          "#FDE047",
+          "#FEF9C3",
+          "#FEFCE8"
+        ]
+      },
+      "warning-fill": {
+        "role": "tertiary",
+        "displayName": "Warning Fill",
+        "canonical": "rgb(234 179 8) (--bg-warning-500)",
+        "tonalRamp": [
+          "#422006",
+          "#713F12",
+          "#A16207",
+          "#CA8A04",
+          "#EAB308",
+          "#FDE047",
+          "#FEF9C3",
+          "#FEFCE8"
+        ]
+      },
+      "warning-edge": {
+        "role": "tertiary",
+        "displayName": "Warning Edge",
+        "canonical": "rgb(253 224 71) (--_warning-300)",
+        "tonalRamp": [
+          "#422006",
+          "#713F12",
+          "#A16207",
+          "#CA8A04",
+          "#EAB308",
+          "#FDE047",
+          "#FEF9C3",
+          "#FEFCE8"
+        ]
+      },
+      "field-critical": {
+        "role": "tertiary",
+        "displayName": "Field Critical",
+        "canonical": "rgb(248 113 113) (--_danger-400), Review Field canvas only",
+        "tonalRamp": [
+          "#450A0A",
+          "#7F1D1D",
+          "#B91C1C",
+          "#DC2626",
+          "#F87171",
+          "#FCA5A5",
+          "#FEE2E2",
+          "#FEF2F2"
+        ]
+      },
+      "field-fixed": {
+        "role": "tertiary",
+        "displayName": "Field Fixed",
+        "canonical": "rgb(74 222 128) (--_success-400), Review Field canvas only",
+        "tonalRamp": [
+          "#052E16",
+          "#14532D",
+          "#15803D",
+          "#16A34A",
+          "#4ADE80",
+          "#83DAA3",
+          "#DCFCE7",
+          "#F0FDF4"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "hero-display": {
+        "displayName": "Hero Display",
+        "purpose": "The one h1 on the Review Field, max 12ch, balanced."
+      },
+      "hero-lead": {
+        "displayName": "Hero Lead",
+        "purpose": "The sentence under the h1, max 34rem."
+      },
+      "section-heading": {
+        "displayName": "Section Heading",
+        "purpose": "Every h2 from 768px (FTDS heading-md)."
+      },
+      "section-heading-phone": {
+        "displayName": "Section Heading (phone)",
+        "purpose": "Every h2 below 768px (FTDS heading-sm)."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Install step titles (FTDS heading-xs)."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Item titles in lists and cards (FTDS heading-2xs)."
+      },
+      "lead": {
+        "displayName": "Lead",
+        "purpose": "The paragraph under each h2 (FTDS body-lg)."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Descriptions and step text (FTDS body-md)."
+      },
+      "body-small": {
+        "displayName": "Body Small",
+        "purpose": "Table cells, descriptions on the Field (FTDS body-sm)."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Diff lines, file paths, notes (FTDS body-xs)."
+      },
+      "label-large": {
+        "displayName": "Label Large",
+        "purpose": "Field button labels and MoreLinks."
+      },
+      "label-button": {
+        "displayName": "Label Button",
+        "purpose": "FTDS button labels."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Table headers, chips, severity tags, step numerals."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Code blocks, model ids, inline code."
+      }
+    },
+    "shadows": [
+      {
+        "name": "field-lift",
+        "value": "0 24px 48px -16px rgb(23 37 84 / 0.55)",
+        "purpose": "A white object floating on the Field; used once, on the hero's example finding card."
+      },
+      {
+        "name": "ftds-card",
+        "value": "0 1px 2px rgba(22, 27, 34, 0.06), 0 8px 24px rgba(22, 27, 34, 0.08)",
+        "purpose": "FTDS floating layers (menus, popovers); not used on landing page surfaces."
+      },
+      {
+        "name": "ftds-dialog",
+        "value": "0 2px 4px rgba(22, 27, 34, 0.06), 0 24px 48px rgba(22, 27, 34, 0.14)",
+        "purpose": "FTDS dialogs; not used on the landing page."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "FTDS state changes (hover, press, colour transitions)."
+      },
+      {
+        "name": "field-canvas-in",
+        "value": "opacity 1.2s ease-out",
+        "purpose": "The Review Field canvas fades in once drawn."
+      },
+      {
+        "name": "finding-card-in",
+        "value": "0.9s cubic-bezier(0.2, 0.7, 0.2, 1) 0.6s, from translate 0 14px",
+        "purpose": "The hero finding card rises into place; skipped under reduced motion."
+      },
+      {
+        "name": "finding-lifecycle",
+        "value": "flagged 5200ms, fixed 2400ms, fade 1600ms",
+        "purpose": "A Review Field finding: severity colour, then success green, then back to a plain line."
+      },
+      {
+        "name": "example-swap",
+        "value": "opacity 0.35s ease-out",
+        "purpose": "The example review crossfades parts that change between open and fixed; skipped under reduced motion."
+      },
+      {
+        "name": "copy-confirm",
+        "value": "2200ms",
+        "purpose": "How long a copy button shows its check and 'Copied' before reverting."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "FTDS filled primary on white: the navbar's Install and the example review's Push the fix.",
+      "html": "<button class=\"ds-btn-primary\">Push the fix</button>",
+      "css": ".ds-btn-primary { background: #2563EB; color: #FFFFFF; font: 500 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; height: 48px; padding: 0 20px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-primary:hover { background: #1D4ED8; } .ds-btn-primary:active { transform: translateY(0.5px); } .ds-btn-primary:focus-visible { outline: 2px solid #3A75F6; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "FTDS tonal button, the navbar's GitHub link.",
+      "html": "<button class=\"ds-btn-secondary\">GitHub</button>",
+      "css": ".ds-btn-secondary { background: #F4F4F5; color: #18181B; font: 500 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; height: 44px; padding: 0 16px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-secondary:focus-visible { outline: 2px solid #3A75F6; outline-offset: 2px; }"
+    },
+    {
+      "name": "Field Buttons",
+      "kind": "button",
+      "refersTo": "button-field-solid",
+      "description": "The solid copy button and quiet link that replace FTDS's filled primary on the Field.",
+      "html": "<div class=\"ds-field-band\"><div class=\"ds-field-actions\"><button class=\"ds-btn-field-solid\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 20 20\" fill=\"none\" aria-hidden=\"true\"><rect x=\"6.75\" y=\"6.75\" width=\"9.5\" height=\"9.5\" rx=\"1.75\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M13.25 4.5v-.25a1.5 1.5 0 0 0-1.5-1.5h-7a1.5 1.5 0 0 0-1.5 1.5v7a1.5 1.5 0 0 0 1.5 1.5H5\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg><span>Copy workflow</span></button><a href=\"#\" class=\"ds-btn-field-quiet\">View on GitHub</a></div></div>",
+      "css": ".ds-field-band { background: #1D4ED8; padding: 32px 24px; } .ds-field-actions { display: flex; flex-wrap: wrap; gap: 12px; } .ds-btn-field-solid, .ds-btn-field-quiet { display: inline-flex; align-items: center; gap: 8px; height: 56px; padding: 0 24px; border-radius: 8px; border: none; font: 500 1rem/1.5 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; text-decoration: none; cursor: pointer; transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-field-solid { background: #FFFFFF; color: #2563EB; } .ds-btn-field-solid:hover { background: #EFF6FF; } .ds-btn-field-quiet { background: rgb(255 255 255 / 0.12); color: #FFFFFF; } .ds-btn-field-quiet:hover { background: rgb(255 255 255 / 0.2); } .ds-btn-field-solid:focus-visible, .ds-btn-field-quiet:focus-visible { outline: 2px solid #FFFFFF; outline-offset: 2px; }"
+    },
+    {
+      "name": "MoreLink",
+      "kind": "custom",
+      "refersTo": "",
+      "description": "A read-more link with an arrow: FTDS Blue on white, white on the Field.",
+      "html": "<a href=\"#\" class=\"ds-more-link\">Every option in the README<svg width=\"16\" height=\"16\" viewBox=\"0 0 20 20\" fill=\"none\" aria-hidden=\"true\"><path d=\"M11.75 4.75L17.25 10M17.25 10L11.75 15.25M17.25 10H2.75\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></a>",
+      "css": ".ds-more-link { display: inline-flex; align-items: center; gap: 6px; color: #2563EB; font: 500 1rem/1.5 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; border-radius: 4px; } .ds-more-link:hover { text-decoration-thickness: 2px; } .ds-more-link:focus-visible { outline: 2px solid #3A75F6; outline-offset: 2px; }"
+    },
+    {
+      "name": "Provider Chips",
+      "kind": "chip",
+      "refersTo": "field-chip",
+      "description": "Provider names on the Field.",
+      "html": "<ul class=\"ds-chips\"><li class=\"ds-chip\">Anthropic</li><li class=\"ds-chip\">OpenAI</li><li class=\"ds-chip\">Kimi</li><li class=\"ds-chip\">OpenRouter</li></ul>",
+      "css": ".ds-chips { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 24px; background: #1D4ED8; } .ds-chip { background: rgb(255 255 255 / 0.12); color: #FFFFFF; font: 500 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; padding: 6px 14px; border-radius: 9999px; }"
+    },
+    {
+      "name": "Content Card",
+      "kind": "card",
+      "refersTo": "content-card",
+      "description": "A Sheet with a hairline on Paper: the pipeline's fast path and passes.",
+      "html": "<div class=\"ds-paper\"><div class=\"ds-card\"><p class=\"ds-card-meta\">Under 80k tokens</p><h3 class=\"ds-card-title\">Fast path</h3><p class=\"ds-card-text\">Intent, review and summary in a single model call.</p></div></div>",
+      "css": ".ds-paper { background: #FAFAFA; padding: 24px; } .ds-card { background: #FFFFFF; border: 1px solid #F4F4F5; border-radius: 14px; padding: 24px; font-family: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; color: #18181B; } .ds-card-meta { margin: 0; font: 600 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; color: #6B6B74; } .ds-card-title { margin: 8px 0 0; font: 600 1.25rem/1.75rem 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; } .ds-card-text { margin: 8px 0 0; font: 400 1rem/1.5 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; color: #3F3F46; }"
+    },
+    {
+      "name": "Code Block",
+      "kind": "custom",
+      "refersTo": "code-block",
+      "description": "Dark code with a copy button in its corner.",
+      "html": "<div class=\"ds-code-wrap\"><button class=\"ds-btn-code\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 20 20\" fill=\"none\" aria-hidden=\"true\"><rect x=\"6.75\" y=\"6.75\" width=\"9.5\" height=\"9.5\" rx=\"1.75\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M13.25 4.5v-.25a1.5 1.5 0 0 0-1.5-1.5h-7a1.5 1.5 0 0 0-1.5 1.5v7a1.5 1.5 0 0 0 1.5 1.5H5\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg><span>Copy</span></button><pre class=\"ds-code\"><code><span class=\"c\"># .fiscalcr-review.yml</span>\n<span class=\"k\">provider</span>: anthropic\n<span class=\"k\">files</span>:\n  <span class=\"k\">exclude</span>: [<span class=\"s\">\"**/*.snap\"</span>]</code></pre></div>",
+      "css": ".ds-code-wrap { position: relative; } .ds-code { margin: 0; background: #18181B; color: #FFFFFF; font: 400 0.875rem/1.625 ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; padding: 24px; border-radius: 14px; overflow-x: auto; tab-size: 2; } .ds-code .c { color: #A1A1AA; } .ds-code .k { color: #96B7FF; } .ds-code .s { color: #83DAA3; } .ds-btn-code { position: absolute; top: 12px; right: 12px; display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border: none; border-radius: 8px; background: rgb(255 255 255 / 0.1); color: #FFFFFF; font: 500 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-code:hover { background: rgb(255 255 255 / 0.2); } .ds-btn-code:focus-visible { outline: 2px solid #3A75F6; outline-offset: 2px; }"
+    },
+    {
+      "name": "Stage Panel",
+      "kind": "card",
+      "refersTo": "stage-panel",
+      "description": "The Stage on the Field, holding a white sheet (the release-pinned models table).",
+      "html": "<div class=\"ds-field\"><div class=\"ds-stage\"><div class=\"ds-stage-sheet\"><p class=\"ds-stage-title\">Models are pinned to the release</p><table class=\"ds-table\"><thead><tr><th>Provider</th><th>Reviews and synthesis</th></tr></thead><tbody><tr><th>Anthropic <code>anthropic</code></th><td>claude-opus-5-5</td></tr><tr><th>OpenAI <code>openai</code></th><td>gpt-6.1-sol</td></tr></tbody></table></div></div></div>",
+      "css": ".ds-field { background: #1D4ED8; padding: 24px; } .ds-stage { background: #172554; border-radius: 16px; padding: 20px; } .ds-stage-sheet { background: #FFFFFF; color: #18181B; border-radius: 14px; overflow: hidden; font-family: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; } .ds-stage-title { margin: 0; padding: 24px 24px 0; font: 600 1.25rem/1.75rem 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; } .ds-table { width: 100%; margin-top: 20px; border-collapse: collapse; font: 400 0.875rem/1.25rem 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; text-align: left; } .ds-table thead tr { border-top: 1px solid #F4F4F5; border-bottom: 1px solid #F4F4F5; } .ds-table thead th { padding: 10px 24px; font-weight: 600; color: #3F3F46; } .ds-table tbody tr { border-bottom: 1px solid #F4F4F5; } .ds-table tbody th { padding: 12px 24px; font-weight: 500; } .ds-table td { padding: 12px 24px; font: 400 0.8125rem/1.25rem ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; } .ds-table code { margin-left: 4px; font: 400 0.75rem ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; color: #6B6B74; }"
+    },
+    {
+      "name": "Finding Thread",
+      "kind": "custom",
+      "refersTo": "finding-thread",
+      "description": "An inline finding under its diff line, ringed in its severity's edge colour; resolved goes Paper with a success ring.",
+      "html": "<div class=\"ds-diff\"><div class=\"ds-line ds-del\"><span>43</span><code>- const row = await db.query(`SELECT ... ${id}`);</code></div><div class=\"ds-thread ds-thread-critical\"><p class=\"ds-thread-head\"><span class=\"ds-dot\"></span>Critical · The invoice id is built into the SQL string</p><p class=\"ds-thread-body\">Pass it as a parameter so the driver quotes it.</p></div><div class=\"ds-line ds-add\"><span>45</span><code>+ cache.set(id, row);</code></div><div class=\"ds-thread ds-thread-resolved\"><p class=\"ds-thread-head ds-ok\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 20 20\" fill=\"none\" aria-hidden=\"true\"><path d=\"m4.5 10.5 3.5 3.5 7.5-8\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Resolved · fixed in 9f3c2a1</p></div></div>",
+      "css": ".ds-diff { background: #FFFFFF; border: 1px solid #F4F4F5; border-radius: 14px; overflow: hidden; font: 400 0.75rem/1.5rem ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; color: #18181B; } .ds-line { display: grid; grid-template-columns: 3rem minmax(0, 1fr); white-space: pre; } .ds-line > span { color: #6B6B74; text-align: right; padding-right: 1rem; } .ds-add { background: #F0FDF4; } .ds-del { background: #FEF2F2; } .ds-thread { margin: 8px 16px 12px 48px; padding: 12px 16px; border-radius: 8px; background: #FFFFFF; font-family: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; white-space: normal; } .ds-thread-critical { box-shadow: 0 0 0 1px #FCA5A5; } .ds-thread-resolved { background: #FAFAFA; box-shadow: 0 0 0 1px #83DAA3; } .ds-thread-head { margin: 0; display: flex; align-items: center; gap: 6px; font: 600 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; color: #B91C1C; } .ds-thread-head.ds-ok { color: #15803D; } .ds-dot { width: 6px; height: 6px; border-radius: 9999px; background: #DC2626; } .ds-thread-body { margin: 4px 0 0; font: 400 0.875rem/1.25rem 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; color: #3F3F46; }"
+    },
+    {
+      "name": "Example Finding Card",
+      "kind": "custom",
+      "refersTo": "severity-tag-critical",
+      "description": "The white finding card floating on the Review Field, the page's one shadow.",
+      "html": "<div class=\"ds-field-lift\"><div class=\"ds-finding\"><div class=\"ds-finding-top\"><span class=\"ds-sev\"><span class=\"ds-sev-dot\"></span>Critical · Security</span><code>src/billing/invoice.ts:43</code></div><p class=\"ds-finding-title\">The invoice id is built into the SQL string</p><p class=\"ds-finding-foot\"><span>Suggested fix · confidence 0.92</span><span>Example</span></p></div></div>",
+      "css": ".ds-field-lift { background: linear-gradient(90deg, rgb(30 64 175 / 0.92), #1D4ED8); padding: 40px 24px; } .ds-finding { max-width: 420px; background: #FFFFFF; color: #18181B; border-radius: 14px; padding: 20px; font-family: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; box-shadow: 0 24px 48px -16px rgb(23 37 84 / 0.55); } .ds-finding-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; } .ds-finding-top code { font: 400 0.75rem ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; color: #6B6B74; } .ds-sev { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 9999px; background: #FEF2F2; color: #B91C1C; font: 600 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; } .ds-sev-dot { width: 6px; height: 6px; border-radius: 9999px; background: #DC2626; } .ds-finding-title { margin: 16px 0 0; font: 600 1rem/1.5 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; } .ds-finding-foot { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid #F4F4F5; display: flex; justify-content: space-between; font: 400 0.75rem/1.125rem 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; color: #6B6B74; }"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "",
+      "description": "FTDS's sticky navbar with the bracket-and-check mark.",
+      "html": "<header class=\"ds-nav\"><a href=\"#\" class=\"ds-brand\"><svg width=\"32\" height=\"32\" viewBox=\"0 0 32 32\" fill=\"none\" aria-hidden=\"true\"><rect width=\"32\" height=\"32\" rx=\"8\" fill=\"#2563EB\"/><path d=\"M11.5 9.5 6 16l5.5 6.5\" stroke=\"#fff\" stroke-width=\"2.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"m14.5 16.5 3.75 3.75L26 11.5\" stroke=\"#fff\" stroke-width=\"2.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>FiscalCR</a><nav class=\"ds-nav-links\"><a href=\"#\">Reviews</a><a href=\"#\">Configure</a></nav><a href=\"#\" class=\"ds-nav-cta\">Install</a></header>",
+      "css": ".ds-nav { display: flex; align-items: center; gap: 16px; height: 64px; padding: 0 24px; background: #FFFFFF; border-bottom: 1px solid #E4E4E7; font-family: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; } .ds-brand { display: flex; align-items: center; gap: 10px; font: 600 1.125rem/1.625rem 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; color: #18181B; text-decoration: none; } .ds-nav-links { display: flex; gap: 4px; flex: 1; } .ds-nav-links a { padding: 8px 12px; border-radius: 8px; color: #3F3F46; font: 500 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; text-decoration: none; } .ds-nav-links a:hover { background: #F4F4F5; color: #18181B; } .ds-nav-cta { display: inline-flex; align-items: center; height: 44px; padding: 0 16px; border-radius: 8px; background: #2563EB; color: #FFFFFF; font: 500 0.875rem/1.43 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; text-decoration: none; } .ds-nav-cta:hover { background: #1D4ED8; } .ds-nav a:focus-visible { outline: 2px solid #3A75F6; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Lit Line",
+    "overview": "FiscalCR's site is a member of the FTDS family: FTDS tokens, FTDS's Astro components (navbar, buttons, footer, icons), and Inter, self-hosted. It does not have its own palette, typeface or radius scale. Its expression comes from a few FTDS primitives promoted to named roles: the Field (Primary 700) as the full-bleed blue it opens and closes on, the Stage (Primary 950) as the dark panel that white objects sit on, and Ink-black code blocks. The one thing it owns outright is the Review Field: a canvas minimap of a pull request where a review pass sweeps down and individual lines light up as findings, turn green as they're fixed, and settle back.\n\nThe North Star is that single lit line. Everything on the page is quiet, flat FTDS so that a finding (a danger-red line, a severity tag, a thread with a coloured edge) is the brightest thing in view. Severity colour is reserved for findings and their states; it is never decoration. Density is FTDS's comfortable setting: 48px controls, generous section padding, a 1280px column.\n\nThe mark is a bracket and a check in white on an FTDS Blue rounded square (`site/public/logo.svg`): code, then a review that passed. It is the only place the two ideas are drawn as a symbol.",
+    "keyCharacteristics": [
+      "FTDS light theme, comfortable density, Inter throughout, a system monospace for code.",
+      "The Field (Primary 700) opens and closes the page; white, Paper and Sheet carry everything between.",
+      "The Stage (Primary 950) is a contained panel, never a band, holding a white sheet.",
+      "Severity colours (danger, warning, success) appear only as findings, diff lines and check states.",
+      "Flat at rest; the only shadow on the page lifts the hero's example finding off the Field.",
+      "Code is shown dark (Ink background, white text), not in FTDS's inline wash."
+    ],
+    "rules": [
+      {
+        "name": "The Severity Is Data Rule",
+        "body": "Danger, warning and success colours appear only where they mean a finding, a diff line or a check state. A decorative red or green on this site is a false finding.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Blues Rule",
+        "body": "The Field is a full-bleed band; the Stage is a contained, rounded panel on the Field. The Stage never runs edge to edge and never sits on white.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Display Rule",
+        "body": "The clamp-sized, -0.035em display is the hero's alone. Every other heading uses FTDS's fixed heading scale.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Sheet Rule",
+        "body": "On white and Paper, nothing casts a shadow. A card is a Sheet with a hairline border on Paper, or a Paper panel on Sheet.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** build from FTDS tokens and FTDS components first; this file only records what FiscalCR adds.",
+      "**Do** open on the Review Field and close on a Field band, with Sheet and Paper alternating between.",
+      "**Do** put anything on the Field or the Stage inside `.on-field`, so focus rings and selection turn white.",
+      "**Do** use the solid and quiet field buttons on the Field, not FTDS's filled primary.",
+      "**Do** show configuration and workflow files as dark code blocks, with a copy button where the reader will paste it.",
+      "**Do** keep severity colour tied to a real finding, diff line or check state, and label every example review as an example.",
+      "**Do** give every animation a still, complete reduced-motion state."
+    ],
+    "donts": [
+      "**Don't** add a palette, typeface, radius or shadow of FiscalCR's own; the Field, Stage and finding colours are FTDS primitives with roles.",
+      "**Don't** make the Stage full-bleed or put it on white.",
+      "**Don't** use danger, warning or success colours as decoration or brand accents.",
+      "**Don't** cast shadows on Sheet or Paper; the Field lift is for white objects floating on the Field.",
+      "**Don't** imitate GitHub's own interface; draw reviews in FTDS.",
+      "**Don't** use the hero display size anywhere but the h1."
+    ]
+  }
+}

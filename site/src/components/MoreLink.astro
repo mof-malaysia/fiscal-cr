@@ -1,0 +1,21 @@
+---
+/** A "read more" link with an arrow. */
+import ArrowForward from "@/components/ui/icons/arrow-forward.astro";
+
+interface Props {
+  href: string;
+  class?: string;
+}
+const { href, class: className } = Astro.props;
+---
+
+<a
+  href={href}
+  class:list={[
+    "text-label-lg focus-ring text-txt-primary inline-flex items-center gap-1.5 rounded-xs font-medium underline decoration-1 underline-offset-[3px] hover:decoration-2",
+    className,
+  ]}
+>
+  <slot />
+  <ArrowForward class="size-4" aria-hidden="true" />
+</a>

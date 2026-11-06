@@ -1,0 +1,411 @@
+---
+/**
+ * The landing page. It opens on the Review Field, then shows a review worth
+ * reading, whose model and where it runs, how a review runs, what a team
+ * controls in one YAML file, the rest of what it does, and the install.
+ * Direction: .impeccable/surfaces/ (development only).
+ */
+import CopyButton from "@/components/CopyButton.astro";
+import FieldButton from "@/components/FieldButton.astro";
+import MoreLink from "@/components/MoreLink.astro";
+import ExampleReview from "@/components/home/ExampleReview.astro";
+import ReviewField from "@/components/home/ReviewField.astro";
+import Check from "@/components/ui/icons/check.astro";
+import Base from "@/layouts/Base.astro";
+import { DEFAULT_CONFIG } from "../../../src/config/defaults";
+import { PROVIDER_DEFAULT_MODELS } from "../../../src/config/provider-models";
+import { APP_URL, CONFIG_URL, GITHUB_URL, pageColumn, README_URL, sectionTitle, WORKFLOW } from "@/site";
+
+const { pipeline, review } = DEFAULT_CONFIG;
+const numberWords = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const say = (n: number) => numberWords[n] ?? String(n);
+
+/** A numbered step's badge. */
+const stepBadge = "bg-bg-primary-600 text-txt-white flex items-center justify-center rounded-full font-semibold";
+
+const reviewPoints = [
+  {
+    title: "On the line, not in a wall of text",
+    text: "Findings are inline comments on the exact lines they're about, with a suggested fix where there is one. One summary comment carries the walkthrough and the score.",
+  },
+  {
+    title: "Only what it's sure of",
+    text: `Findings under ${pipeline.minConfidence} confidence are dropped (criticals are kept from 0.4). At most ${review.maxAnnotations} inline comments by default; nitpicks go to the check run, not your thread.`,
+  },
+  {
+    title: "No repeats, no re-reading",
+    text: "Each push reviews only the files changed since the last reviewed commit, the summary updates in place, and a finding already posted isn't posted again.",
+  },
+  {
+    title: "Fixed means resolved",
+    text: "When a push fixes a finding, FiscalCR replies on its thread and resolves it. Set fail_on to gate merges on critical findings, or on warnings too.",
+  },
+];
+
+/** The models this release pins (src/config/provider-models.ts), Anthropic first. */
+const providerLabels = { anthropic: "Anthropic", openai: "OpenAI", kimi: "Kimi" } as const;
+const releaseModels = (Object.keys(providerLabels) as (keyof typeof providerLabels)[]).map((provider) => ({
+  provider,
+  label: providerLabels[provider],
+  review: PROVIDER_DEFAULT_MODELS[provider].groupReview,
+  fast: PROVIDER_DEFAULT_MODELS[provider].fastPath,
+}));
+
+const boundary = [
+  {
+    title: "No service in the middle",
+    text: "It runs as a step in your GitHub Actions, or as a GitHub App on your own server. FiscalCR has no server of its own; reviews go straight to the provider you configure.",
+  },
+  {
+    title: "Keyless with Anthropic",
+    text: "With GitHub OIDC and Anthropic workload identity federation, each run gets a short-lived token. No Claude key is stored in GitHub.",
+  },
+  {
+    title: "A pull request can't redirect your key",
+    text: "The provider and base URL are read from the base branch, not the pull request, so a change to the config can't send your API key elsewhere.",
+  },
+  {
+    title: "Nothing phoned home",
+    text: "Token telemetry is off by default, goes only to your Action logs when on, and never includes prompts, source, paths or repository names.",
+  },
+];
+
+const configExample = `<span class="c"># .fiscalcr-review.yml</span>
+<span class="k">provider</span>: anthropic
+<span class="k">language</span>: en              <span class="c"># or zh-TW, zh-CN, ja, ko</span>
+
+<span class="k">review</span>:
+  <span class="k">aspects</span>:
+    <span class="k">bugs</span>: true
+    <span class="k">security</span>: true
+    <span class="k">performance</span>: true
+    <span class="k">style</span>: false
+    <span class="k">testing</span>: true
+  <span class="k">minSeverity</span>: warning
+  <span class="k">failOn</span>: critical
+  <span class="k">visualize</span>:
+    <span class="k">enabled</span>: true          <span class="c"># a diagram on bigger reviews</span>
+
+<span class="k">files</span>:
+  <span class="k">exclude</span>: [<span class="s">"**/generated/**"</span>, <span class="s">"**/*.snap"</span>]
+
+<span class="k">rules</span>:
+  - <span class="k">name</span>: no-console-log
+    <span class="k">description</span>: <span class="s">"No console.log in production code"</span>
+    <span class="k">severity</span>: warning
+    <span class="k">filePattern</span>: <span class="s">"src/**/*.ts"</span>
+
+<span class="k">prompt</span>:
+  <span class="k">reviewFocus</span>: <span class="s">"API input validation and error handling"</span>`;
+
+const configPoints = [
+  { key: "review.aspects", text: "Bugs, security, performance, style and best practices, with documentation and testing when you want them." },
+  { key: "minSeverity · failOn", text: "How quiet it is, and which findings fail the check." },
+  { key: "rules", text: "Your team's own rules, by file pattern and severity." },
+  { key: "prompt", text: "A focus or a standing instruction, added to every review." },
+  { key: "files", text: "What's reviewed. Lockfiles, builds and minified files are left out by default." },
+  { key: "language", text: "Reviews in English, Traditional or Simplified Chinese, Japanese or Korean." },
+];
+
+const more = [
+  {
+    title: "Diagrams on bigger reviews",
+    text: "Opt in and a full review can carry a Mermaid flowchart, a sequence diagram or a change table of what the pull request does.",
+  },
+  {
+    title: "Cost you can see",
+    text: "The Action outputs tokens used and an estimated cost for every run, and prompts are cached per provider to keep it down.",
+  },
+  {
+    title: "Ask it in a comment",
+    text: "With the self-hosted App, comment @fiscalcr review on any pull request to run a full review, or @fiscalcr help.",
+  },
+  {
+    title: "Tested against a benchmark",
+    text: "A local harness runs the real review pipeline over 11 synthetic pull requests with hand-written expected issues, so prompt changes are measured against a baseline.",
+  },
+];
+---
+
+<Base
+  title="FiscalCR: AI code review for GitHub pull requests"
+  description="Open-source AI code review for GitHub pull requests. The model you choose, in your own GitHub Actions, with inline findings that resolve when you fix them."
+>
+  <ReviewField />
+
+  <!-- A review worth reading -->
+  <section id="reviews" class="bg-bg-white" aria-labelledby="reviews-title">
+    <div class:list={[pageColumn, "grid gap-12 py-16 md:py-24 lg:grid-cols-12 lg:gap-14"]}>
+      <div class="lg:col-span-5">
+        <h2 id="reviews-title" class={sectionTitle}>A review your team will actually read</h2>
+        <p class="text-body-lg text-txt-black-700 mt-4">
+          A review only helps if people read it. FiscalCR is built to post less, and to clean up after itself.
+        </p>
+        <dl class="mt-10 flex flex-col gap-7">
+          {
+            reviewPoints.map((point) => (
+              <div class="border-otl-divider border-t pt-5">
+                <dt class="text-heading-2xs font-semibold">{point.title}</dt>
+                <dd class="text-body-md text-txt-black-700 mt-2">{point.text}</dd>
+              </div>
+            ))
+          }
+        </dl>
+      </div>
+      <div class="min-w-0 lg:col-span-7 lg:pt-10">
+        <ExampleReview />
+      </div>
+    </div>
+  </section>
+
+  <!-- Your model, your CI -->
+  <section id="models" class="on-field" aria-labelledby="models-title">
+    <div class:list={[pageColumn, "py-16 md:py-24"]}>
+      <div class="grid gap-12 lg:grid-cols-12 lg:gap-14">
+        <div class="lg:col-span-5">
+          <h2 id="models-title" class={sectionTitle}>Your model. Your CI. Your key.</h2>
+          <p class="text-txt-on-field text-body-lg mt-4">
+            Bring an API key from the provider you already trust, or point it at your own endpoint. FiscalCR has no
+            backend of its own.
+          </p>
+          <ul class="mt-8 flex flex-wrap gap-2" role="list">
+            {
+              [...releaseModels.map((m) => m.label), "OpenRouter", "Any OpenAI-compatible API"].map((name) => (
+                <li class="bg-bg-white/12 text-label-md rounded-full px-3.5 py-1.5 font-medium">{name}</li>
+              ))
+            }
+          </ul>
+        </div>
+
+        <div class="bg-bg-stage min-w-0 rounded-2xl p-3 md:p-5 lg:col-span-7">
+          <div class="bg-bg-white text-txt-black-900 overflow-hidden rounded-xl">
+            <div class="px-5 pt-5 md:px-6 md:pt-6">
+              <p class="text-heading-2xs font-semibold">Models are pinned to the release</p>
+              <p class="text-body-sm text-txt-black-700 mt-1.5">
+                Each FiscalCR release fixes the models its prompts were tuned and tested against, so reviews don't drift
+                under you. Upgrading FiscalCR is how you get newer models; you can still override any stage.
+              </p>
+            </div>
+            <div class="mt-5 max-sm:hidden">
+              <table class="text-body-sm w-full border-collapse text-left">
+                <thead>
+                  <tr class="border-otl-divider border-y">
+                    <th scope="col" class="text-label-sm text-txt-black-700 px-5 py-2.5 font-semibold md:px-6">Provider</th>
+                    <th scope="col" class="text-label-sm text-txt-black-700 px-3 py-2.5 font-semibold">Reviews and synthesis</th>
+                    <th scope="col" class="text-label-sm text-txt-black-700 px-3 py-2.5 font-semibold">Intent and small PRs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {
+                    releaseModels.map((row) => (
+                      <tr class="border-otl-divider border-b">
+                        <th scope="row" class="px-5 py-3 font-medium md:px-6">
+                          {row.label} <code class="text-txt-black-500 text-body-xs ml-1 font-mono">{row.provider}</code>
+                        </th>
+                        <td class="px-3 py-3 font-mono text-[0.8125rem]">{row.review}</td>
+                        <td class="px-3 py-3 font-mono text-[0.8125rem]">{row.fast}</td>
+                      </tr>
+                    ))
+                  }
+                  <tr>
+                    <th scope="row" class="px-5 py-3 font-medium md:px-6">OpenRouter, OpenAI-compatible</th>
+                    <td colspan="2" class="text-txt-black-700 px-3 py-3">You name the model.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <dl class="divide-otl-divider border-otl-divider mt-5 divide-y border-t sm:hidden">
+              {
+                releaseModels.map((row) => (
+                  <div class="px-5 py-3">
+                    <dt class="text-label-md font-semibold">{row.label} <code class="text-txt-black-500 text-body-xs ml-1 font-mono">{row.provider}</code></dt>
+                    <dd class="text-body-sm text-txt-black-700 mt-1">Reviews: <code class="font-mono">{row.review}</code></dd>
+                    <dd class="text-body-sm text-txt-black-700">Intent, small PRs: <code class="font-mono">{row.fast}</code></dd>
+                  </div>
+                ))
+              }
+              <div class="px-5 py-3">
+                <dt class="text-label-md font-semibold">OpenRouter, OpenAI-compatible</dt>
+                <dd class="text-body-sm text-txt-black-700 mt-1">You name the model.</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </div>
+
+      <ul class="border-otl-on-field mt-14 grid gap-8 border-t pt-10 sm:grid-cols-2 lg:grid-cols-4" role="list">
+        {
+          boundary.map((item) => (
+            <li>
+              <h3 class="text-label-lg font-semibold">{item.title}</h3>
+              <p class="text-txt-on-field text-body-sm mt-2">{item.text}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <!-- How a review runs -->
+  <section id="pipeline" class="bg-bg-gray-50" aria-labelledby="pipeline-title">
+    <div class:list={[pageColumn, "py-16 md:py-24"]}>
+      <div class="max-w-[46rem]">
+        <h2 id="pipeline-title" class={sectionTitle}>Small changes get one call. Big ones get a plan.</h2>
+        <p class="text-body-lg text-txt-black-700 mt-4">
+          FiscalCR reads the diff and the full files it touches, then picks a route by size. Large pull requests are
+          read in related groups, in parallel, and the findings are reconciled into one review.
+        </p>
+      </div>
+
+      <div class="mt-12 grid gap-4 lg:grid-cols-12">
+        <div class="bg-bg-white border-otl-divider rounded-xl border p-5 md:p-6 lg:col-span-4">
+          <p class="text-label-sm text-txt-black-500 font-semibold">Under {pipeline.fastPathThreshold / 1000}k tokens</p>
+          <h3 class="text-heading-2xs mt-2 font-semibold">Fast path</h3>
+          <p class="text-body-md text-txt-black-700 mt-2">Intent, review and summary in a single model call.</p>
+        </div>
+
+        <ol class="bg-bg-white border-otl-divider grid gap-px overflow-hidden rounded-xl border md:grid-cols-3 lg:col-span-8" role="list">
+          {
+            [
+              { n: 1, title: "Intent and grouping", text: "Works out what the change is for, writes the walkthrough, and splits the files into related groups." },
+              { n: 2, title: "Group reviews", text: `Up to ${say(pipeline.maxGroups)} groups are reviewed, ${say(pipeline.concurrency)} at a time. In the Action, each also sees the unchanged files it imports.` },
+              { n: 3, title: "Synthesis", text: "Findings are merged, deduplicated and scored for confidence before anything is posted." },
+            ].map((pass) => (
+              <li class="bg-bg-white border-otl-divider p-5 md:p-6 max-md:not-first:border-t md:not-first:border-l">
+                <span class:list={[stepBadge, "text-label-sm size-7"]} aria-hidden="true">
+                  {pass.n}
+                </span>
+                <h3 class="text-heading-2xs mt-4 font-semibold">
+                  <span class="sr-only">Pass {pass.n}: </span>
+                  {pass.title}
+                </h3>
+                <p class="text-body-md text-txt-black-700 mt-2">{pass.text}</p>
+              </li>
+            ))
+          }
+        </ol>
+      </div>
+
+      <div class="bg-bg-white border-otl-divider mt-4 flex flex-col gap-4 rounded-xl border p-5 md:flex-row md:items-center md:justify-between md:p-6">
+        <p class="text-heading-2xs font-semibold">Then it posts to GitHub</p>
+        <ul class="text-body-md flex flex-wrap gap-x-6 gap-y-2" role="list">
+          {
+            ["A check run", "One summary comment", "Inline findings", "Overflow as check annotations"].map((out) => (
+              <li class="flex items-center gap-2">
+                <Check class="text-txt-primary size-5 shrink-0" aria-hidden="true" />
+                {out}
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- One file of configuration -->
+  <section id="configure" class="bg-bg-white" aria-labelledby="configure-title">
+    <div class:list={[pageColumn, "grid gap-12 py-16 md:py-24 lg:grid-cols-12 lg:gap-14"]}>
+      <div class="lg:col-span-5">
+        <h2 id="configure-title" class={sectionTitle}>Your team's review, in one file you can read</h2>
+        <p class="text-body-lg text-txt-black-700 mt-4">
+          Add <code>.fiscalcr-review.yml</code> to the repository root, or don't: it runs{" "}
+          on sensible defaults. A config that doesn't parse fails loudly instead of being ignored.
+        </p>
+        <dl class="mt-8 flex flex-col gap-4">
+          {
+            configPoints.map((point) => (
+              <div class="grid gap-1 sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-4">
+                <dt><code class="text-label-sm text-txt-primary font-mono font-semibold">{point.key}</code></dt>
+                <dd class="text-body-md text-txt-black-700">{point.text}</dd>
+              </div>
+            ))
+          }
+        </dl>
+        <MoreLink href={CONFIG_URL} class="mt-8">Every option in the README</MoreLink>
+      </div>
+      <pre class="code-block min-w-0 self-start lg:col-span-7"><code set:html={configExample} /></pre>
+    </div>
+  </section>
+
+  <!-- The rest of what it does -->
+  <section class="bg-bg-gray-50" aria-labelledby="more-title">
+    <div class:list={[pageColumn, "py-16 md:py-24"]}>
+      <h2 id="more-title" class={sectionTitle}>And the details that make it fit in</h2>
+      <ul class="mt-10 grid gap-x-8 gap-y-10 md:grid-cols-2" role="list">
+        {
+          more.map((item) => (
+            <li class="border-otl-divider border-t-2 pt-6">
+              <h3 class="text-heading-2xs font-semibold">{item.title}</h3>
+              <p class="text-body-md text-txt-black-700 mt-3 max-w-[48ch]">{item.text}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section id="install" class="bg-bg-white" aria-labelledby="install-title">
+    <div class:list={[pageColumn, "py-16 md:py-24"]}>
+      <div class="max-w-[46rem]">
+        <h2 id="install-title" class={sectionTitle}>Three steps, and the next pull request is reviewed</h2>
+      </div>
+      <ol class="mt-12 grid gap-12 lg:grid-cols-12 lg:gap-14" role="list">
+        <li class="flex flex-col gap-10 lg:col-span-5">
+          <div>
+            <span class:list={[stepBadge, "text-label-md size-9"]} aria-hidden="true">1</span>
+            <h3 class="text-heading-xs mt-4 font-semibold">Add your provider's key</h3>
+            <p class="text-body-md text-txt-black-700 mt-2">
+              In the repository's settings, add an Actions secret named <code>LLM_API_KEY</code>.{" "}
+              On Anthropic you can skip the secret and use OIDC instead.
+            </p>
+          </div>
+          <div>
+            <span class:list={[stepBadge, "text-label-md size-9"]} aria-hidden="true">2</span>
+            <h3 class="text-heading-xs mt-4 font-semibold">Commit the workflow</h3>
+            <p class="text-body-md text-txt-black-700 mt-2">
+              Copy this file into <code>.github/workflows/</code>. For another provider, change{" "}
+              <code>provider</code>, and add <code>model</code> and{" "}
+              <code>base_url</code> where it needs them.
+            </p>
+          </div>
+          <div>
+            <span class:list={[stepBadge, "text-label-md size-9"]} aria-hidden="true">3</span>
+            <h3 class="text-heading-xs mt-4 font-semibold">Open a pull request</h3>
+            <p class="text-body-md text-txt-black-700 mt-2">
+              FiscalCR reviews it when it opens, on every push, when it's marked ready, and when review is requested.
+              Drafts are skipped.
+            </p>
+          </div>
+        </li>
+        <li class="min-w-0 lg:col-span-7" aria-label="The workflow file">
+          <div id="workflow" class="relative">
+            <CopyButton variant="code" label="Copy" class="absolute top-3 right-3" />
+            <pre class="code-block max-md:pt-14"><code>{WORKFLOW}</code></pre>
+          </div>
+          <div class="bg-bg-gray-50 mt-4 rounded-xl p-5 md:p-6">
+            <p class="text-label-lg font-semibold">Prefer a GitHub App?</p>
+            <p class="text-body-md text-txt-black-700 mt-1.5">
+              Run FiscalCR on your own server as a GitHub App, with comment commands such as @fiscalcr review.
+            </p>
+            <MoreLink href={APP_URL} class="mt-4">Self-hosted App setup</MoreLink>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- The close -->
+  <section class="on-field" aria-labelledby="cta-title">
+    <div class:list={[pageColumn, "flex flex-col gap-8 py-16 md:flex-row md:items-end md:justify-between md:py-20"]}>
+      <div class="max-w-[40rem]">
+        <h2 id="cta-title" class={sectionTitle}>Review your next pull request with FiscalCR</h2>
+        <p class="text-txt-on-field text-body-lg mt-3">One workflow file, the model you choose, and nothing to host.</p>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <CopyButton />
+        <FieldButton href={README_URL} variant="quiet">Read the docs</FieldButton>
+      </div>
+    </div>
+  </section>
+</Base>

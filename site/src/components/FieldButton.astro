@@ -1,0 +1,12 @@
+---
+/** A button-like link on the primary field: white with primary text, or a quiet translucent one. */
+import { fieldButton } from "@/site";
+
+interface Props {
+  href: string;
+  variant?: keyof typeof fieldButton;
+}
+const { href, variant = "solid" } = Astro.props;
+---
+
+<a href={href} class={fieldButton[variant]}><slot /></a>

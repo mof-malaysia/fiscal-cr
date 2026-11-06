@@ -1,0 +1,187 @@
+---
+/**
+ * An example review, drawn in FTDS rather than copied from GitHub's UI: the
+ * sticky summary, the check, and two inline findings on a diff. "Push the
+ * fix" plays the next commit: the critical line changes, its thread replies
+ * and resolves, the summary and the check update. The state lives in one
+ * attribute (data-state) and CSS shows the matching parts, so without
+ * JavaScript the first state stands on its own.
+ */
+---
+
+<div class="example-review" data-state="open" data-example>
+  <div class="border-otl-divider bg-bg-white overflow-hidden rounded-xl border">
+    <!-- The pull request's head: title, then the check. -->
+    <div class="border-otl-divider flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 md:px-5">
+      <p class="text-label-md min-w-0 font-semibold">
+        Cache invoice lookups <span class="text-txt-black-500 font-normal">#482</span>
+      </p>
+      <p class="text-label-sm inline-flex items-center gap-1.5 font-semibold">
+        <span class="when-open text-txt-danger inline-flex items-center gap-1.5">
+          <span class="bg-bg-danger-600 size-2 rounded-full" aria-hidden="true"></span>FiscalCR check failing: 1 critical
+        </span>
+        <span class="when-fixed text-txt-success inline-flex items-center gap-1.5">
+          <span class="bg-bg-success-600 size-2 rounded-full" aria-hidden="true"></span>FiscalCR check passing
+        </span>
+      </p>
+    </div>
+
+    <!-- The sticky summary comment. -->
+    <div class="bg-bg-gray-50 border-otl-divider border-b px-4 py-4 md:px-5">
+      <div class="flex items-center justify-between gap-3">
+        <p class="text-label-md font-semibold">FiscalCR Code Review</p>
+        <p class="text-body-xs text-txt-black-500">
+          <span class="when-open">Reviewed a41c0d2</span><span class="when-fixed">Updated for 9f3c2a1</span>
+        </p>
+      </div>
+      <p class="text-body-sm text-txt-black-700 mt-2">
+        Adds an in-memory cache in front of invoice lookups and prices invoice lines on read. The cache is sound; the query
+        it wraps is not.
+      </p>
+      <dl class="text-body-sm mt-3 flex flex-wrap gap-x-5 gap-y-1">
+        <div class="flex gap-1.5">
+          <dt class="text-txt-black-500">Critical</dt><dd class="font-semibold tabular-nums"><span class="when-open">1</span><span class="when-fixed">0</span></dd>
+        </div>
+        <div class="flex gap-1.5"><dt class="text-txt-black-500">Warning</dt><dd class="font-semibold tabular-nums">1</dd></div>
+        <div class="flex gap-1.5">
+          <dt class="text-txt-black-500">Score</dt><dd class="font-semibold tabular-nums"><span class="when-open">64</span><span class="when-fixed">88</span>/100</dd>
+        </div>
+      </dl>
+    </div>
+
+    <!-- The diff, with the findings on their lines. -->
+    <p class="text-body-xs text-txt-black-700 border-otl-divider border-b px-4 py-2 font-mono md:px-5">src/billing/invoice.ts</p>
+    <div class="text-body-xs overflow-x-auto font-mono leading-6">
+      <div class="diff-line"><span>41</span><code>export async function getInvoice(req: Request) {"{"}</code></div>
+      <div class="diff-line"><span>42</span><code>  const id = req.params.id;</code></div>
+      <div class="diff-line diff-del when-open"><span>43</span><code>- const row = await db.query(`SELECT * FROM invoices WHERE id = {"${id}"}`);</code></div>
+      <div class="diff-line diff-add when-fixed"><span>43</span><code>+ const row = await db.query("SELECT * FROM invoices WHERE id = $1", [id]);</code></div>
+
+      <div class="thread thread-critical">
+        <div class="when-open">
+          <p class="text-label-sm text-txt-danger flex items-center gap-1.5 font-semibold">
+            <span class="bg-bg-danger-600 size-1.5 rounded-full" aria-hidden="true"></span>Critical · The invoice id is built into the SQL string
+          </p>
+          <p class="text-body-sm text-txt-black-700 font-body mt-1">
+            <code>req.params.id</code> reaches the query unescaped, so a crafted id can read other customers' invoices. Pass it as a
+            parameter.
+          </p>
+        </div>
+        <div class="when-fixed">
+          <p class="text-label-sm text-txt-success flex items-center gap-1.5 font-semibold">
+            <svg class="size-4" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m4.5 10.5 3.5 3.5 7.5-8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            Resolved · fixed in 9f3c2a1
+          </p>
+          <p class="text-body-sm text-txt-black-500 font-body mt-1">The id is now passed as a parameter. Thread resolved by FiscalCR.</p>
+        </div>
+      </div>
+
+      <div class="diff-line"><span>44</span><code>  if (!row) return null;</code></div>
+      <div class="diff-line diff-add"><span>45</span><code>+ cache.set(id, row);</code></div>
+      <div class="diff-line diff-add"><span>46</span><code>+ for (const line of row.lines) await priceLine(line);</code></div>
+
+      <div class="thread thread-warning">
+        <p class="text-label-sm text-txt-warning flex items-center gap-1.5 font-semibold">
+          <span class="bg-bg-warning-500 size-1.5 rounded-full" aria-hidden="true"></span>Warning · Lines are priced one at a time
+        </p>
+        <p class="text-body-sm text-txt-black-700 font-body mt-1">
+          Each <code>await</code> waits for the last. An invoice with 200 lines makes 200 round trips in a row; use{" "}
+          <code>Promise.all</code>.
+        </p>
+      </div>
+
+      <div class="diff-line"><span>47</span><code>  return toInvoice(row);</code></div>
+      <div class="diff-line"><span>48</span><code>{"}"}</code></div>
+    </div>
+  </div>
+
+  <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+    <button
+      type="button"
+      class="control-md text-label-md focus-ring bg-bg-primary-600 text-txt-white hover:bg-bg-primary-700 hidden items-center gap-2 rounded-md font-medium transition-colors"
+      data-toggle
+      aria-describedby="example-note"
+    >
+      <span class="when-open">Push the fix</span><span class="when-fixed">Replay the example</span>
+    </button>
+    <p id="example-note" class="text-body-xs text-txt-black-500">Example review. The code, the pull request and the output are illustrative.</p>
+  </div>
+  <p class="sr-only" role="status" data-status></p>
+</div>
+
+<style>
+  .example-review[data-state="open"] .when-fixed,
+  .example-review[data-state="fixed"] .when-open {
+    display: none;
+  }
+  .diff-line {
+    display: grid;
+    grid-template-columns: 3rem minmax(0, 1fr);
+    white-space: pre;
+  }
+  .diff-line > span {
+    color: rgb(var(--txt-black-500));
+    text-align: right;
+    padding-right: 1rem;
+    user-select: none;
+  }
+  .diff-line > code {
+    padding-right: 1.25rem;
+  }
+  .diff-add {
+    background: rgb(var(--bg-success-50));
+  }
+  .diff-del {
+    background: rgb(var(--bg-danger-50));
+  }
+  .thread {
+    margin: 0.5rem 1rem 0.75rem 3rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    background: rgb(var(--bg-white));
+    box-shadow: 0 0 0 1px var(--ring);
+    white-space: normal;
+    font-family: var(--font-body);
+  }
+  .thread code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+  }
+  /* A finding's card takes its severity's outline; a resolved one goes quiet. */
+  .thread-critical {
+    --ring: rgb(var(--_danger-300));
+  }
+  .example-review[data-state="fixed"] .thread-critical {
+    --ring: rgb(var(--_success-300));
+    background: rgb(var(--bg-gray-50));
+  }
+  .thread-warning {
+    --ring: rgb(var(--_warning-300));
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .example-review [class*="when-"] {
+      animation: swap 0.35s ease-out;
+    }
+  }
+  @keyframes swap {
+    from {
+      opacity: 0;
+    }
+  }
+</style>
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>("[data-example]")) {
+    const button = root.querySelector<HTMLButtonElement>("[data-toggle]")!;
+    const status = root.querySelector<HTMLElement>("[data-status]")!;
+    button.classList.remove("hidden");
+    button.classList.add("inline-flex");
+    button.addEventListener("click", () => {
+      const fixed = root.dataset.state !== "fixed";
+      root.dataset.state = fixed ? "fixed" : "open";
+      status.textContent = fixed
+        ? "Fix pushed. The critical finding is resolved, the summary is updated and the check passes."
+        : "Example reset to the first review.";
+    });
+  }
+</script>
