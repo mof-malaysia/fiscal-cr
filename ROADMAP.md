@@ -23,4 +23,4 @@ Owned by Irfan. `/pm` reads this file and only proposes changes to it.
 
 ## Known gaps
 
-- The root `package.json` has no `packageManager` pin; `release.yml` uses pnpm 9 while `site/` pins pnpm 12.16.1.
+- None recorded yet.

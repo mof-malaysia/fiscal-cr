@@ -1,6 +1,6 @@
 # AGENTS.md
 
-FiscalCR: AI-powered, model-agnostic code review for GitHub pull requests. TypeScript (ESM), Node >= 20, pnpm (no `packageManager` pin at the root; the release workflow uses pnpm 9, `site/` pins pnpm 12.16.1). Shipped as a GitHub Action (`action.yml`) and a self-hosted GitHub App.
+FiscalCR: AI-powered, model-agnostic code review for GitHub pull requests. TypeScript (ESM), Node >= 20, pnpm 12.16.1 (`packageManager` in both `package.json` and `site/package.json`; keep them the same, and the workflows read it from there). Shipped as a GitHub Action (`action.yml`) and a self-hosted GitHub App.
 
 Agent navigation for this repo:
 

@@ -18,7 +18,7 @@ self-hosted GitHub App.
 - **HTTP**: Hono + `@hono/node-server`
 - **GitHub**: `@octokit/app`, `@octokit/rest`, `@octokit/webhooks`
 - **Config/data**: Zod, YAML, minimatch, Pino
-- **Package manager**: pnpm 9
+- **Package manager**: pnpm 12.16.1 (`packageManager` in `package.json` and `site/package.json`)
 
 ## Entry points
 
