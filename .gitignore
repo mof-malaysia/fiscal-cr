@@ -9,7 +9,6 @@ action/dist/
 coverage/
 .vscode/
 .idea/
-.claude
 .impeccable/
 
 # Cache / build metadata
@@ -22,3 +21,11 @@ coverage/
 .eval-results/
 **plans/
 src/pipeline/generated/
+
+# Claude Code: share team config, keep personal files local
+.claude/*
+!.claude/settings.json
+!.claude/launch.json
+!.claude/skills/
+!.claude/agents/
+!.claude/commands/

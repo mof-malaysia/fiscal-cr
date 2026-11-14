@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-The product is a TypeScript (ESM, Node >= 20) GitHub Action and self-hosted GitHub App. Its public landing page is an Astro static site with Tailwind CSS v4, modelled on the stack of the Laman marketing site (`../fiscal-sb/apps/www`). It lives in `site/` in this repository and deploys to GitHub Pages (`mof-malaysia.github.io/fiscal-cr`). Confirmed by the owner, 5 Nov 2026.
+The product is a TypeScript (ESM, Node >= 24) GitHub Action and self-hosted GitHub App. Its public landing page is an Astro static site with Tailwind CSS v4, modelled on the stack of the Laman marketing site (`../fiscal-sb/apps/www`). It lives in `site/` in this repository and deploys to GitHub Pages (`mof-malaysia.github.io/fiscal-cr`). Confirmed by the owner, 5 Nov 2026.
 
 ## Users
 

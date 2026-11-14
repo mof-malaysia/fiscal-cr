@@ -15,7 +15,8 @@
     "lint": "pnpm generate:prompts && tsc --noEmit",
     "models:sync": "tsx scripts/sync-provider-models.ts",
     "llms:sync": "tsx scripts/generate-llms.ts",
-    "clean": "rm -rf dist action/dist"
+    "clean": "rm -rf dist action/dist",
+    "prepare": "git config core.hooksPath .githooks || echo \"Skipped git hooks: no git repository\""
   },
   "keywords": [
     "code-review",
@@ -39,13 +40,14 @@
   "devDependencies": {
     "@actions/core": "^1.11.0",
     "@actions/github": "^6.0.0",
-    "@types/node": "^22.10.0",
+    "@types/node": "^24.19.2",
     "@vercel/ncc": "^0.38.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   },
   "engines": {
-    "node": ">=20"
-  }
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@12.16.1"
 }

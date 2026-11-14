@@ -1,0 +1,4 @@
+# pnpm settings only (not a monorepo: site/ keeps its own install and lockfile).
+# pnpm 10+ refuses to install while a dependency's build script is unreviewed.
+allowBuilds:
+  esbuild: true
