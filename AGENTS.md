@@ -49,7 +49,7 @@ pnpm --dir site check-types
 
 ## Checks
 
-Nothing runs the checks automatically on a PR. There are no git hooks, and `.github/workflows/ci.yml` only runs FiscalCR's own review on the PR; type check and tests run only in `release.yml`, after a release is published. So run `pnpm lint` and `pnpm test` yourself before every commit (and `pnpm --dir site check-types` for site changes). If a hook or check is ever added, never skip it.
+The pre-push hook (`.githooks/pre-push`) is the whole gate: it runs `pnpm lint`, `pnpm test` and, when `site/` is installed, `pnpm --dir site check-types`. `pnpm install` turns it on (the `prepare` script sets `core.hooksPath`). Never skip it with `--no-verify`. There are no CI check jobs, on purpose, and none should be added: GitHub Actions runs only FiscalCR's own review (`ci.yml`), the release build (`release.yml`) and the site deploy (`site.yml`). Run `pnpm lint` and `pnpm test` before committing too, so a push isn't the first time they run.
 
 ## Verifying changes
 

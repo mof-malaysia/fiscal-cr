@@ -1,0 +1,18 @@
+#!/bin/sh
+# The project's check gate: runs before anything is pushed. There are no CI
+# check jobs on purpose; this hook is the whole gate, so never skip it.
+# Installed by `pnpm install` (the root "prepare" script sets core.hooksPath).
+set -e
+
+echo "pre-push: pnpm lint"
+pnpm lint
+echo "pre-push: pnpm test"
+pnpm test
+
+# The landing page has its own install; check it when it's installed.
+if [ -d site/node_modules ]; then
+  echo "pre-push: site check-types"
+  pnpm --dir site check-types
+else
+  echo "pre-push: skipped site check-types (run 'pnpm --dir site install' first)"
+fi
