@@ -14,7 +14,7 @@ AI-powered, model-agnostic code review for GitHub pull requests. It posts a
 Check Run, PR review, and inline comments through either a GitHub Action or a
 self-hosted GitHub App.
 
-- **Runtime**: TypeScript, ESM, Node >= 20, strict mode
+- **Runtime**: TypeScript, ESM, Node >= 24, strict mode
 - **HTTP**: Hono + `@hono/node-server`
 - **GitHub**: `@octokit/app`, `@octokit/rest`, `@octokit/webhooks`
 - **Config/data**: Zod, YAML, minimatch, Pino

@@ -247,6 +247,8 @@ Use App mode for comment-driven reviews such as `@fiscalcr review`.
 
 ### Setup
 
+Needs Node 24 or later and pnpm 12.
+
 ```bash
 git clone https://github.com/mof-malaysia/fiscal-cr.git
 cd fiscal-cr
