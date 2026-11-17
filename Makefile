@@ -57,3 +57,15 @@ eval-llm-full-dry:
 # stats without any key, network, or artifact.
 eval-llm-pipeline-dry:
 	EVAL_CASES=pipeline-01 ./node_modules/.bin/tsx $(ENV_FILE_FLAG) eval/index.ts --dry-run
+
+# History suite (real PRs; see eval/history/README.md). Fetch materialises the
+# pinned cases into the gitignored .cache/eval-history/ with read-only GitHub
+# API calls (GITHUB_TOKEN, GH_TOKEN or `gh auth token`); no provider calls.
+.PHONY: eval-history-fetch eval-llm-history-dry
+eval-history-fetch:
+	./node_modules/.bin/tsx eval/history/fetch.ts
+
+# Keyless dry run of the history suite: plan, routes and provider-call bound.
+# Needs eval-history-fetch first; no network, no key, no artifact.
+eval-llm-history-dry:
+	EVAL_SUITE=history ./node_modules/.bin/tsx $(ENV_FILE_FLAG) eval/index.ts --dry-run

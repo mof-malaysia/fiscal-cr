@@ -62,11 +62,16 @@ per-attempt bounds), not the attempt count. The harness also records the
 
 ## Suite taxonomy
 
-- `EVAL_SUITE` (`smoke` default | `full`) picks the case set: 3 smoke cases
-  (`clean-01`, `local-01`, `security-01`) or all 11.
+- `EVAL_SUITE` (`smoke` default | `full` | `history`) picks the case set: 3
+  smoke cases (`clean-01`, `local-01`, `security-01`), all 11, or the real-PR
+  history suite (reverted-or-hotfixed and healthy PRs from public repos; see
+  [`eval/history/README.md`](../eval/history/README.md)). The history suite
+  reads cases fetched by `make eval-history-fetch` into the gitignored
+  `.cache/eval-history/`; `make eval-llm-history-dry` shows its plan.
 - `EVAL_CASES` (exact comma-separated override, e.g. `clean-01, security-01`)
   beats `EVAL_SUITE` when both are set. Focused runs make `2 × N` attempts for
-  N cases. Unknown, empty, or duplicate ids are rejected.
+  N cases. Unknown, empty, or duplicate ids are rejected. With
+  `EVAL_SUITE=history` it picks history case ids (e.g. `hono-4707`).
 - `EVAL_RUNS` (positive integer, default `1`) sets A/B rounds **per case**.
   Planned attempts = `cases × runs × 2`. The default smoke run is
   `3 × 1 × 2 = 6` attempts; the full suite at the default runs is
@@ -187,7 +192,7 @@ actionability, and usefulness — which automated metrics do not measure.
 | `ANTHROPIC_MODEL`    | —                  | Model fallback                                              |
 | `BASE_URL`           | provider default   | Falls back to `FISCALCR_BASE_URL`                 |
 | `LLM_USER_AGENT`     | —                  | Optional custom User-Agent for whitelisting       |
-| `EVAL_SUITE`         | `smoke`            | `smoke` (3 cases) or `full` (11 cases)            |
+| `EVAL_SUITE`         | `smoke`            | `smoke` (3 cases), `full` (11 cases) or `history` (real PRs, fetched first) |
 | `EVAL_CASES`         | —                  | Exact comma-separated override; beats `EVAL_SUITE` |
 | `EVAL_RUNS`          | `1`                | A/B rounds per case; attempts = cases × runs × 2  |
 | `EVAL_SEED`          | `fiscalcr-eval-v2` | Deterministic per-round case rotation             |

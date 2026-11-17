@@ -1,0 +1,2145 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "fiscalcr-eval-history",
+  "cases": [
+    {
+      "id": "hono-4707",
+      "kind": "bad",
+      "repo": "honojs/hono",
+      "licence": "MIT",
+      "pr": 4707,
+      "mergedAt": "2026-02-19T10:27:57Z",
+      "baseSha": "69f303e0c3a45c09e7ec56611973751208737857",
+      "headSha": "a32bdde71473f1534789d0b11ea0eae710e611f7",
+      "mergeSha": "7438ab93553ce61773e2a74376972777602f08ff",
+      "language": "typescript",
+      "size": {
+        "files": 1,
+        "additions": 14,
+        "deletions": 6,
+        "estimatedTokens": 5853
+      },
+      "description": {
+        "titleChars": 71,
+        "bodyChars": 2152
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/honojs/hono/pull/4757",
+        "pr": 4757,
+        "mergedAt": "2026-02-23T07:16:34Z"
+      },
+      "cause": {
+        "issueId": "hono-4707-cause",
+        "acceptedPaths": [
+          "src/context.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 710,
+            "endLine": 712
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "The new c.json() fast path returns Response.json(object), whose output differs from JSON.stringify across runtimes (for example for c.json(undefined)).",
+        "evidence": "https://github.com/honojs/hono/pull/4757 — The revert says Response.json() behaves differently across runtimes, e.g. c.json(undefined), and disables the fast path."
+      }
+    },
+    {
+      "id": "vue-14985",
+      "kind": "bad",
+      "repo": "vuejs/core",
+      "licence": "MIT",
+      "pr": 14985,
+      "mergedAt": "2026-06-25T08:16:20Z",
+      "baseSha": "325eb1d9a12e3b90fe36f755291b8f9ba5977820",
+      "headSha": "c8140cc5e0d1eb1327c32c1ab728723a3d8b362a",
+      "mergeSha": "3ac052b6b1e9d3978e98cc30a1a89a9b9b51358b",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 27,
+        "deletions": 2,
+        "estimatedTokens": 6455
+      },
+      "description": {
+        "titleChars": 61,
+        "bodyChars": 408
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/vuejs/core/pull/15094",
+        "pr": 15094,
+        "mergedAt": "2026-07-16T01:51:04Z"
+      },
+      "cause": {
+        "issueId": "vue-14985-cause",
+        "acceptedPaths": [
+          "packages/runtime-core/src/rendererTemplateRef.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 139,
+            "endLine": 144
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Pausing dependency tracking around function ref calls removes tracking that is intentional, so function refs whose target depends on reactive state stop re-running.",
+        "evidence": "https://github.com/vuejs/core/pull/15094 — The revert says function ref dependencies are tracked on purpose; the change caused issue #15039 and regressions in radix-vue."
+      }
+    },
+    {
+      "id": "vue-14548",
+      "kind": "bad",
+      "repo": "vuejs/core",
+      "licence": "MIT",
+      "pr": 14548,
+      "mergedAt": "2026-03-25T06:28:22Z",
+      "baseSha": "d61d8031f0d547fdb75ab3525e54ace790a4db82",
+      "headSha": "6dd4c816761ad34085a684853999f9825c53e4bc",
+      "mergeSha": "862f11ee017d51cb9573a8c0642055b3b17cace8",
+      "language": "typescript",
+      "size": {
+        "files": 5,
+        "additions": 159,
+        "deletions": 22,
+        "estimatedTokens": 17680
+      },
+      "description": {
+        "titleChars": 70,
+        "bodyChars": 1905
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/vuejs/core/pull/14674",
+        "pr": 14674,
+        "mergedAt": "2026-04-03T02:29:03Z"
+      },
+      "cause": {
+        "issueId": "vue-14548-cause",
+        "acceptedPaths": [
+          "packages/server-renderer/src/render.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 77,
+            "endLine": 86
+          },
+          {
+            "startLine": 133,
+            "endLine": 140
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Registering every component scope in the SSR context and stopping them after render fires onScopeDispose callbacks on the server, which user code does not expect.",
+        "evidence": "https://github.com/vuejs/core/pull/14674 — The revert closes issue #14669, 'onScopeDispose is triggered on SSR'."
+      }
+    },
+    {
+      "id": "vue-14178",
+      "kind": "bad",
+      "repo": "vuejs/core",
+      "licence": "MIT",
+      "pr": 14178,
+      "mergedAt": "2025-12-08T01:34:44Z",
+      "baseSha": "92c2d8ccbb643397ab95741d24f2dd0513c3a402",
+      "headSha": "67d0e27f423b8dfa5bbdcb384565f450892a911b",
+      "mergeSha": "5ee89131403fe963ae36fc9e576a3f92f577efab",
+      "language": "typescript",
+      "size": {
+        "files": 3,
+        "additions": 184,
+        "deletions": 26,
+        "estimatedTokens": 11609
+      },
+      "description": {
+        "titleChars": 113,
+        "bodyChars": 0
+      },
+      "tags": [
+        "empty-body"
+      ],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/vuejs/core/pull/14194",
+        "pr": 14194,
+        "mergedAt": "2025-12-12T07:55:28Z"
+      },
+      "cause": {
+        "issueId": "vue-14178-cause",
+        "acceptedPaths": [
+          "packages/runtime-vapor/src/componentProps.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 41,
+            "endLine": 56
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Caching dynamic prop sources in a computed re-runs them later outside the component instance, so a source that calls inject() fails with no currentInstance.",
+        "evidence": "https://github.com/vuejs/core/pull/14194 — The revert says props may call inject, and once converted to computed a dependency update evaluates them with no currentInstance (seen in VitePress)."
+      }
+    },
+    {
+      "id": "pnpm-10334",
+      "kind": "bad",
+      "repo": "pnpm/pnpm",
+      "licence": "MIT",
+      "pr": 10334,
+      "mergedAt": "2025-12-21T18:04:11Z",
+      "baseSha": "8b5dcaac4d9752b9b4571aca73e2d50309b29944",
+      "headSha": "bc3747a1b85e18144c207ffdf28a3ae23d679601",
+      "mergeSha": "1bc6b5ac2c0808e836896b3e859bf239634ca1e6",
+      "language": "typescript",
+      "size": {
+        "files": 3,
+        "additions": 48,
+        "deletions": 2,
+        "estimatedTokens": 19224
+      },
+      "description": {
+        "titleChars": 57,
+        "bodyChars": 267
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/pnpm/pnpm/pull/10423",
+        "pr": 10423,
+        "mergedAt": "2026-01-12T12:39:59Z"
+      },
+      "cause": {
+        "issueId": "pnpm-10334-cause",
+        "acceptedPaths": [
+          "resolving/npm-resolver/src/pickPackage.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 146,
+            "endLine": 152
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "With preferOffline, the resolver now returns the cached metadata even when it has no version matching the spec, instead of falling through to the registry.",
+        "evidence": "https://github.com/pnpm/pnpm/pull/10423 — The PR author reverted it the next month: 'Looks like I actually broke prefer offline resolution.'"
+      }
+    },
+    {
+      "id": "pnpm-13074",
+      "kind": "bad",
+      "repo": "pnpm/pnpm",
+      "licence": "MIT",
+      "pr": 13074,
+      "mergedAt": "2026-07-17T11:20:27Z",
+      "baseSha": "b0456c63ff0b7487939551f72f42f95d89415522",
+      "headSha": "5771c461e799f38e88fd7809bae0607d4fd4af0d",
+      "mergeSha": "e7138afe9d0afced3956f1be90c106ece53563c9",
+      "language": "typescript",
+      "size": {
+        "files": 10,
+        "additions": 95,
+        "deletions": 2,
+        "estimatedTokens": 25947
+      },
+      "description": {
+        "titleChars": 86,
+        "bodyChars": 3684
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "fix",
+        "url": "https://github.com/pnpm/pnpm/pull/13175",
+        "pr": 13175,
+        "mergedAt": "2026-07-23T10:15:35Z"
+      },
+      "cause": {
+        "issueId": "pnpm-13074-cause",
+        "acceptedPaths": [
+          "pnpm11/exec/commands/src/runRecursive.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 249,
+            "endLine": 251
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Sorting the scripts matched by a pnpm run /regex/ selector lexicographically changes their run order from the package.json order users relied on.",
+        "evidence": "https://github.com/pnpm/pnpm/pull/13175 — The fix PR removes the .sort() on these lines, calling the lexicographic ordering a breaking change in behaviour (issue #13174)."
+      }
+    },
+    {
+      "id": "prettier-19273",
+      "kind": "bad",
+      "repo": "prettier/prettier",
+      "licence": "MIT",
+      "pr": 19273,
+      "mergedAt": "2026-06-02T23:09:11Z",
+      "baseSha": "98074bc2104a2631ddb82c104ff5d27d47c1ca64",
+      "headSha": "4e4dd3886cd9983dcd3dfa0d364f4bbe81542332",
+      "mergeSha": "794ca266a9f01ed8f7263f48eca5b52dd9a603fe",
+      "language": "javascript",
+      "size": {
+        "files": 8,
+        "additions": 18,
+        "deletions": 27,
+        "estimatedTokens": 54164
+      },
+      "description": {
+        "titleChars": 54,
+        "bodyChars": 665
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/prettier/prettier/pull/19274",
+        "pr": 19274,
+        "mergedAt": "2026-06-02T23:24:37Z"
+      },
+      "cause": {
+        "issueId": "prettier-19273-cause",
+        "acceptedPaths": [
+          "src/language-js/location/overrides.js"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 45,
+            "endLine": 69
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Moving the end of an ExpressionStatement to the end of its expression, and printing a semicolon for ignored ExpressionStatements, breaks the output of prettier-ignore'd statements.",
+        "evidence": "https://github.com/prettier/prettier/pull/19274 — The revert says the change 'causes bug for prettier-ignored node', with a playground repro."
+      }
+    },
+    {
+      "id": "vitest-10726",
+      "kind": "bad",
+      "repo": "vitest-dev/vitest",
+      "licence": "MIT",
+      "pr": 10726,
+      "mergedAt": "2026-07-09T07:55:28Z",
+      "baseSha": "96fa6d73d8db734fd647edb1d7a896e573ef81eb",
+      "headSha": "27d48c4c06b3c39917e9c3cabf02c0c0d4cd7ece",
+      "mergeSha": "6db8de2e2d55bc71226ebb29ef0be36c509aa342",
+      "language": "typescript",
+      "size": {
+        "files": 1,
+        "additions": 120,
+        "deletions": 36,
+        "estimatedTokens": 6559
+      },
+      "description": {
+        "titleChars": 77,
+        "bodyChars": 923
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/vitest-dev/vitest/pull/10753",
+        "pr": 10753,
+        "mergedAt": "2026-07-13T02:41:18Z"
+      },
+      "cause": {
+        "issueId": "vitest-10726-cause",
+        "acceptedPaths": [
+          "packages/vitest/src/node/pools/browser.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 329,
+            "endLine": 342
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "The adaptive heuristic projects the remaining queue time from the cost of early files, so when early files are faster than the queued ones it opens too few browser sessions.",
+        "evidence": "https://github.com/vitest-dev/vitest/pull/10753 — The revert explains that queue x fileCostEMA / sessions underestimates the remaining work and under-provisions sessions."
+      }
+    },
+    {
+      "id": "uv-17956",
+      "kind": "bad",
+      "repo": "astral-sh/uv",
+      "licence": "Apache-2.0",
+      "pr": 17956,
+      "mergedAt": "2026-02-10T23:08:29Z",
+      "baseSha": "976a36855d40e666d446cfbbea059c84a56c02d0",
+      "headSha": "d09b6381aee46c47ccde1a47732686af8cddb233",
+      "mergeSha": "75aadf23310597eebdc6b78f010fdf572139f24c",
+      "language": "rust",
+      "size": {
+        "files": 1,
+        "additions": 1,
+        "deletions": 7,
+        "estimatedTokens": 3400
+      },
+      "description": {
+        "titleChars": 33,
+        "bodyChars": 173
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/astral-sh/uv/pull/18071",
+        "pr": 18071,
+        "mergedAt": "2026-02-17T21:02:22Z"
+      },
+      "cause": {
+        "issueId": "uv-17956-cause",
+        "acceptedPaths": [
+          "crates/uv-fs/src/locked_file.rs"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 256,
+            "endLine": 256
+          },
+          {
+            "startLine": 275,
+            "endLine": 277
+          },
+          {
+            "startLine": 296,
+            "endLine": 299
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Opening lock files read-only breaks exclusive locking on NFS, where flock falls back to lockf and needs the file open for writing.",
+        "evidence": "https://github.com/astral-sh/uv/pull/18071 — The revert fixes issue #18061 and explains that on NFS flock falls back to lockf, which needs write access for an exclusive lock."
+      }
+    },
+    {
+      "id": "uv-18669",
+      "kind": "bad",
+      "repo": "astral-sh/uv",
+      "licence": "Apache-2.0",
+      "pr": 18669,
+      "mergedAt": "2026-03-23T16:31:56Z",
+      "baseSha": "b38bea427cca74f993c78213522a16a902b6046e",
+      "headSha": "419abc6f9df4544caa0ee7f5d8885629d0a673be",
+      "mergeSha": "d0f2f3babc7c892958e93419ad6065df0deb2112",
+      "language": "rust",
+      "size": {
+        "files": 1,
+        "additions": 29,
+        "deletions": 7,
+        "estimatedTokens": 5300
+      },
+      "description": {
+        "titleChars": 42,
+        "bodyChars": 241
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/astral-sh/uv/pull/18692",
+        "pr": 18692,
+        "mergedAt": "2026-03-24T12:40:56Z"
+      },
+      "cause": {
+        "issueId": "uv-18669-cause",
+        "acceptedPaths": [
+          "crates/uv-pypi-types/src/metadata/metadata_resolver.rs"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 82,
+            "endLine": 82
+          },
+          {
+            "startLine": 115,
+            "endLine": 124
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Matching Dynamic metadata values case-insensitively makes uv treat more PKG-INFO fields as dynamic, which changes resolution for packages such as flash-attn.",
+        "evidence": "https://github.com/astral-sh/uv/pull/18692 — The revert says '#18669 is the cause of #18690' (a flash-attn incompatibility in uv 0.11)."
+      }
+    },
+    {
+      "id": "uv-21569",
+      "kind": "bad",
+      "repo": "astral-sh/uv",
+      "licence": "Apache-2.0",
+      "pr": 21569,
+      "mergedAt": "2026-09-10T22:38:57Z",
+      "baseSha": "66d6d99b0f5c09da7d86f301f0001d7569fb7485",
+      "headSha": "03b2de5498d172fad6cd26c07abbdfbae1e1710c",
+      "mergeSha": "89c3b2c917f6b9b2f5c785747a31630a429904c4",
+      "language": "rust",
+      "size": {
+        "files": 4,
+        "additions": 421,
+        "deletions": 40,
+        "estimatedTokens": 27273
+      },
+      "description": {
+        "titleChars": 48,
+        "bodyChars": 508
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/astral-sh/uv/pull/21699",
+        "pr": 21699,
+        "mergedAt": "2026-09-15T10:42:38Z"
+      },
+      "cause": {
+        "issueId": "uv-21569-cause",
+        "acceptedPaths": [
+          "crates/uv-install-wheel/src/wheel.rs"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 209,
+            "endLine": 220
+          },
+          {
+            "startLine": 240,
+            "endLine": 246
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "The new destination validation rejects a relative root like --target=. (it normalises to an empty path) and refuses legitimate symlinked directories such as /usr/local/man.",
+        "evidence": "https://github.com/astral-sh/uv/pull/21699 — The revert lists both regressions: 'uv pip install --target=.' fails (#21694) and wheels with man pages fail in official Python Docker images (#21692)."
+      }
+    },
+    {
+      "id": "pydantic-13503",
+      "kind": "bad",
+      "repo": "pydantic/pydantic",
+      "licence": "MIT",
+      "pr": 13503,
+      "mergedAt": "2026-07-27T07:11:13Z",
+      "baseSha": "a2a6577d4c329dd574a45dbb01a8feaa16b1ad3d",
+      "headSha": "e9e156709a6fd42ce0d14bfd9d0c3988f9380916",
+      "mergeSha": "c18c773f9b48df16206c9f9c19c2bc1be77dd045",
+      "language": "python",
+      "size": {
+        "files": 1,
+        "additions": 3,
+        "deletions": 0,
+        "estimatedTokens": 26477
+      },
+      "description": {
+        "titleChars": 24,
+        "bodyChars": 1342
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/pydantic/pydantic/pull/13536",
+        "pr": 13536,
+        "mergedAt": "2026-08-03T18:19:02Z"
+      },
+      "cause": {
+        "issueId": "pydantic-13503-cause",
+        "acceptedPaths": [
+          "pydantic/types.py"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 3301,
+            "endLine": 3302
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "FailFast gets a __hash__ although its fail_fast field is mutable, so an instance's hash changes after mutation.",
+        "evidence": "https://github.com/pydantic/pydantic/pull/13536 — The revert links a maintainer comment: FailFast is mutable and so should not be hashable, with a repro where hash() changes after setting fail_fast."
+      }
+    },
+    {
+      "id": "pydantic-13890",
+      "kind": "bad",
+      "repo": "pydantic/pydantic",
+      "licence": "MIT",
+      "pr": 13890,
+      "mergedAt": "2026-09-29T18:10:36Z",
+      "baseSha": "bb6da4cfbb1f559885ea2fa207ec93853bfeac64",
+      "headSha": "32ffc8eef57d2cd92e732da280f0af6ca7cdb60a",
+      "mergeSha": "8fb804027c9bde3c96ec8bb14b7b22affdcb6ae4",
+      "language": "python",
+      "size": {
+        "files": 3,
+        "additions": 35,
+        "deletions": 6,
+        "estimatedTokens": 53015
+      },
+      "description": {
+        "titleChars": 46,
+        "bodyChars": 779
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/pydantic/pydantic/pull/13951",
+        "pr": 13951,
+        "mergedAt": "2026-10-08T02:32:03Z"
+      },
+      "cause": {
+        "issueId": "pydantic-13890-cause",
+        "acceptedPaths": [
+          "pydantic/type_adapter.py"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 768,
+            "endLine": 768
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "TypeAdapter.json_schemas() now calls the private _generate_definitions() directly, so a schema generator subclass that overrides generate_definitions() is silently bypassed.",
+        "evidence": "https://github.com/pydantic/pydantic/pull/13951 — The revert fixes issue #13950, which names this call as the cause of the regression in 2.14.0."
+      }
+    },
+    {
+      "id": "gh-cli-12596",
+      "kind": "bad",
+      "repo": "cli/cli",
+      "licence": "MIT",
+      "pr": 12596,
+      "mergedAt": "2026-03-02T18:12:35Z",
+      "baseSha": "150834b426b43e8af3e32bef59f0457b49fe1ebb",
+      "headSha": "fc8c0f1110171c3e4dffc77b3e8b7d4ed70785ba",
+      "mergeSha": "e725e383701d67a63fd67d53fce0933a30019ce5",
+      "language": "go",
+      "size": {
+        "files": 2,
+        "additions": 116,
+        "deletions": 0,
+        "estimatedTokens": 5512
+      },
+      "description": {
+        "titleChars": 59,
+        "bodyChars": 1580
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/cli/cli/pull/12915",
+        "pr": 12915,
+        "mergedAt": "2026-03-12T12:06:18Z"
+      },
+      "cause": {
+        "issueId": "gh-cli-12596-cause",
+        "acceptedPaths": [
+          "api/client.go"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 182,
+            "endLine": 185
+          },
+          {
+            "startLine": 202,
+            "endLine": 210
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Returning a plain formatted error for missing GraphQL scopes, instead of the GraphQLError, stops ProjectsV2IgnorableError from recognising it, so pr view and issue view fail instead of degrading.",
+        "evidence": "https://github.com/cli/cli/pull/12915 — The revert fixes issue #12904 and explains that ProjectsV2IgnorableError inspects that error to degrade gracefully when the read:project scope is missing."
+      }
+    },
+    {
+      "id": "ruff-24929",
+      "kind": "bad",
+      "repo": "astral-sh/ruff",
+      "licence": "MIT",
+      "pr": 24929,
+      "mergedAt": "2026-05-08T04:32:32Z",
+      "baseSha": "e89a8dc49eb07ec0033c7c3154f19096fb0895a4",
+      "headSha": "23b60b300f84c252496ab54fbeafc3a325d83663",
+      "mergeSha": "c79effff9a10c57337985f6c27eb4f21d2af688d",
+      "language": "rust",
+      "size": {
+        "files": 2,
+        "additions": 79,
+        "deletions": 25,
+        "estimatedTokens": 29743
+      },
+      "description": {
+        "titleChars": 68,
+        "bodyChars": 215
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/astral-sh/ruff/pull/25049",
+        "pr": 25049,
+        "mergedAt": "2026-05-08T15:22:58Z"
+      },
+      "cause": {
+        "issueId": "ruff-24929-cause",
+        "acceptedPaths": [
+          "crates/ty_python_semantic/src/types/set_theoretic.rs"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 143,
+            "endLine": 146
+          },
+          {
+            "startLine": 172,
+            "endLine": 175
+          },
+          {
+            "startLine": 207,
+            "endLine": 210
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Replaying the unchanged prefix of a union with push_normalized skips the literal buckets UnionBuilder uses to count and widen large literal unions, so the change is not behaviour-preserving.",
+        "evidence": "https://github.com/astral-sh/ruff/pull/25049 — The revert links a review comment showing push_normalized can skip the literal-widening invariants in UnionType::map, map_leave_aliases and try_map."
+      }
+    },
+    {
+      "id": "vue-14642",
+      "kind": "bad",
+      "repo": "vuejs/core",
+      "licence": "MIT",
+      "pr": 14642,
+      "mergedAt": "2026-04-03T03:45:17Z",
+      "baseSha": "f1663535a163057788d3285dec54a245c3efb3ad",
+      "headSha": "b6a8b3b5913b0885710512587342b44e2559c773",
+      "mergeSha": "32b44f19f67aa30899817a7e79a4510f3b52970a",
+      "language": "typescript",
+      "size": {
+        "files": 4,
+        "additions": 491,
+        "deletions": 84,
+        "estimatedTokens": 66483
+      },
+      "description": {
+        "titleChars": 51,
+        "bodyChars": 637
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "fix",
+        "url": "https://github.com/vuejs/core/pull/14702",
+        "pr": 14702,
+        "mergedAt": "2026-04-22T06:02:58Z"
+      },
+      "cause": {
+        "issueId": "vue-14642-cause",
+        "acceptedPaths": [
+          "packages/runtime-core/src/components/Teleport.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 160,
+            "endLine": 172
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Deferring a disabled Teleport's mount inside Suspense leaves its component children unmounted while Suspense can still move the branch, and the deferred job mounts into the captured, possibly stale container.",
+        "evidence": "https://github.com/vuejs/core/pull/14702 — The fix (closing #14701) says the pendingMounts deferral from #14642 leaves vnode.component null, so Suspense.resolve() crashes when it moves the branch; it changes the deferred mount to use the placeholder's current parent."
+      }
+    },
+    {
+      "id": "hono-5205",
+      "kind": "bad",
+      "repo": "honojs/hono",
+      "licence": "MIT",
+      "pr": 5205,
+      "mergedAt": "2026-08-10T01:20:30Z",
+      "baseSha": "f2a72d333aed37b1bf2c18540a0a1df9fdb5c58c",
+      "headSha": "15eb50bf39e4e93ae13514f735353140f257f911",
+      "mergeSha": "26de73133b8552f56ba72e025ecd82b08900d796",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 84,
+        "deletions": 1,
+        "estimatedTokens": 5000
+      },
+      "description": {
+        "titleChars": 48,
+        "bodyChars": 158
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "fix",
+        "url": "https://github.com/honojs/hono/pull/5239",
+        "pr": 5239,
+        "mergedAt": "2026-08-16T13:20:29Z"
+      },
+      "cause": {
+        "issueId": "hono-5205-cause",
+        "acceptedPaths": [
+          "src/middleware/etag/digest.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 53,
+            "endLine": 55
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "The partial chunk keeps a subarray() view of the stream's buffer across reader.read() calls, so a producer that reuses its buffer overwrites bytes before they are digested and corrupts the ETag.",
+        "evidence": "https://github.com/honojs/hono/pull/5239 — The fix says generateDigest() retained a subarray() across reads, so a reused buffer could be hashed as [B, B], and that the regression came from #5205."
+      }
+    },
+    {
+      "id": "uv-22234",
+      "kind": "bad",
+      "repo": "astral-sh/uv",
+      "licence": "Apache-2.0",
+      "pr": 22234,
+      "mergedAt": "2026-10-06T14:32:56Z",
+      "baseSha": "eaa0fb829a581ef50fd75c53b5ca964bc73d31c6",
+      "headSha": "3ed384ccee3166c3bacf087803288308186c246a",
+      "mergeSha": "43ab29a2774a0d56d358665b647bac486a416fad",
+      "language": "rust",
+      "size": {
+        "files": 2,
+        "additions": 115,
+        "deletions": 3,
+        "estimatedTokens": 7425
+      },
+      "description": {
+        "titleChars": 66,
+        "bodyChars": 545
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/astral-sh/uv/pull/22750",
+        "pr": 22750,
+        "mergedAt": "2026-10-20T00:12:24Z"
+      },
+      "cause": {
+        "issueId": "uv-22234-cause",
+        "acceptedPaths": [
+          "crates/uv-lock/src/lock/export/mod.rs"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 553,
+            "endLine": 561
+          },
+          {
+            "startLine": 575,
+            "endLine": 576
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Requeueing a package whenever its extra-activation state changes, even when its reachability does not, repeats the propagation so often that uv export goes from under a second to over 60 seconds.",
+        "evidence": "https://github.com/astral-sh/uv/pull/22750 — The revert bisected a severe uv export slowdown (0.44s to over 60s) to this change and calls out repeated propagation of extra-activation state."
+      }
+    },
+    {
+      "id": "ruff-24978",
+      "kind": "bad",
+      "repo": "astral-sh/ruff",
+      "licence": "MIT",
+      "pr": 24978,
+      "mergedAt": "2026-05-07T05:41:54Z",
+      "baseSha": "f116ee01de07168b5062b377b4e4a1673e99abd3",
+      "headSha": "0c8981eeb864078ca6fdc14d263142b32ac17366",
+      "mergeSha": "cdb3fc6794c96b6565b28d9b6c79dcb644da251b",
+      "language": "rust",
+      "size": {
+        "files": 3,
+        "additions": 559,
+        "deletions": 32,
+        "estimatedTokens": 24357
+      },
+      "description": {
+        "titleChars": 79,
+        "bodyChars": 2594
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/astral-sh/ruff/pull/25118",
+        "pr": 25118,
+        "mergedAt": "2026-05-13T19:47:13Z"
+      },
+      "cause": {
+        "issueId": "ruff-24978-cause",
+        "acceptedPaths": [
+          "crates/ty_ide/src/folding_range.rs"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 324,
+            "endLine": 380
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Emitting extra folding ranges for multi-line block header lines that end on the line where the body range starts makes the body fold unreachable in many LSP clients.",
+        "evidence": "https://github.com/astral-sh/ruff/pull/25118 — The revert says the change introduced incorrect folding in several LSP clients: two ranges sharing an end/start line leave the second one inaccessible."
+      }
+    },
+    {
+      "id": "hono-5174",
+      "kind": "bad",
+      "repo": "honojs/hono",
+      "licence": "MIT",
+      "pr": 5174,
+      "mergedAt": "2026-08-02T09:20:41Z",
+      "baseSha": "a33c2069e1b5e22afd4110db29500426531b6683",
+      "headSha": "0e52bb0bfaa74787f9ceed999960d84439d3cb05",
+      "mergeSha": "45a91a1c5010ab30941fcd98dfd0a2669f3cfaf9",
+      "language": "typescript",
+      "size": {
+        "files": 1,
+        "additions": 3,
+        "deletions": 1,
+        "estimatedTokens": 5738
+      },
+      "description": {
+        "titleChars": 57,
+        "bodyChars": 1532
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/honojs/hono/pull/5186",
+        "pr": 5186,
+        "mergedAt": "2026-08-03T20:46:42Z"
+      },
+      "cause": {
+        "issueId": "hono-5174-cause",
+        "acceptedPaths": [
+          "src/context.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 315,
+            "endLine": 315
+          },
+          {
+            "startLine": 360,
+            "endLine": 361
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Dropping the env field initializer looked like a harmless cleanup but makes every request about 2ns slower on JSC/Bun.",
+        "evidence": "https://github.com/honojs/hono/pull/5186 — The revert measured ping ~2ns/req slower on JSC/Bun with benchmarks/fetch (25 paired rounds), neutral on V8."
+      }
+    },
+    {
+      "id": "ruff-26057",
+      "kind": "bad",
+      "repo": "astral-sh/ruff",
+      "licence": "MIT",
+      "pr": 26057,
+      "mergedAt": "2026-06-17T00:42:27Z",
+      "baseSha": "870fc14af946822c7db6d5b9e3921021fc110094",
+      "headSha": "fdfd4d8f26d26944e0f88c093694ec27d0aec075",
+      "mergeSha": "b9ea5d9b3906f64436a18818148c33c1f8036293",
+      "language": "rust",
+      "size": {
+        "files": 1,
+        "additions": 9,
+        "deletions": 2,
+        "estimatedTokens": 12554
+      },
+      "description": {
+        "titleChars": 43,
+        "bodyChars": 768
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/astral-sh/ruff/pull/26093",
+        "pr": 26093,
+        "mergedAt": "2026-06-17T11:10:24Z"
+      },
+      "cause": {
+        "issueId": "ruff-26057-cause",
+        "acceptedPaths": [
+          "crates/ty_python_semantic/src/types/equality.rs"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 684,
+            "endLine": 686
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Keeping the negative constraint only for dynamic union arms wrongly widens non-dynamic arms whose comparison is ambiguous, e.g. an unconstrained T loses its ~Literal[Color.RED] after equality narrowing.",
+        "evidence": "https://github.com/astral-sh/ruff/pull/26093 — The revert explains that non-dynamic arms can still overlap removed alternatives, so T & ~Literal[Color.RED] was incorrectly widened to T."
+      }
+    },
+    {
+      "id": "ruff-26775",
+      "kind": "bad",
+      "repo": "astral-sh/ruff",
+      "licence": "MIT",
+      "pr": 26775,
+      "mergedAt": "2026-07-14T00:33:56Z",
+      "baseSha": "aaa594c24e9ceb1620d17f2ffc22037c1605211a",
+      "headSha": "9ce78bfe5cc6c0d1c26e2434cc102f7551d0ae7b",
+      "mergeSha": "1b1a83a48eb31f6d4bbb75c4fa121f0103df0fab",
+      "language": "rust",
+      "size": {
+        "files": 4,
+        "additions": 217,
+        "deletions": 39,
+        "estimatedTokens": 52921
+      },
+      "description": {
+        "titleChars": 57,
+        "bodyChars": 734
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/astral-sh/ruff/pull/26792",
+        "pr": 26792,
+        "mergedAt": "2026-07-14T03:39:14Z"
+      },
+      "cause": {
+        "issueId": "ruff-26775-cause",
+        "acceptedPaths": [
+          "crates/ty_python_core/src/use_def.rs"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 1649,
+            "endLine": 1653
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Discarding pending narrowing gates at a merge where neither branch changed the place drops deferred call gates too early, so an unrelated nested if can discard a preceding Never call gate and widen the final type.",
+        "evidence": "https://github.com/astral-sh/ruff/pull/26792 — The revert cites a post-merge finding that deferred call gates are dropped too early at nested control-flow merges."
+      }
+    },
+    {
+      "id": "pydantic-13518",
+      "kind": "bad",
+      "repo": "pydantic/pydantic",
+      "licence": "MIT",
+      "pr": 13518,
+      "mergedAt": "2026-07-29T09:25:43Z",
+      "baseSha": "a187a65467a588ccc00761d80f325b45381ca819",
+      "headSha": "ae9ad4a4a061c801c7f2729da41942e575a7785b",
+      "mergeSha": "d0ffa0951e47fd7349032e4b2ea9a54dc28fd435",
+      "language": "python",
+      "size": {
+        "files": 1,
+        "additions": 35,
+        "deletions": 6,
+        "estimatedTokens": 28048
+      },
+      "description": {
+        "titleChars": 68,
+        "bodyChars": 776
+      },
+      "tags": [
+        "over-target-size"
+      ],
+      "evidence": {
+        "kind": "fix",
+        "url": "https://github.com/pydantic/pydantic/pull/13537",
+        "pr": 13537,
+        "mergedAt": "2026-07-29T14:06:52Z"
+      },
+      "cause": {
+        "issueId": "pydantic-13518-cause",
+        "acceptedPaths": [
+          "pydantic/types.py"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 1887,
+            "endLine": 1891
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "SecretStr.__eq__ passes str values to secrets.compare_digest(), which only accepts ASCII strings, so comparing two SecretStr values with non-ASCII characters raises TypeError.",
+        "evidence": "https://github.com/pydantic/pydantic/pull/13537 — The fix says #13518 made SecretStr equality use secrets.compare_digest(), which raises TypeError for non-ASCII str, and encodes the values to bytes instead."
+      }
+    },
+    {
+      "id": "hono-5113",
+      "kind": "bad",
+      "repo": "honojs/hono",
+      "licence": "MIT",
+      "pr": 5113,
+      "mergedAt": "2026-07-22T09:19:19Z",
+      "baseSha": "44f884321a1d52e98d45a85634da9d5f4751a43a",
+      "headSha": "f71a3fd27c2b2be6119099086856aeda43c1a9df",
+      "mergeSha": "94311c7d7c1f2920fc200e5726f2cf9dcda5bf57",
+      "language": "typescript",
+      "size": {
+        "files": 1,
+        "additions": 5,
+        "deletions": 5,
+        "estimatedTokens": 4280
+      },
+      "description": {
+        "titleChars": 48,
+        "bodyChars": 646
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/honojs/hono/pull/5184",
+        "pr": 5184,
+        "mergedAt": "2026-08-03T20:39:29Z"
+      },
+      "cause": {
+        "issueId": "hono-5113-cause",
+        "acceptedPaths": [
+          "src/hono-base.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 479,
+            "endLine": 485
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Declaring app.fetch with three named parameters means callers that pass only the request trigger an arity fixup on JSC, about 2ns slower per request than the rest-parameter form.",
+        "evidence": "https://github.com/honojs/hono/pull/5184 — The revert restores the rest parameter: calling app.fetch(request) with fewer args than declared triggers an arity fixup on JSC (~2ns/req), neutral on V8."
+      }
+    },
+    {
+      "id": "vue-15347",
+      "kind": "bad",
+      "repo": "vuejs/core",
+      "licence": "MIT",
+      "pr": 15347,
+      "mergedAt": "2026-08-27T00:24:54Z",
+      "baseSha": "e2bede96134f757aad5c5b33ac9be055022dbfc8",
+      "headSha": "bf002f713f93e46026fa8ed0ea468ffa03f1d31b",
+      "mergeSha": "38577161c0cfcd4e1013eec0030b781a32fc3744",
+      "language": "typescript",
+      "size": {
+        "files": 3,
+        "additions": 38,
+        "deletions": 2,
+        "estimatedTokens": 6607
+      },
+      "description": {
+        "titleChars": 75,
+        "bodyChars": 2067
+      },
+      "tags": [],
+      "evidence": {
+        "kind": "revert",
+        "url": "https://github.com/vuejs/core/pull/15362",
+        "pr": 15362,
+        "mergedAt": "2026-08-27T03:49:39Z"
+      },
+      "cause": {
+        "issueId": "vue-15347-cause",
+        "acceptedPaths": [
+          "packages/compiler-core/src/transforms/transformVBindShorthand.ts"
+        ],
+        "acceptedLineRanges": [
+          {
+            "startLine": 34,
+            "endLine": 34
+          },
+          {
+            "startLine": 43,
+            "endLine": 50
+          }
+        ],
+        "acceptedCategories": [
+          "bug",
+          "security",
+          "performance",
+          "style",
+          "best-practice",
+          "documentation",
+          "testing",
+          "other"
+        ],
+        "minSeverity": "nitpick",
+        "maxSeverity": "critical",
+        "rationale": "Turning every non-identifier same-name v-bind argument into an error that compiles to undefined claims syntax that custom transforms rely on, such as Vue Macros' ::foo short-bind, which now compiles to \":foo\": undefined.",
+        "evidence": "https://github.com/vuejs/core/pull/15362 — A maintainer comment on the PR, confirmed by ecosystem-ci, asked for the revert because Vue Macros' ::foo short-bind syntax could no longer be claimed by its custom transform."
+      }
+    },
+    {
+      "id": "hono-5247",
+      "kind": "healthy",
+      "repo": "honojs/hono",
+      "licence": "MIT",
+      "pr": 5247,
+      "mergedAt": "2026-08-18T10:00:55Z",
+      "baseSha": "41bdc4288ed7023c24d35f32bd065bd963435e3e",
+      "headSha": "dc94d36f122372a4e2ec7bd06115161a7946f717",
+      "mergeSha": "c91ec9b60df18c76a3feb47533ce097d02f7fe6c",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 8,
+        "deletions": 4,
+        "estimatedTokens": 4195
+      },
+      "description": {
+        "titleChars": 77,
+        "bodyChars": 1533
+      },
+      "tags": []
+    },
+    {
+      "id": "hono-5214",
+      "kind": "healthy",
+      "repo": "honojs/hono",
+      "licence": "MIT",
+      "pr": 5214,
+      "mergedAt": "2026-08-13T11:49:37Z",
+      "baseSha": "26de73133b8552f56ba72e025ecd82b08900d796",
+      "headSha": "f6ea2bdf4533efab52c98927cc9a7be7d20d19cb",
+      "mergeSha": "6ea514d6ff09e84599ac35c0e885f62be2aa44a3",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 19,
+        "deletions": 1,
+        "estimatedTokens": 6652
+      },
+      "description": {
+        "titleChars": 67,
+        "bodyChars": 926
+      },
+      "tags": []
+    },
+    {
+      "id": "vue-15319",
+      "kind": "healthy",
+      "repo": "vuejs/core",
+      "licence": "MIT",
+      "pr": 15319,
+      "mergedAt": "2026-08-19T08:52:37Z",
+      "baseSha": "5c2805dbaf2ece13736ae3fbe2bac849c814c304",
+      "headSha": "94295de7df1e3f9ab561f0cbc17c4c5d855bae15",
+      "mergeSha": "c526d45227770a533105bf95045f13b5d83c9cfb",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 185,
+        "deletions": 50,
+        "estimatedTokens": 11118
+      },
+      "description": {
+        "titleChars": 62,
+        "bodyChars": 611
+      },
+      "tags": []
+    },
+    {
+      "id": "vue-15304",
+      "kind": "healthy",
+      "repo": "vuejs/core",
+      "licence": "MIT",
+      "pr": 15304,
+      "mergedAt": "2026-08-15T05:48:53Z",
+      "baseSha": "3bafec0d84a9b5a34a918dfd54a6da83009521e6",
+      "headSha": "eb53d893f16bbdb1831203bfcfc0a95132263716",
+      "mergeSha": "1a2de08c0b3ebfebe2fa07ed2b545df17073fea4",
+      "language": "typescript",
+      "size": {
+        "files": 3,
+        "additions": 92,
+        "deletions": 4,
+        "estimatedTokens": 41375
+      },
+      "description": {
+        "titleChars": 66,
+        "bodyChars": 1210
+      },
+      "tags": [
+        "over-target-size"
+      ]
+    },
+    {
+      "id": "vue-15293",
+      "kind": "healthy",
+      "repo": "vuejs/core",
+      "licence": "MIT",
+      "pr": 15293,
+      "mergedAt": "2026-08-14T01:54:07Z",
+      "baseSha": "17f69cae0c25d921c3fe713a16aa7c91282542cf",
+      "headSha": "be4e3a1febfaf9d280bb8a1a06da32b23b89d57a",
+      "mergeSha": "cd8b8dafb0edc8979b3cb8fca269aa320b4f6a6f",
+      "language": "typescript",
+      "size": {
+        "files": 4,
+        "additions": 96,
+        "deletions": 22,
+        "estimatedTokens": 59224
+      },
+      "description": {
+        "titleChars": 79,
+        "bodyChars": 881
+      },
+      "tags": [
+        "over-target-size"
+      ]
+    },
+    {
+      "id": "vitest-10992",
+      "kind": "healthy",
+      "repo": "vitest-dev/vitest",
+      "licence": "MIT",
+      "pr": 10992,
+      "mergedAt": "2026-08-18T13:15:08Z",
+      "baseSha": "fe5a11d3ceac5ec10d6d7d21a46d4caca132c48f",
+      "headSha": "4ded270c95d66ad446957486e6da7157657b5f04",
+      "mergeSha": "5146df80b1f6adb4af70dd06a0ada9e88250cfe9",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 49,
+        "deletions": 67,
+        "estimatedTokens": 17258
+      },
+      "description": {
+        "titleChars": 72,
+        "bodyChars": 186
+      },
+      "tags": []
+    },
+    {
+      "id": "vitest-10863",
+      "kind": "healthy",
+      "repo": "vitest-dev/vitest",
+      "licence": "MIT",
+      "pr": 10863,
+      "mergedAt": "2026-08-03T13:40:44Z",
+      "baseSha": "64a573164c277062531eabf667c629e9718bd4a7",
+      "headSha": "b49cab68a5c16e1e95a8008601fb491e440e50bb",
+      "mergeSha": "d568f8ce3739b532d5bf2c1ee1e45e8a8a473d09",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 10,
+        "deletions": 3,
+        "estimatedTokens": 3405
+      },
+      "description": {
+        "titleChars": 68,
+        "bodyChars": 1432
+      },
+      "tags": []
+    },
+    {
+      "id": "prettier-19890",
+      "kind": "healthy",
+      "repo": "prettier/prettier",
+      "licence": "MIT",
+      "pr": 19890,
+      "mergedAt": "2026-08-18T23:15:08Z",
+      "baseSha": "518eb6a18f851e20e49b58eb4e39c80ebc843eac",
+      "headSha": "ef6f17efb5946eb80dddfae37d4672d93f9bb8c5",
+      "mergeSha": "1846ea9fef5fd4462059ba98065d40f9836a9008",
+      "language": "javascript",
+      "size": {
+        "files": 1,
+        "additions": 13,
+        "deletions": 9,
+        "estimatedTokens": 4616
+      },
+      "description": {
+        "titleChars": 21,
+        "bodyChars": 892
+      },
+      "tags": []
+    },
+    {
+      "id": "prettier-19878",
+      "kind": "healthy",
+      "repo": "prettier/prettier",
+      "licence": "MIT",
+      "pr": 19878,
+      "mergedAt": "2026-08-18T12:35:01Z",
+      "baseSha": "07a814e0b92d4549b22679aa1ece3f58612a9689",
+      "headSha": "c79ae96db12791aa57f1e9d27694669a09624601",
+      "mergeSha": "07184252aa4a84fcc542f34e5e70291a08b5de3a",
+      "language": "javascript",
+      "size": {
+        "files": 4,
+        "additions": 71,
+        "deletions": 1,
+        "estimatedTokens": 5607
+      },
+      "description": {
+        "titleChars": 67,
+        "bodyChars": 2678
+      },
+      "tags": []
+    },
+    {
+      "id": "pydantic-13598",
+      "kind": "healthy",
+      "repo": "pydantic/pydantic",
+      "licence": "MIT",
+      "pr": 13598,
+      "mergedAt": "2026-08-10T07:07:15Z",
+      "baseSha": "5922459fcf33d9a8767fd0fd25a982bbf0d7668d",
+      "headSha": "e8ecbe7c07e9de4a7d981d71cb1d29077867a6b0",
+      "mergeSha": "a20d9573dd19cc0ac5034a0801fecaf6e271e3bf",
+      "language": "python",
+      "size": {
+        "files": 1,
+        "additions": 1,
+        "deletions": 5,
+        "estimatedTokens": 5352
+      },
+      "description": {
+        "titleChars": 53,
+        "bodyChars": 574
+      },
+      "tags": []
+    },
+    {
+      "id": "pydantic-13584",
+      "kind": "healthy",
+      "repo": "pydantic/pydantic",
+      "licence": "MIT",
+      "pr": 13584,
+      "mergedAt": "2026-08-04T13:06:16Z",
+      "baseSha": "de3175c15a9b3e60c70233e3ad3372500257d353",
+      "headSha": "b850f77755b3008be726d737e67e08a068af8868",
+      "mergeSha": "2e5f0e2b4218de31709f1cf9c5bc61ea97a68835",
+      "language": "python",
+      "size": {
+        "files": 1,
+        "additions": 5,
+        "deletions": 1,
+        "estimatedTokens": 10145
+      },
+      "description": {
+        "titleChars": 86,
+        "bodyChars": 950
+      },
+      "tags": [
+        "body-edited-after-merge"
+      ]
+    },
+    {
+      "id": "gh-cli-14077",
+      "kind": "healthy",
+      "repo": "cli/cli",
+      "licence": "MIT",
+      "pr": 14077,
+      "mergedAt": "2026-08-06T05:09:50Z",
+      "baseSha": "5ccd971df4421952a7448e62547b77bf6c9e1ef7",
+      "headSha": "28ebaf108fe8bff7d7bd5b1f1dfc08d68226dd88",
+      "mergeSha": "608dff7b80386a10962397852ff138f8ba567b08",
+      "language": "go",
+      "size": {
+        "files": 12,
+        "additions": 254,
+        "deletions": 93,
+        "estimatedTokens": 22558
+      },
+      "description": {
+        "titleChars": 42,
+        "bodyChars": 3050
+      },
+      "tags": []
+    },
+    {
+      "id": "ruff-27898",
+      "kind": "healthy",
+      "repo": "astral-sh/ruff",
+      "licence": "MIT",
+      "pr": 27898,
+      "mergedAt": "2026-08-19T18:34:04Z",
+      "baseSha": "708a9526902f6be02487e2a01530fcf5147380cd",
+      "headSha": "255bc870e94ff731ba1b5f26915141922c7e57be",
+      "mergeSha": "7d50b9e4d06a8fe913291c23a7c021ebd18b68fc",
+      "language": "rust",
+      "size": {
+        "files": 3,
+        "additions": 79,
+        "deletions": 5,
+        "estimatedTokens": 39271
+      },
+      "description": {
+        "titleChars": 55,
+        "bodyChars": 945
+      },
+      "tags": [
+        "over-target-size"
+      ]
+    },
+    {
+      "id": "ruff-27889",
+      "kind": "healthy",
+      "repo": "astral-sh/ruff",
+      "licence": "MIT",
+      "pr": 27889,
+      "mergedAt": "2026-08-19T18:39:36Z",
+      "baseSha": "1b474c62fea8022b280a627ea433034019a11bff",
+      "headSha": "d67e8721aece0490fd9d0d4e19eceb0cb7713891",
+      "mergeSha": "4eb116c7be8b9e2de20df7aaf5aaf244981db1aa",
+      "language": "rust",
+      "size": {
+        "files": 4,
+        "additions": 100,
+        "deletions": 26,
+        "estimatedTokens": 63353
+      },
+      "description": {
+        "titleChars": 60,
+        "bodyChars": 984
+      },
+      "tags": [
+        "over-target-size"
+      ]
+    },
+    {
+      "id": "pnpm-12620",
+      "kind": "healthy",
+      "repo": "pnpm/pnpm",
+      "licence": "MIT",
+      "pr": 12620,
+      "mergedAt": "2026-06-24T12:28:56Z",
+      "baseSha": "dd79bdc08e4e03db8d914a90abfdd6912e1c44ee",
+      "headSha": "615c0d671d63a4536d686ce3333a492bc5dc4c09",
+      "mergeSha": "4ec0049f55b3578769c2ffb1a6033d4bbb195284",
+      "language": "rust",
+      "size": {
+        "files": 2,
+        "additions": 357,
+        "deletions": 107,
+        "estimatedTokens": 18111
+      },
+      "description": {
+        "titleChars": 72,
+        "bodyChars": 3900
+      },
+      "tags": []
+    },
+    {
+      "id": "prettier-19237",
+      "kind": "healthy",
+      "repo": "prettier/prettier",
+      "licence": "MIT",
+      "pr": 19237,
+      "mergedAt": "2026-05-28T19:59:07Z",
+      "baseSha": "4514b8109a946573875073c41dd4c5c7b0ad0219",
+      "headSha": "50e70ba8dff48cb73aa0bee0458540fe4ec54135",
+      "mergeSha": "1f1230ff8ce05bf785e1a767908b02f35e5ba64c",
+      "language": "javascript",
+      "size": {
+        "files": 1,
+        "additions": 27,
+        "deletions": 26,
+        "estimatedTokens": 721
+      },
+      "description": {
+        "titleChars": 29,
+        "bodyChars": 655
+      },
+      "tags": []
+    },
+    {
+      "id": "prettier-19212",
+      "kind": "healthy",
+      "repo": "prettier/prettier",
+      "licence": "MIT",
+      "pr": 19212,
+      "mergedAt": "2026-05-26T22:10:33Z",
+      "baseSha": "d7cf639b765d4e85c43ec3738759578572a03f61",
+      "headSha": "4b957ae23b7f6e0b067ea84443cf79c17795c813",
+      "mergeSha": "4025d3e22603c2b2cf58698322db069f11e840ee",
+      "language": "javascript",
+      "size": {
+        "files": 4,
+        "additions": 151,
+        "deletions": 2,
+        "estimatedTokens": 4037
+      },
+      "description": {
+        "titleChars": 50,
+        "bodyChars": 671
+      },
+      "tags": []
+    },
+    {
+      "id": "uv-20056",
+      "kind": "healthy",
+      "repo": "astral-sh/uv",
+      "licence": "Apache-2.0",
+      "pr": 20056,
+      "mergedAt": "2026-06-30T00:54:50Z",
+      "baseSha": "4eef8fa3912ee06d76bd58b5726d7fca109ff695",
+      "headSha": "85505515686d845b653880a83d8a48600c60bb15",
+      "mergeSha": "c1ef5a03c6ea4fb3be80f6d6080cf38739a59855",
+      "language": "rust",
+      "size": {
+        "files": 1,
+        "additions": 6,
+        "deletions": 4,
+        "estimatedTokens": 12435
+      },
+      "description": {
+        "titleChars": 56,
+        "bodyChars": 512
+      },
+      "tags": []
+    },
+    {
+      "id": "uv-20026",
+      "kind": "healthy",
+      "repo": "astral-sh/uv",
+      "licence": "Apache-2.0",
+      "pr": 20026,
+      "mergedAt": "2026-06-29T16:50:02Z",
+      "baseSha": "ee74c195c620fa2654e9fc15f2c47d3903ad7a71",
+      "headSha": "159a7748503a448b6751b3dfa508791adafcad34",
+      "mergeSha": "7e62e112462ad3de9be17c7ad1091820295098dc",
+      "language": "rust",
+      "size": {
+        "files": 1,
+        "additions": 134,
+        "deletions": 1,
+        "estimatedTokens": 10245
+      },
+      "description": {
+        "titleChars": 48,
+        "bodyChars": 653
+      },
+      "tags": []
+    },
+    {
+      "id": "uv-20062",
+      "kind": "healthy",
+      "repo": "astral-sh/uv",
+      "licence": "Apache-2.0",
+      "pr": 20062,
+      "mergedAt": "2026-06-30T16:16:48Z",
+      "baseSha": "34357a6ae6c89c5f3727186bcdb28179c141acc7",
+      "headSha": "43988fa0d7b7c7f5ec30ef50096eadefaf30ca75",
+      "mergeSha": "e55e94d156b9e6f0d371e69a7650d140a42b63d0",
+      "language": "rust",
+      "size": {
+        "files": 2,
+        "additions": 3,
+        "deletions": 2,
+        "estimatedTokens": 13163
+      },
+      "description": {
+        "titleChars": 40,
+        "bodyChars": 347
+      },
+      "tags": []
+    },
+    {
+      "id": "pydantic-13495",
+      "kind": "healthy",
+      "repo": "pydantic/pydantic",
+      "licence": "MIT",
+      "pr": 13495,
+      "mergedAt": "2026-07-27T07:58:13Z",
+      "baseSha": "a2a6577d4c329dd574a45dbb01a8feaa16b1ad3d",
+      "headSha": "7e46eea237f3149ed723c6879b5a369b728f2768",
+      "mergeSha": "a187a65467a588ccc00761d80f325b45381ca819",
+      "language": "python",
+      "size": {
+        "files": 2,
+        "additions": 34,
+        "deletions": 4,
+        "estimatedTokens": 23001
+      },
+      "description": {
+        "titleChars": 72,
+        "bodyChars": 1502
+      },
+      "tags": []
+    },
+    {
+      "id": "pydantic-13456",
+      "kind": "healthy",
+      "repo": "pydantic/pydantic",
+      "licence": "MIT",
+      "pr": 13456,
+      "mergedAt": "2026-07-16T20:47:51Z",
+      "baseSha": "220cd3d21c6192eee72ecf8a4d5636f6931fd7f8",
+      "headSha": "4d5a35b09bdce8ed921e38e3b400b667bb1b681a",
+      "mergeSha": "92462ee5a5200e8f21825023b83fccb9d4ee63c5",
+      "language": "python",
+      "size": {
+        "files": 2,
+        "additions": 71,
+        "deletions": 13,
+        "estimatedTokens": 9138
+      },
+      "description": {
+        "titleChars": 55,
+        "bodyChars": 775
+      },
+      "tags": []
+    },
+    {
+      "id": "gh-cli-13787",
+      "kind": "healthy",
+      "repo": "cli/cli",
+      "licence": "MIT",
+      "pr": 13787,
+      "mergedAt": "2026-07-16T14:42:13Z",
+      "baseSha": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+      "headSha": "0ca080da51a7c688ad2a72d0d4e59aafb109e092",
+      "mergeSha": "2af8c115be240a8018add33bf5c7a9ba5070a62c",
+      "language": "go",
+      "size": {
+        "files": 1,
+        "additions": 3,
+        "deletions": 3,
+        "estimatedTokens": 628
+      },
+      "description": {
+        "titleChars": 45,
+        "bodyChars": 291
+      },
+      "tags": []
+    },
+    {
+      "id": "gh-cli-13723",
+      "kind": "healthy",
+      "repo": "cli/cli",
+      "licence": "MIT",
+      "pr": 13723,
+      "mergedAt": "2026-06-26T21:35:19Z",
+      "baseSha": "954ffc37e5931a9621868a50f05c8fb17e288f19",
+      "headSha": "7b681a4e8b67d203ccdaab5ff54570bdf6ca3669",
+      "mergeSha": "71fb4f5f4358c44c9328637752f0c15a47d84139",
+      "language": "go",
+      "size": {
+        "files": 5,
+        "additions": 142,
+        "deletions": 12,
+        "estimatedTokens": 14427
+      },
+      "description": {
+        "titleChars": 55,
+        "bodyChars": 6648
+      },
+      "tags": []
+    },
+    {
+      "id": "ruff-25475",
+      "kind": "healthy",
+      "repo": "astral-sh/ruff",
+      "licence": "MIT",
+      "pr": 25475,
+      "mergedAt": "2026-05-30T08:51:21Z",
+      "baseSha": "a5cc4e79e33ecba98a1d4c837c1fd78e04efd87b",
+      "headSha": "8b8b815cd7cfb5161823117e87d48fbbfbdc3197",
+      "mergeSha": "d33907ff86b8888b11a8bfab7937aa95fe9a615a",
+      "language": "rust",
+      "size": {
+        "files": 2,
+        "additions": 40,
+        "deletions": 1,
+        "estimatedTokens": 15122
+      },
+      "description": {
+        "titleChars": 50,
+        "bodyChars": 374
+      },
+      "tags": []
+    },
+    {
+      "id": "ruff-25453",
+      "kind": "healthy",
+      "repo": "astral-sh/ruff",
+      "licence": "MIT",
+      "pr": 25453,
+      "mergedAt": "2026-05-29T21:01:40Z",
+      "baseSha": "35ee0888f4ed173ed35d2fcd31d261a085a89c21",
+      "headSha": "d9dea8c043696343556473e4d58eb4d31e3e3352",
+      "mergeSha": "5a6c811505e5068bc98752944830d244f68b9bb6",
+      "language": "rust",
+      "size": {
+        "files": 2,
+        "additions": 29,
+        "deletions": 34,
+        "estimatedTokens": 19355
+      },
+      "description": {
+        "titleChars": 49,
+        "bodyChars": 546
+      },
+      "tags": []
+    },
+    {
+      "id": "hono-4905",
+      "kind": "healthy",
+      "repo": "honojs/hono",
+      "licence": "MIT",
+      "pr": 4905,
+      "mergedAt": "2026-05-05T09:21:15Z",
+      "baseSha": "8f027e5574e91e3c7f263a728656e3888559e51a",
+      "headSha": "1853a3f9169d36cb386d6940df03b9e6eac5a6b9",
+      "mergeSha": "76d5589e9b0569f4e74ec37e8dd6979455f70dfa",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 21,
+        "deletions": 6,
+        "estimatedTokens": 5107
+      },
+      "description": {
+        "titleChars": 46,
+        "bodyChars": 902
+      },
+      "tags": []
+    },
+    {
+      "id": "hono-4899",
+      "kind": "healthy",
+      "repo": "honojs/hono",
+      "licence": "MIT",
+      "pr": 4899,
+      "mergedAt": "2026-05-03T09:49:47Z",
+      "baseSha": "bfba97ca7ea3d4541a3419f1749e5a1a3e8f1727",
+      "headSha": "77a7e49abc263c35872070dfb81dd6e2d20b6150",
+      "mergeSha": "8f027e5574e91e3c7f263a728656e3888559e51a",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 18,
+        "deletions": 0,
+        "estimatedTokens": 12904
+      },
+      "description": {
+        "titleChars": 63,
+        "bodyChars": 1082
+      },
+      "tags": []
+    },
+    {
+      "id": "vitest-10415",
+      "kind": "healthy",
+      "repo": "vitest-dev/vitest",
+      "licence": "MIT",
+      "pr": 10415,
+      "mergedAt": "2026-05-22T06:44:51Z",
+      "baseSha": "da41741f390231abf7888505328bb2cdd8070368",
+      "headSha": "46ec2684fbda1308f0d336c302a6c31c581d0df3",
+      "mergeSha": "ac6971ca24bd3ae30c04f2b5b60ca8d177c9b805",
+      "language": "typescript",
+      "size": {
+        "files": 3,
+        "additions": 120,
+        "deletions": 13,
+        "estimatedTokens": 11937
+      },
+      "description": {
+        "titleChars": 62,
+        "bodyChars": 1170
+      },
+      "tags": []
+    },
+    {
+      "id": "vitest-10385",
+      "kind": "healthy",
+      "repo": "vitest-dev/vitest",
+      "licence": "MIT",
+      "pr": 10385,
+      "mergedAt": "2026-05-21T07:17:41Z",
+      "baseSha": "3003c4327db9e75b0f646e533552f558853f10ac",
+      "headSha": "9f1bc8231c3099900ecdc31aa17f60330fff85f0",
+      "mergeSha": "ff32d8f246d8c62a9da6656e06f72017ba9424ad",
+      "language": "typescript",
+      "size": {
+        "files": 2,
+        "additions": 68,
+        "deletions": 115,
+        "estimatedTokens": 4025
+      },
+      "description": {
+        "titleChars": 45,
+        "bodyChars": 1710
+      },
+      "tags": []
+    }
+  ]
+}

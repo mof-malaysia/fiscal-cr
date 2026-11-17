@@ -1175,7 +1175,7 @@ export function getCases(ids: string[]): BenchmarkCase[] {
 }
 
 /** Resolves an exact comma-separated selection, e.g. "clean-01, local-01". */
-export function getCaseIds(csv: string): string[] {
+export function getCaseIds(csv: string, knownIds: readonly string[] = getFullCaseIds()): string[] {
   const ids = csv
     .split(',')
     .map((s) => s.trim())
@@ -1183,11 +1183,11 @@ export function getCaseIds(csv: string): string[] {
   if (ids.length === 0) {
     throw new Error('No eval case ids provided (expected comma-separated ids).');
   }
-  const known = new Set(getFullCaseIds());
+  const known = new Set(knownIds);
   const unknown = ids.filter((id) => !known.has(id));
   if (unknown.length > 0) {
     throw new Error(
-      `Unknown eval case id(s): ${unknown.join(', ')}. Known ids: ${getFullCaseIds().join(', ')}`,
+      `Unknown eval case id(s): ${unknown.join(', ')}. Known ids: ${knownIds.join(', ')}`,
     );
   }
   return ids;

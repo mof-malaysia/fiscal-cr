@@ -10,6 +10,7 @@ import {
   type EvalSelection,
 } from './plan.js';
 import { SUITE_ID, SUITE_VERSION } from './cases.js';
+import { HISTORY_SCHEMA_VERSION, HISTORY_SUITE_ID } from './history/manifest.js';
 import {
   assertArtifactSafe,
   buildBenchmarkArtifact,
@@ -656,7 +657,10 @@ export async function main(argv: string[]): Promise<void> {
 
   const artifact = buildBenchmarkArtifact({
     timestamp,
-    benchmark: { suiteId: SUITE_ID, suiteVersion: SUITE_VERSION },
+    benchmark:
+      selection.suite === 'history'
+        ? { suiteId: HISTORY_SUITE_ID, suiteVersion: HISTORY_SCHEMA_VERSION }
+        : { suiteId: SUITE_ID, suiteVersion: SUITE_VERSION },
     repository: gitRepoMetadata(),
     provider: cfg.provider,
     model: evalModelLabel(cfg),
