@@ -61,7 +61,7 @@ export async function completeCheckRun(
     completed_at: new Date().toISOString(),
     ...(params.externalId ? { external_id: params.externalId } : {}),
     output: {
-      title: conclusion === 'success' ? 'No critical issues found' : 'Issues found',
+      title: checkTitle(conclusion),
       summary,
       annotations: (batches[0] ?? []).map(toCheckAnnotation),
     },
@@ -74,7 +74,7 @@ export async function completeCheckRun(
       repo,
       check_run_id: checkRunId,
       output: {
-        title: conclusion === 'success' ? 'No critical issues found' : 'Issues found',
+        title: checkTitle(conclusion),
         summary,
         annotations: batches[i].map(toCheckAnnotation),
       },
@@ -82,6 +82,12 @@ export async function completeCheckRun(
   }
 
   logger.info({ checkRunId, conclusion, annotationCount: annotations.length }, 'Check run completed');
+}
+
+function checkTitle(conclusion: 'success' | 'failure' | 'neutral'): string {
+  if (conclusion === 'success') return 'No critical issues found';
+  if (conclusion === 'neutral') return 'Review skipped';
+  return 'Issues found';
 }
 
 function toCheckAnnotation(a: ReviewAnnotation) {

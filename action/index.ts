@@ -8,6 +8,7 @@ import { loadConfig } from "../src/config/loader.js";
 import { MODEL_ROLES, hasModelOverride, modelForRole } from "../src/config/schema.js";
 import { applyModelOverride, applyProviderOverride } from "../src/config/overrides.js";
 import { calculateCostForModel } from "../src/utils/tokens.js";
+import { isApiQuotaExhausted } from "../src/utils/errors.js";
 import { telemetryFromActionInput } from "./telemetry.js";
 import { experimentalFromActionInput } from "./experimental.js";
 import { modelParamsFromActionInput } from "./model-params.js";
@@ -245,7 +246,10 @@ async function run(): Promise<void> {
       );
     }
   } catch (error) {
-    if (error instanceof Error) {
+    if (isApiQuotaExhausted(error)) {
+      // Provider usage limit is an account condition, not a PR problem: warn, don't fail the job.
+      core.warning(`FiscalCR Review skipped: ${(error as Error).message}`);
+    } else if (error instanceof Error) {
       core.setFailed(`FiscalCR Review failed: ${error.message}`);
     } else {
       core.setFailed("FiscalCR Review failed with unknown error");
