@@ -1,0 +1,1 @@
+{"version":3,"file":"github-client.d.ts","sourceRoot":"","sources":["file:///home/runner/work/fiscal-cr/fiscal-cr/action/github-client.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,yBAAyB,CAAC;AAE/D,KAAK,cAAc,GAAG;IACpB,IAAI,EAAE,MAAM,CAAC;IACb,OAAO,EAAE,OAAO,CAAC;CAClB,CAAC;AAEF,gFAAgF;AAChF,wBAAgB,mBAAmB,CAAC,OAAO,EAAE,cAAc,GAAG,eAAe,CAO5E"}
