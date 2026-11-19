@@ -7,16 +7,23 @@ import {
 } from './cases.js';
 import { routeReview, type ReviewRoute } from '../src/pipeline/run-review.js';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
+import { loadHistoryCases } from './history/loader.js';
+import { readManifest } from './history/manifest.js';
 
 /**
  * Pure benchmark planning and config for the FiscalCR eval harness.
  *
- * No network, no fs, no secrets, no side effects — fully unit-testable in
- * isolation. This module owns ALL eval env semantics:
+ * No network, no secrets, no side effects — fully unit-testable in
+ * isolation. The only fs access is the history suite reading its committed
+ * manifest and gitignored cache (EVAL_SUITE=history). This module owns ALL
+ * eval env semantics:
  *
- *   EVAL_SUITE     'smoke' (default) | 'full' — which case set to run.
+ *   EVAL_SUITE     'smoke' (default) | 'full' | 'history' — which case set to
+ *                  run. 'history' is the real-PR suite in eval/history/; it
+ *                  reads the fetched cache and never touches the network.
  *   EVAL_CASES     exact comma-separated override, e.g. "clean-01, security-01".
  *                  Precedence: EVAL_CASES beats EVAL_SUITE when both are set.
+ *                  With EVAL_SUITE=history it selects history case ids instead.
  *                  Unknown, empty, or duplicate ids are rejected.
  *   EVAL_RUNS      positive integer, A/B pairs PER CASE, default 1.
  *   EVAL_SEED      stable non-empty string; default "fiscalcr-eval-v2".
@@ -46,7 +53,7 @@ import { DEFAULT_CONFIG } from '../src/config/defaults.js';
  * (period 4), so pair-internal order bias cancels per case, not just globally.
  */
 
-export type EvalSuite = 'smoke' | 'full';
+export type EvalSuite = 'smoke' | 'full' | 'history';
 export type EvalVariant = 'baseline' | 'experimental';
 
 export const DEFAULT_EVAL_SEED = 'fiscalcr-eval-v2';
@@ -248,13 +255,17 @@ export function resolveEvalSelection(env: NodeJS.ProcessEnv): EvalSelection {
   let suite: EvalSuite = 'smoke';
   if (rawSuite !== undefined && rawSuite.trim() !== '') {
     const trimmed = rawSuite.trim();
-    if (trimmed !== 'smoke' && trimmed !== 'full') {
+    if (trimmed !== 'smoke' && trimmed !== 'full' && trimmed !== 'history') {
       throw new Error(
-        `Invalid EVAL_SUITE "${trimmed}": expected "smoke" or "full"`,
+        `Invalid EVAL_SUITE "${trimmed}": expected "smoke", "full" or "history"`,
       );
     }
     suite = trimmed;
   }
+
+  // Read the history manifest once; its ids replace the synthetic ones.
+  const manifest = suite === 'history' ? readManifest() : undefined;
+  const historyIds = manifest?.cases.map((c) => c.id);
 
   const rawCases = env.EVAL_CASES;
   let explicit = false;
@@ -262,7 +273,7 @@ export function resolveEvalSelection(env: NodeJS.ProcessEnv): EvalSelection {
   if (rawCases !== undefined) {
     // Any explicitly-set EVAL_CASES is parsed; empty/whitespace selections
     // are rejected as "no ids" (never silently falls back to the suite).
-    const ids = getCaseIds(rawCases);
+    const ids = getCaseIds(rawCases, historyIds ?? getFullCaseIds());
     const seen = new Set<string>();
     const duplicates = ids.filter((id) => {
       if (seen.has(id)) return true;
@@ -277,7 +288,7 @@ export function resolveEvalSelection(env: NodeJS.ProcessEnv): EvalSelection {
     caseIds = ids;
     explicit = true;
   } else {
-    caseIds = suite === 'smoke' ? [...SMOKE_CASE_IDS] : getFullCaseIds();
+    caseIds = historyIds ?? (suite === 'smoke' ? [...SMOKE_CASE_IDS] : getFullCaseIds());
   }
 
   const runs = resolvePositiveInt(env.EVAL_RUNS, 'EVAL_RUNS', 1);
@@ -299,7 +310,8 @@ export function resolveEvalSelection(env: NodeJS.ProcessEnv): EvalSelection {
         ? FULL_SUITE_MAX_CALLS
         : DEFAULT_MAX_CALLS;
 
-  return { suite, caseIds, cases: getCases(caseIds), explicit, runs, seed, maxCalls };
+  const cases = manifest ? loadHistoryCases(caseIds, { manifest }) : getCases(caseIds);
+  return { suite, caseIds, cases, explicit, runs, seed, maxCalls };
 }
 
 // ---------------------------------------------------------------------------

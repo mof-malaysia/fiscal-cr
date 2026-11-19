@@ -14,7 +14,7 @@ Agent navigation for this repo:
 | `src/` | The reviewer: `review/` (orchestrator), `pipeline/` (intent → group review → synthesis, fast path), `github/`, `config/`, `providers/` |
 | `action/index.ts`, `action.yml` | The GitHub Action entry point and its public inputs |
 | `test/unit/` | Vitest specs of current behaviour; `test/fixtures/` |
-| `eval/` | Local LLM eval harness: 11 synthetic gold cases run through the real pipeline (guide: `docs/llm-evaluation.md`) |
+| `eval/` | Local LLM eval harness: 11 synthetic gold cases run through the real pipeline, plus a real-PR history suite in `eval/history/` (guide: `docs/llm-evaluation.md`) |
 | `site/` | Landing page: static Astro + Tailwind v4 on FTDS, its own `package.json`, deployed to GitHub Pages by `.github/workflows/site.yml` |
 | `scripts/` | Prompt embedding, `llms.txt` generator, provider model sync, release helper |
 | `PRODUCT.md`, `DESIGN.md` | Product and landing-page design context (owner-approved) |
