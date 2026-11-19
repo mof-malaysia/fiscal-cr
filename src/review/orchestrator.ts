@@ -50,7 +50,7 @@ import { UsageTracker } from '../pipeline/usage.js';
 import type { TelemetrySink } from '../pipeline/usage.js';
 import { resolvePricingAsync, type PricingContext } from '../utils/pricing.js';
 import { roundCost } from '../utils/tokens.js';
-import { ReviewError } from '../utils/errors.js';
+import { isApiQuotaExhausted, ReviewError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 interface ReviewParams {
@@ -390,15 +390,25 @@ export class ReviewOrchestrator {
         }),
       );
     } catch (err) {
-      logger.error({ err, pullNumber }, 'Review failed');
+      // Exhausted provider quota is an account condition, not a defect in the
+      // PR: neutral check (passes branch protection), caller decides how loud.
+      const quotaExhausted = isApiQuotaExhausted(err);
+      if (quotaExhausted) {
+        logger.warn({ err, pullNumber }, 'Review skipped: provider usage limit reached');
+      } else {
+        logger.error({ err, pullNumber }, 'Review failed');
+      }
 
       if (checkRunId !== null) {
+        const reason = err instanceof Error ? err.message : 'Unknown error';
         await completeCheckRun(this.octokit, {
           owner,
           repo,
           checkRunId,
-          conclusion: 'failure',
-          summary: `Review failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          conclusion: quotaExhausted ? 'neutral' : 'failure',
+          summary: quotaExhausted
+            ? `Review skipped: the model provider's usage limit is reached. ${reason}`
+            : `Review failed: ${reason}`,
           annotations: [],
         });
       }
@@ -406,6 +416,7 @@ export class ReviewOrchestrator {
       throw new ReviewError(
         err instanceof Error ? err.message : 'Unknown error',
         'orchestration',
+        err,
       );
     }
   }

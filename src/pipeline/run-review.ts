@@ -87,7 +87,11 @@ export async function runReviewPipeline(
   });
 
   if (outcomes.every((o) => o.failed)) {
-    throw new ReviewError('All review groups failed', 'review-pass');
+    throw new ReviewError(
+      'All review groups failed',
+      'review-pass',
+      outcomes.find((o) => o.error !== undefined)?.error,
+    );
   }
 
   // Lifecycle reconciliation needs every validated finding, not only the

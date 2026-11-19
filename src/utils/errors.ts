@@ -27,8 +27,27 @@ export class ReviewError extends Error {
   constructor(
     message: string,
     public phase: string,
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, cause === undefined ? undefined : { cause });
     this.name = 'ReviewError';
   }
+}
+
+const QUOTA_EXHAUSTED_PATTERN =
+  /usage limits?|insufficient_quota|exceeded your current quota|credit balance is too low/i;
+
+/**
+ * True when the provider rejected the call because the account's spend/usage
+ * limit is exhausted (not a code or config problem). Looks through
+ * `ReviewError.cause`, since the pipeline wraps provider errors.
+ */
+export function isApiQuotaExhausted(err: unknown): boolean {
+  if (err instanceof LLMApiError) {
+    return (
+      [400, 402, 429].includes(err.statusCode) &&
+      QUOTA_EXHAUSTED_PATTERN.test(`${err.message} ${String(err.responseBody ?? '')}`)
+    );
+  }
+  return err instanceof Error && err.cause !== undefined && isApiQuotaExhausted(err.cause);
 }

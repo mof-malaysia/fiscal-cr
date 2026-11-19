@@ -17,6 +17,8 @@ export interface GroupReviewOutcome {
   summary: string;
   findings: ReviewAnnotation[];
   failed: boolean;
+  /** Underlying error when the group call threw (lets callers classify the failure). */
+  error?: unknown;
 }
 
 export interface ReviewPassOptions {
@@ -123,7 +125,7 @@ export async function runReviewPass(
             groupIndex,
           });
           logger.warn({ group: group.label, err }, 'Group review failed');
-          return { group, summary: '', findings: [], failed: true };
+          return { group, summary: '', findings: [], failed: true, error: err };
         }
       }),
     ),
