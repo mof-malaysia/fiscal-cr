@@ -72,7 +72,7 @@ export function renderQuotaNotice(
   const reason = providerMessage(err);
   return [
     QUOTA_NOTICE_MARKER,
-    `## ⚠️ FiscalCR review skipped: ${label} limit reached`,
+    '## ⚠️ CR limit reached',
     '',
     `Commit \`${headSha.slice(0, 7)}\` was not reviewed because the provider account has run out of API credit or reached its usage limit.`,
     '',

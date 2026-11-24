@@ -62,7 +62,7 @@ describe('renderQuotaNotice', () => {
     ['openai-compatible', 'OpenAI-compatible endpoint'],
   ] as const)('names the provider: %s', (provider, label) => {
     const body = renderQuotaNotice(quotaError(), provider, 'a');
-    expect(body).toContain(`review skipped: ${label} limit reached`);
+    expect(body).toContain('## ⚠️ CR limit reached');
     expect(body).toContain(`**Provider:** ${label}`);
   });
 
