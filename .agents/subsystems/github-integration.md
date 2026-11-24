@@ -36,6 +36,7 @@ adapter keeps REST and GraphQL methods on the shared Octokit shape.
 | Check runs | `src/github/checks.ts` | `checks.create`, `checks.update` — annotations batched 50/request; severity → `failure`/`warning`/`notice` |
 | PR context | `src/github/pulls.ts` | `pulls.get` (metadata + `diff` mediaType), `pulls.listFiles` (paged 100), contents via file source |
 | Reviews/comments | `src/github/comments.ts` | `pulls.createReview` (inline comments + body), `pulls.dismissReview` |
+| Quota notice | `src/github/quota-notice.ts` | one marked `issues` comment per PR when provider credit/usage limit runs out (updated in place, best effort) |
 | Sticky comment | `src/github/review-state.ts` | `issues.listComments` (paged 100), `issues.createComment`, `issues.updateComment` |
 | File contents | `src/review/file-source.ts` | `repos.getContent` (base64, concurrency 8), or local `readFile` in Action mode |
 | Scope compare | `src/review/delta.ts` | `repos.compareCommitsWithBasehead` |
