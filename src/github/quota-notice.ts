@@ -46,7 +46,7 @@ export function renderQuotaNotice(err: LLMApiError, provider: Provider, headSha:
     QUOTA_NOTICE_MARKER,
     `## ⚠️ FiscalCR review skipped: ${label} limit reached`,
     '',
-    `Commit \`${headSha.slice(0, 7)}\` was not reviewed because the **${label}** account has run out of API credit or reached its usage limit. This is not a problem with the PR.`,
+    `Commit \`${headSha.slice(0, 7)}\` was not reviewed because the **${label}** account has run out of API credit or reached its usage limit.`,
     '',
     ...(reason ? [`**Message from ${label}:**`, '```text', reason, '```', ''] : []),
     'Once credit is topped up or the limit resets, re-run the workflow or push a new commit to get a review.',
