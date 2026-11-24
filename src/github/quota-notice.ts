@@ -1,6 +1,7 @@
 import type { ReviewConfig } from '../config/schema.js';
 import type { FiscalcrOctokit } from './client.js';
 import { quotaExhaustedError, type LLMApiError } from '../utils/errors.js';
+import { withReviewStateLock } from './review-state.js';
 import { logger } from '../utils/logger.js';
 
 /** Identifies the notice so later runs update it instead of stacking comments. */
@@ -35,12 +36,44 @@ function providerMessage(err: LLMApiError): string | null {
   }
 }
 
+/** One skipped run: the PR head it would have reviewed. */
+export interface SkippedCommit {
+  sha: string;
+  provider: string;
+  /** `YYYY-MM-DD HH:MM` in UTC. */
+  skippedAt: string;
+}
+
+/** Oldest rows drop first, which keeps the comment far below GitHub's size limit. */
+const MAX_ROWS = 100;
+const ROW_PATTERN = /^\| ([0-9a-f]{7,40}) \| ([^|]+) \| (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC \|$/gm;
+
+/** The table is its own storage: read rows back from an earlier notice. */
+function parseSkippedCommits(body: string): SkippedCommit[] {
+  return [...body.matchAll(ROW_PATTERN)].map(([, sha, provider, skippedAt]) => ({
+    sha,
+    provider,
+    skippedAt,
+  }));
+}
+
 /**
  * Comment template. Keep bot commands out of it: App mode parses every new PR
  * comment for commands, so naming one here would trigger another review.
  */
-export function renderQuotaNotice(err: LLMApiError, provider: Provider, headSha: string): string {
+export function renderQuotaNotice(
+  err: LLMApiError,
+  provider: Provider,
+  headSha: string,
+  previousBody = '',
+  now = new Date(),
+): string {
   const label = PROVIDER_LABELS[provider];
+  const skipped = [
+    // A re-run of the same commit replaces its row.
+    ...parseSkippedCommits(previousBody).filter((commit) => commit.sha !== headSha),
+    { sha: headSha, provider: label, skippedAt: now.toISOString().slice(0, 16).replace('T', ' ') },
+  ].slice(-MAX_ROWS);
   const reason = providerMessage(err);
   return [
     QUOTA_NOTICE_MARKER,
@@ -51,6 +84,13 @@ export function renderQuotaNotice(err: LLMApiError, provider: Provider, headSha:
     ...(reason ? [`**Message from ${label}:**`, '```text', reason, '```', ''] : []),
     'Once credit is topped up or the limit resets, re-run the workflow or push a new commit to get a review.',
     '',
+    '### Commits not reviewed',
+    '',
+    '| Commit | Provider | Skipped at |',
+    '| --- | --- | --- |',
+    // Bare full SHAs: GitHub shortens and links them.
+    ...skipped.map((commit) => `| ${commit.sha} | ${commit.provider} | ${commit.skippedAt} UTC |`),
+    '',
     '---',
     '*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*',
   ].join('\n');
@@ -59,7 +99,7 @@ export function renderQuotaNotice(err: LLMApiError, provider: Provider, headSha:
 async function findNotice(
   octokit: FiscalcrOctokit,
   params: { owner: string; repo: string; pullNumber: number },
-): Promise<number | null> {
+): Promise<{ id: number; body?: string } | null> {
   for (let page = 1; ; page++) {
     const { data } = await octokit.issues.listComments({
       owner: params.owner,
@@ -73,7 +113,7 @@ async function findNotice(
         comment.body?.startsWith(QUOTA_NOTICE_MARKER) &&
         (comment.user?.login === 'github-actions[bot]' || Boolean(comment.performed_via_github_app)),
     );
-    if (match) return match.id;
+    if (match) return match;
     if (data.length < 100) return null;
   }
 }
@@ -91,13 +131,16 @@ export async function postQuotaNotice(
   if (!quotaError) return;
 
   try {
-    const body = renderQuotaNotice(quotaError, provider, headSha);
-    const commentId = await findNotice(octokit, params);
-    if (commentId !== null) {
-      await octokit.issues.updateComment({ owner, repo, comment_id: commentId, body });
-    } else {
-      await octokit.issues.createComment({ owner, repo, issue_number: pullNumber, body });
-    }
+    // Read-modify-write: serialize so concurrent App runs don't drop rows.
+    await withReviewStateLock(`${owner}/${repo}#${pullNumber}`, async () => {
+      const previous = await findNotice(octokit, params);
+      const body = renderQuotaNotice(quotaError, provider, headSha, previous?.body);
+      if (previous) {
+        await octokit.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+      } else {
+        await octokit.issues.createComment({ owner, repo, issue_number: pullNumber, body });
+      }
+    });
   } catch (err) {
     logger.warn({ err, pullNumber }, 'Could not post quota notice — skipping');
   }

@@ -74,14 +74,42 @@ describe('renderQuotaNotice', () => {
   });
 });
 
+describe('commits not reviewed table', () => {
+  const at = (hour: string) => new Date(`2026-11-24T${hour}:00:00Z`);
+  const row = (sha: string, provider: string, hour: string) =>
+    `| ${sha} | ${provider} | 2026-11-24 ${hour}:00 UTC |`;
+
+  it('accumulates commits across runs and providers, one row per commit', () => {
+    let body = renderQuotaNotice(quotaError(), 'anthropic', 'aaaaaaa', '', at('01'));
+    body = renderQuotaNotice(quotaError(), 'kimi', 'bbbbbbb', body, at('02'));
+    body = renderQuotaNotice(quotaError(), 'openai-compatible', 'aaaaaaa', body, at('03'));
+    expect(body.match(/^\| [0-9a-f]{7} .*$/gm)).toEqual([
+      row('bbbbbbb', 'Kimi', '02'),
+      row('aaaaaaa', 'OpenAI-compatible endpoint', '03'),
+    ]);
+  });
+
+  it('keeps the newest rows when the table is full', () => {
+    let body = '';
+    for (let i = 0; i < 102; i++) {
+      body = renderQuotaNotice(quotaError(), 'kimi', i.toString(16).padStart(40, '0'), body);
+    }
+    expect(body.match(/^\| [0-9a-f]{40} /gm)).toHaveLength(100);
+    expect(body).toContain((101).toString(16).padStart(40, '0'));
+  });
+});
+
 describe('postQuotaNotice', () => {
   it('updates its own notice instead of stacking, ignoring copies by users', async () => {
     const { octokit, issues } = fakeOctokit([
       { id: 1, body: QUOTA_NOTICE_MARKER, user: { login: 'someone' } },
-      { id: 2, body: `${QUOTA_NOTICE_MARKER}\nold`, user: { login: 'github-actions[bot]' } },
+      { id: 2, body: `${QUOTA_NOTICE_MARKER}\n| ccccccc | Kimi | 2026-11-23 09:00 UTC |`, user: { login: 'github-actions[bot]' } },
     ]);
     await postQuotaNotice(octokit, { ...pr, provider: 'anthropic', err: quotaError() });
     expect(issues.updateComment).toHaveBeenCalledWith(expect.objectContaining({ comment_id: 2 }));
+    const { body } = issues.updateComment.mock.calls[0][0];
+    expect(body).toContain('| ccccccc | Kimi | 2026-11-23 09:00 UTC |');
+    expect(body).toContain('| abcdef123 | Anthropic |');
     expect(issues.createComment).not.toHaveBeenCalled();
   });
 
