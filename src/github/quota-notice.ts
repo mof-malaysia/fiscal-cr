@@ -39,22 +39,17 @@ function providerMessage(err: LLMApiError): string | null {
 /** One skipped run: the PR head it would have reviewed. */
 export interface SkippedCommit {
   sha: string;
-  provider: string;
   /** `YYYY-MM-DD HH:MM` in UTC. */
   skippedAt: string;
 }
 
 /** Oldest rows drop first, which keeps the comment far below GitHub's size limit. */
 const MAX_ROWS = 100;
-const ROW_PATTERN = /^\| ([0-9a-f]{7,40}) \| ([^|]+) \| (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC \|$/gm;
+const ROW_PATTERN = /^\| ([0-9a-f]{7,40}) \| (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC \|$/gm;
 
 /** The table is its own storage: read rows back from an earlier notice. */
 function parseSkippedCommits(body: string): SkippedCommit[] {
-  return [...body.matchAll(ROW_PATTERN)].map(([, sha, provider, skippedAt]) => ({
-    sha,
-    provider,
-    skippedAt,
-  }));
+  return [...body.matchAll(ROW_PATTERN)].map(([, sha, skippedAt]) => ({ sha, skippedAt }));
 }
 
 /**
@@ -72,24 +67,26 @@ export function renderQuotaNotice(
   const skipped = [
     // A re-run of the same commit replaces its row.
     ...parseSkippedCommits(previousBody).filter((commit) => commit.sha !== headSha),
-    { sha: headSha, provider: label, skippedAt: now.toISOString().slice(0, 16).replace('T', ' ') },
+    { sha: headSha, skippedAt: now.toISOString().slice(0, 16).replace('T', ' ') },
   ].slice(-MAX_ROWS);
   const reason = providerMessage(err);
   return [
     QUOTA_NOTICE_MARKER,
     `## ⚠️ FiscalCR review skipped: ${label} limit reached`,
     '',
-    `Commit \`${headSha.slice(0, 7)}\` was not reviewed because the **${label}** account has run out of API credit or reached its usage limit.`,
+    `Commit \`${headSha.slice(0, 7)}\` was not reviewed because the provider account has run out of API credit or reached its usage limit.`,
     '',
-    ...(reason ? [`**Message from ${label}:**`, '```text', reason, '```', ''] : []),
+    `**Provider:** ${label}`,
+    '',
+    ...(reason ? ['**Provider message:**', '```text', reason, '```', ''] : []),
     'Once credit is topped up or the limit resets, re-run the workflow or push a new commit to get a review.',
     '',
     '### Commits not reviewed',
     '',
-    '| Commit | Provider | Skipped at |',
-    '| --- | --- | --- |',
+    '| Commit | Skipped at |',
+    '| --- | --- |',
     // Bare full SHAs: GitHub shortens and links them.
-    ...skipped.map((commit) => `| ${commit.sha} | ${commit.provider} | ${commit.skippedAt} UTC |`),
+    ...skipped.map((commit) => `| ${commit.sha} | ${commit.skippedAt} UTC |`),
     '',
     '---',
     '*Powered by [FiscalCR](https://github.com/mof-malaysia/fiscal-cr) — model-agnostic AI code review*',
