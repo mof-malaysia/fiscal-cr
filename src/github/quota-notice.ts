@@ -1,9 +1,21 @@
+import type { ReviewConfig } from '../config/schema.js';
 import type { FiscalcrOctokit } from './client.js';
 import { quotaExhaustedError, type LLMApiError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 /** Identifies the notice so later runs update it instead of stacking comments. */
 export const QUOTA_NOTICE_MARKER = '<!-- fiscalcr:quota-exhausted -->';
+
+type Provider = ReviewConfig['provider'];
+
+/** Provider names as shown to PR readers. Custom endpoint URLs stay private. */
+const PROVIDER_LABELS: Record<Provider, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  kimi: 'Kimi',
+  openrouter: 'OpenRouter',
+  'openai-compatible': 'OpenAI-compatible endpoint',
+};
 
 const MAX_REASON_LENGTH = 500;
 
@@ -27,15 +39,16 @@ function providerMessage(err: LLMApiError): string | null {
  * Comment template. Keep bot commands out of it: App mode parses every new PR
  * comment for commands, so naming one here would trigger another review.
  */
-export function renderQuotaNotice(err: LLMApiError, headSha: string): string {
+export function renderQuotaNotice(err: LLMApiError, provider: Provider, headSha: string): string {
+  const label = PROVIDER_LABELS[provider];
   const reason = providerMessage(err);
   return [
     QUOTA_NOTICE_MARKER,
-    '## ⚠️ FiscalCR review skipped',
+    `## ⚠️ FiscalCR review skipped: ${label} limit reached`,
     '',
-    `Commit \`${headSha.slice(0, 7)}\` was not reviewed because the model provider account has run out of API credit or reached its usage limit. This is not a problem with the PR.`,
+    `Commit \`${headSha.slice(0, 7)}\` was not reviewed because the **${label}** account has run out of API credit or reached its usage limit. This is not a problem with the PR.`,
     '',
-    ...(reason ? ['**Provider message:**', '```text', reason, '```', ''] : []),
+    ...(reason ? [`**Message from ${label}:**`, '```text', reason, '```', ''] : []),
     'Once credit is topped up or the limit resets, re-run the workflow or push a new commit to get a review.',
     '',
     '---',
@@ -71,14 +84,14 @@ async function findNotice(
  */
 export async function postQuotaNotice(
   octokit: FiscalcrOctokit,
-  params: { owner: string; repo: string; pullNumber: number; headSha: string; err: unknown },
+  params: { owner: string; repo: string; pullNumber: number; headSha: string; provider: Provider; err: unknown },
 ): Promise<void> {
-  const { owner, repo, pullNumber, headSha } = params;
+  const { owner, repo, pullNumber, headSha, provider } = params;
   const quotaError = quotaExhaustedError(params.err);
   if (!quotaError) return;
 
   try {
-    const body = renderQuotaNotice(quotaError, headSha);
+    const body = renderQuotaNotice(quotaError, provider, headSha);
     const commentId = await findNotice(octokit, params);
     if (commentId !== null) {
       await octokit.issues.updateComment({ owner, repo, comment_id: commentId, body });

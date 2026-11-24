@@ -46,7 +46,7 @@ const pr = { owner: 'o', repo: 'r', pullNumber: 1, headSha: 'abcdef123' };
 
 describe('renderQuotaNotice', () => {
   it('shows the provider message and commit without raw response data', () => {
-    const body = renderQuotaNotice(quotaError(), pr.headSha);
+    const body = renderQuotaNotice(quotaError(), 'anthropic', pr.headSha);
     expect(body).toContain(MESSAGE);
     expect(body).toContain('`abcdef1`');
     expect(body).not.toContain('req_secret');
@@ -54,9 +54,22 @@ describe('renderQuotaNotice', () => {
     expect(body).not.toContain('@fiscalcr');
   });
 
+  it.each([
+    ['anthropic', 'Anthropic'],
+    ['openai', 'OpenAI'],
+    ['kimi', 'Kimi'],
+    ['openrouter', 'OpenRouter'],
+    ['openai-compatible', 'OpenAI-compatible endpoint'],
+  ] as const)('names the provider: %s', (provider, label) => {
+    const body = renderQuotaNotice(quotaError(), provider, 'a');
+    expect(body).toContain(`review skipped: ${label} limit reached`);
+    expect(body).toContain(`**${label}** account`);
+    expect(body).toContain(`**Message from ${label}:**`);
+  });
+
   it('omits unparseable bodies and keeps the message inside its fence', () => {
-    expect(renderQuotaNotice(new LLMApiError('x', 402, '<html>boom</html>'), 'a')).not.toContain('boom');
-    const fenced = renderQuotaNotice(new LLMApiError('x', 402, '{"error":{"message":"a\\n```\\nb"}}'), 'a');
+    expect(renderQuotaNotice(new LLMApiError('x', 402, '<html>boom</html>'), 'kimi', 'a')).not.toContain('boom');
+    const fenced = renderQuotaNotice(new LLMApiError('x', 402, '{"error":{"message":"a\\n```\\nb"}}'), 'kimi', 'a');
     expect(fenced).toContain("```text\na ''' b\n```");
   });
 });
@@ -67,7 +80,7 @@ describe('postQuotaNotice', () => {
       { id: 1, body: QUOTA_NOTICE_MARKER, user: { login: 'someone' } },
       { id: 2, body: `${QUOTA_NOTICE_MARKER}\nold`, user: { login: 'github-actions[bot]' } },
     ]);
-    await postQuotaNotice(octokit, { ...pr, err: quotaError() });
+    await postQuotaNotice(octokit, { ...pr, provider: 'anthropic', err: quotaError() });
     expect(issues.updateComment).toHaveBeenCalledWith(expect.objectContaining({ comment_id: 2 }));
     expect(issues.createComment).not.toHaveBeenCalled();
   });
@@ -75,7 +88,7 @@ describe('postQuotaNotice', () => {
   it('does not throw when GitHub rejects the comment', async () => {
     const { octokit, issues } = fakeOctokit();
     issues.createComment.mockRejectedValue(new Error('403'));
-    await expect(postQuotaNotice(octokit, { ...pr, err: quotaError() })).resolves.toBeUndefined();
+    await expect(postQuotaNotice(octokit, { ...pr, provider: 'anthropic', err: quotaError() })).resolves.toBeUndefined();
   });
 });
 
@@ -85,6 +98,7 @@ describe('ReviewOrchestrator quota notice', () => {
     const llm = { chatCompletion: vi.fn(async () => { throw error; }) };
     const config = {
       ...DEFAULT_CONFIG,
+      provider: 'openrouter' as const,
       pipeline: { ...DEFAULT_CONFIG.pipeline, fastPathThreshold: fastPath ? 1_000_000 : 1 },
     };
     const thrown = await new ReviewOrchestrator(octokit, llm, config).reviewPullRequest(pr).catch((e) => e);
@@ -99,6 +113,7 @@ describe('ReviewOrchestrator quota notice', () => {
     const issues = await run(quotaError(), fastPath);
     expect(issues.createComment).toHaveBeenCalledTimes(1);
     expect(issues.createComment.mock.calls[0][0].body).toContain(MESSAGE);
+    expect(issues.createComment.mock.calls[0][0].body).toContain('**OpenRouter** account');
   });
 
   it('does not comment on other failures', async () => {
