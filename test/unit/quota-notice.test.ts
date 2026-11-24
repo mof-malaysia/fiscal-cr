@@ -98,7 +98,7 @@ describe('ReviewOrchestrator quota notice', () => {
     const llm = { chatCompletion: vi.fn(async () => { throw error; }) };
     const config = {
       ...DEFAULT_CONFIG,
-      provider: 'openrouter' as const,
+      provider: 'openai' as const,
       pipeline: { ...DEFAULT_CONFIG.pipeline, fastPathThreshold: fastPath ? 1_000_000 : 1 },
     };
     const thrown = await new ReviewOrchestrator(octokit, llm, config).reviewPullRequest(pr).catch((e) => e);
@@ -113,7 +113,7 @@ describe('ReviewOrchestrator quota notice', () => {
     const issues = await run(quotaError(), fastPath);
     expect(issues.createComment).toHaveBeenCalledTimes(1);
     expect(issues.createComment.mock.calls[0][0].body).toContain(MESSAGE);
-    expect(issues.createComment.mock.calls[0][0].body).toContain('**OpenRouter** account');
+    expect(issues.createComment.mock.calls[0][0].body).toContain('**OpenAI** account');
   });
 
   it('does not comment on other failures', async () => {
