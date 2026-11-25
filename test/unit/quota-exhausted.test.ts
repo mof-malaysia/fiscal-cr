@@ -19,6 +19,10 @@ describe('isApiQuotaExhausted', () => {
     expect(isApiQuotaExhausted(new LLMApiError('x', 429, '{"error":{"code":"insufficient_quota"}}'))).toBe(true);
   });
 
+  it('matches any 402 Payment Required', () => {
+    expect(isApiQuotaExhausted(new LLMApiError('x', 402, '{"error":{"message":"Insufficient Balance"}}'))).toBe(true);
+  });
+
   it('sees through ReviewError.cause', () => {
     const cause = new LLMApiError('x', 400, quotaBody);
     expect(isApiQuotaExhausted(new ReviewError('All review groups failed', 'review-pass', cause))).toBe(true);

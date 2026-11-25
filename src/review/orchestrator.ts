@@ -15,6 +15,7 @@ import {
   createPRReview,
   dismissBlockingReview,
 } from '../github/comments.js';
+import { postQuotaNotice } from '../github/quota-notice.js';
 import { fingerprintAnnotation } from '../github/fingerprint.js';
 import {
   appendRun,
@@ -395,6 +396,14 @@ export class ReviewOrchestrator {
       const quotaExhausted = isApiQuotaExhausted(err);
       if (quotaExhausted) {
         logger.warn({ err, pullNumber }, 'Review skipped: provider usage limit reached');
+        await postQuotaNotice(this.octokit, {
+          owner,
+          repo,
+          pullNumber,
+          headSha,
+          provider: this.config.provider,
+          err,
+        });
       } else {
         logger.error({ err, pullNumber }, 'Review failed');
       }
